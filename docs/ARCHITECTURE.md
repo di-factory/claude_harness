@@ -497,6 +497,9 @@ tests/  evals/  docs/
    - ContainerExecutor;
    - GCP/Azure profiles.
 
+Target dates (4-week sprints from 2026-09-28): M0 2026-10-23, M1 2026-11-20,
+M2 2026-12-18, M3 2027-01-15, M4 2027-02-12.
+
 **Instances** follow the template. The first candidates are listed in §8; an
 instance can start once the modules it needs have shipped.
 
@@ -526,6 +529,12 @@ instance can start once the modules it needs have shipped.
 | 20 | Observability | Per-tenant event log and cost by vendor; OpenTelemetry opt-in. |
 | 21 | Evals | Every pack ships an eval set; run before model swaps and releases. |
 | 22 | Packaging | Python 3.12+, MIT, PyPI `di-factory-general-harness`, import `dif_general_harness`, CLI `dif-general-harness`. |
+| 23 | Pack licensing | **Open core**: core + reference packs MIT; production packs are Di-Factory proprietary; each client fully owns its instance. |
+| 24 | Pack sequence | Appointment Agent first, then **Service Desk cell**, **Conversational RAG assistant** and the **other PyME agents**. |
+| 25 | Messaging gateway | **Client holds the account** (zero markup, client owns numbers and templates); Di-Factory sets it up. |
+| 26 | Success targets | ≥80% reuse · ≤2 weeks onboarding on an existing pack · ≤4 weeks per new pack · ≥90% eval pass · 0 unsafe actions · 0 leaks · 100% cost attribution. |
+| 27 | State directory | Project state in **`.dif/`**, user state in **`~/.dif/`**, project memory file **`DIF.md`**. |
+| 28 | Timeline | **4-week sprint per milestone**, owner Jag Pascoe (CEO) with agent builders: M0 2026-10-23 · M1 2026-11-20 · M2 2026-12-18 · M3 2027-01-15 · M4 2027-02-12. |
 
 ## 8. First instantiation candidates (parked)
 
