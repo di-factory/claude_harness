@@ -180,6 +180,60 @@ veto, modify input, or inject context.
 - `evals/` folder with task fixtures run against `FakeProvider` (unit) and real
   models (integration) from day one.
 
+### 3.9 Memory subsystem (5 layers)
+
+Adopted from *Agent Memory — The 5-Layer Playbook* (based on the CoALA
+framework). Sessions end, but the knowledge from them persists. Memory is a
+core subsystem behind a `MemoryBackend` protocol so it can be swapped later
+for Mem0/Zep, and every store is **scoped per project** so nothing leaks
+between projects.
+
+| Layer | Holds | Harness component | Storage (v1) | Expiry |
+|---|---|---|---|---|
+| 1. Working | Current context | `ContextManager` | context window | end of call |
+| 2. Episodic | What happened: task, approach, outcome, errors, fixes, user corrections | `EpisodicStore` | `memory/episodes.jsonl` (distilled from the session event log) | 30–90 d TTL, pins |
+| 3. Semantic | What is true: facts, preferences, entities | `SemanticStore` + ontology | SQLite `facts` (entity, type, relation, value, source_episode, status, superseded_by) | on supersession |
+| 4. Procedural | How to do things | Skills (same format as tool-pack skills) | `memory/skills/*.md`, versioned | on version update |
+| 5. Forgetting | What to delete | `ForgettingEngine` | — | runs at session start / on schedule |
+
+**Data flow**
+
+```
+working ──overflow (pre_compact hook)──► episodic ──distil──► semantic ──encode──► procedural
+   ▲                                        │                   │                   │
+   └──────────── retrieval (session_start / memory_search tool) ◄───────────────────┘
+                     forgetting engine prunes episodic / semantic / procedural
+```
+
+- **Overflow**: before compaction the ContextManager extracts decisions and
+  facts into episodic memory, so important context is saved rather than
+  truncated.
+- **Retrieval**: at `session_start` the prompt builder injects a small,
+  budgeted memory block: top-k similar episodes, relevant facts, and matching
+  skill triggers. The model can also call the `memory_search` and
+  `memory_write` tools.
+- **Write-back**: at `stop` an Episode record is saved and candidate facts
+  are extracted, validated against the ontology, then resolved against
+  existing facts (duplicate → merge, changed → supersede, both current →
+  flag).
+- **Forgetting**: expiry by TTL, supersession, and contradiction flagging.
+  Superseded or expired items go to an archive; they are not deleted
+  outright.
+
+**Guardrails (where this design deliberately departs from the playbook)**
+
+- Skills are *loaded into context*; the model still drives. There is no
+  "execute the skill without the LLM" shortcut.
+- Promoting a method to a skill (after ≥3 successes) creates a **proposal
+  the user approves**. A skill is persistent instructions, so an
+  auto-written skill would be a way to make prompt injection persist.
+- Contradictions are shown to the user; they are never resolved silently.
+- The memory block has a token budget, so memory cannot crowd out the task.
+
+**Tests**: amnesia (recall across sessions), contradiction, staleness (TTL),
+skill promotion, isolation (no cross-project leakage), and load (10k episodes
+retrieved in under 500 ms).
+
 ## 4. Tech stack
 
 | Concern | Choice |
@@ -202,6 +256,7 @@ src/harness/
   tools/       registry.py  builtin/ (fs.py, shell.py, search.py)  mcp.py  subagent.py
   policy/      permissions.py  hooks.py
   store/       jsonl.py
+  memory/      base.py  episodic.py  semantic.py  procedural.py  forgetting.py  ontology.py
   prompts/     system.md  builder.py
   tools/packs/ coding/  general/
   tui/         app.py  widgets/  (Textual)
@@ -215,8 +270,12 @@ docs/
 1. **M0 – skeleton**: data model, FakeProvider, loop, JSONL store, tests.
 2. **M1 – usable agent**: Anthropic provider (streaming, caching), coding +
    general tool packs, SubprocessExecutor, permission prompts, Textual TUI.
-3. **M2 – long sessions**: compaction, resume/fork, project memory, hooks.
-4. **M3 – extensibility**: MCP client, sub-agents, skills.
+3. **M2 – long sessions & memory I**: compaction with an overflow handler,
+   resume/fork, project memory file, hooks, episodic + semantic memory with
+   retrieval at session start.
+4. **M3 – extensibility & memory II**: MCP client, sub-agents, skills,
+   procedural memory (promotion approved by the user), forgetting engine,
+   ontology.
 5. **M4 – more providers & hardening**: OpenAI + Ollama adapters with
    conformance suite, ContainerExecutor, OpenTelemetry, eval suite.
 
@@ -228,6 +287,7 @@ docs/
 | 2 | Providers | **Multi-provider architecture now**; M1 implements **Anthropic** only (+ FakeProvider). OpenAI/Ollama next. |
 | 3 | First interface | **TUI** (Textual), built on the public Python API / event stream. |
 | 4 | Sandboxing | **Pluggable Executor**; start with workspace-confined subprocess + permission prompts, containers later. |
+| 5 | Memory | **5-layer memory** (working / episodic / semantic / procedural / forgetting), project-scoped, behind `MemoryBackend`; see §3.9. |
 
 ## References
 
@@ -239,4 +299,7 @@ docs/
   (arXiv 2609.00006)
 - The Anatomy of an Agent Harness (blog.dailydoseofds.com)
 - awesome-harness-engineering (github.com/ai-boost/awesome-harness-engineering)
+- Agent Memory — The 5-Layer Playbook (independent compilation, Sep 2026;
+  its quoted metrics are not independently verified)
+- Sumers et al., Cognitive Architectures for Language Agents (CoALA)
 - Pydantic AI comparisons (pydantic.dev/docs/ai/comparisons)
