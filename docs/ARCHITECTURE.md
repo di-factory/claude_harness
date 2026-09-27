@@ -143,6 +143,13 @@ permission rules, and is enabled per session/profile:
 - Each tool declares `read_only: bool` and a permission category, so the
   policy can auto-allow reads and gate writes/shell.
 - Output is truncated/summarised by the ContextManager, never dumped raw.
+- The model never executes anything itself. It proposes a structured call;
+  the harness validates the schema, checks permissions and guardrails,
+  executes, and **always** returns a structured observation
+  (`ok | denied | error | timeout`, plus payload), so no call fails silently.
+- **Checkpoints**: before every write/edit the harness snapshots the prior
+  file content to `.harness/checkpoints/<session>/<turn>/`; the TUI offers
+  `/undo` and rewind-to-turn. Works without git.
 - MCP servers (stdio + streamable HTTP) are mounted as tool namespaces.
 - Sub-agent = a tool that runs a child `Session` with its own context and a
   restricted tool set, returning only its final answer (orchestrator–worker).
@@ -155,6 +162,10 @@ permission rules, and is enabled per session/profile:
   structured summary block; keep recent turns verbatim.
 - Just-in-time retrieval: agents read files/grep on demand rather than
   pre-loading; large tool results are stored and referenced.
+- **Pinned constraints**: `HARNESS.md`, approved `.harness/CONSTRAINTS.md`
+  rules and user-stated task constraints live in a pinned block that
+  compaction never summarises away (tested: constraints stated in turn 1
+  still hold at turn 40+).
 - Project memory file (`HARNESS.md` at the project root) loaded into the system prompt.
 
 ### 3.6 Safety
@@ -175,7 +186,9 @@ veto, modify input, or inject context.
 
 ### 3.8 Observability & evals
 
-- Every event goes to the JSONL log → replay, debugging, cost accounting.
+- Every event goes to the JSONL log → replay, debugging, cost accounting
+  (tokens and USD per turn, per task, per role; cost per accepted change).
+- Later: behavioural baselines and drift detection over eval runs.
 - Optional OpenTelemetry spans (one per turn and per tool call).
 - `evals/` folder with task fixtures run against `FakeProvider` (unit) and real
   models (integration) from day one.
@@ -234,6 +247,58 @@ working ──overflow (pre_compact hook)──► episodic ──distil──�
 skill promotion, isolation (no cross-project leakage), and load (10k episodes
 retrieved in under 500 ms).
 
+### 3.10 Verification (maker ≠ checker)
+
+Two tiers, enabled per task or per profile:
+
+1. **Deterministic checks** run by the harness: configured commands (tests,
+   lint, typecheck) plus a scope check that the diff only touches allowed
+   paths.
+2. **Verifier sub-agent** (opt-in): a separate agent with its own prompt,
+   read-only tools and its own model role (`verifier`). It never grades its
+   own work.
+
+On failure the reason goes back to the maker as a structured observation, and
+the retry count is capped by the budget. On success the task is marked done.
+
+### 3.11 Model routing
+
+Routing is set per role in settings.json. Each role maps to
+`{provider, model, effort}`:
+
+| Role | Typical use |
+|---|---|
+| `main` | the interactive agent |
+| `subagent` | delegated workers (can be overridden per sub-agent) |
+| `verifier` | tier-2 verification |
+| `compaction` | summarising history |
+| `memory_extraction` | distilling episodes and facts |
+| `title` | session titles and other small mechanical tasks |
+
+No automatic task classifier in v1.
+
+### 3.12 Guardrails
+
+| Category | v1 mechanism |
+|---|---|
+| Tool & action | permission policy (§3.6), draft/confirm for writes, shell and network, checkpoints |
+| Scope | optional `scope` path allowlist per task/profile; writes outside it are denied |
+| Operational | per-run **budgets**, on by default: tokens, USD cost, turns, tool retries, wall time. Hitting a cap **pauses and asks** the user to extend or stop. |
+| Data | **secret redaction** (regex and entropy) in session logs, traces and memory; **secret-file deny list** (`.env*`, `*.pem`, `id_rsa*`, credential files) unless explicitly allowed |
+| Behavioral / PII | not in v1 (can be added later as a guardrail plugin) |
+
+Guardrail strictness is set by **profiles** (e.g. `strict`, `default`,
+`fast`), so friction matches the risk of the task. Permissions are meant to
+be reviewed periodically, because stale rules give false confidence.
+
+### 3.13 Feedback loop
+
+Verifier rejections, denied actions and budget overruns produce **candidate
+constraints**. The TUI shows them, and only rules the user approves are
+appended to `.harness/CONSTRAINTS.md`, which is loaded every run and pinned.
+The same approval gate applies to skill promotion (§3.9). Every learned
+instruction is approved by a person.
+
 ## 4. Tech stack
 
 | Concern | Choice |
@@ -255,7 +320,9 @@ src/dif_general_harness/
   core/        loop.py  events.py  messages.py  session.py  context.py
   providers/   base.py  anthropic.py  openai.py  fake.py
   tools/       registry.py  builtin/ (fs.py, shell.py, search.py)  mcp.py  subagent.py
-  policy/      permissions.py  hooks.py
+  policy/      permissions.py  hooks.py  guardrails.py  budgets.py  redact.py
+  verify/      checks.py  verifier.py
+  routing.py   checkpoints.py
   store/       jsonl.py
   memory/      base.py  episodic.py  semantic.py  procedural.py  forgetting.py  ontology.py
   prompts/     system.md  builder.py
@@ -270,13 +337,15 @@ docs/
 
 1. **M0 – skeleton**: data model, FakeProvider, loop, JSONL store, tests.
 2. **M1 – usable agent**: Anthropic provider (streaming, caching), coding +
-   general tool packs, SubprocessExecutor, permission prompts, Textual TUI.
+   general tool packs, SubprocessExecutor, permission prompts, structured
+   observations, checkpoints and /undo, budgets, secret redaction and deny
+   list, role-based routing, Textual TUI.
 3. **M2 – long sessions & memory I**: compaction with an overflow handler,
    resume/fork, project memory file, hooks, episodic + semantic memory with
    retrieval at session start.
 4. **M3 – extensibility & memory II**: MCP client, sub-agents, skills,
    procedural memory (promotion approved by the user), forgetting engine,
-   ontology.
+   ontology, verification (both tiers), feedback loop into CONSTRAINTS.md.
 5. **M4 – more providers & hardening**: OpenAI + Ollama adapters with
    conformance suite, ContainerExecutor, OpenTelemetry, eval suite.
 
@@ -299,6 +368,12 @@ docs/
 | 13 | Default permissions | Read-only tools auto-allowed; **file writes, shell and network ask** (with "always allow" persisted to settings). |
 | 14 | Observability | JSONL session log always; **OpenTelemetry** (GenAI semantic conventions) as an opt-in extra. |
 | 15 | Credentials | `ANTHROPIC_API_KEY` env var, falling back to `~/.harness/credentials.json` (mode 600). Never stored in project settings. |
+| 16 | Verification | **Two-tier, opt-in**: deterministic checks + optional separate verifier sub-agent; retry-capped. §3.10 |
+| 17 | Routing | **Per-role model config** (main, subagent, verifier, compaction, memory_extraction, title); no auto-classifier in v1. §3.11 |
+| 18 | Feedback | Candidate constraints from rejections, **approved by the user** into `.harness/CONSTRAINTS.md`, pinned. §3.13 |
+| 19 | Budgets | **On by default**, configurable; hitting a cap **pauses and asks** to extend or stop. §3.12 |
+| 20 | Checkpoints | **Harness snapshots** before every write; `/undo` and rewind in the TUI. §3.4 |
+| 21 | Data guardrails | **Secret redaction** in logs/traces/memory + **secret-file deny list**; no PII or output-policy checks in v1. §3.12 |
 
 ## References
 
@@ -312,5 +387,9 @@ docs/
 - awesome-harness-engineering (github.com/ai-boost/awesome-harness-engineering)
 - Agent Memory — The 5-Layer Playbook (independent compilation, Sep 2026;
   its quoted metrics are not independently verified)
+- "Harness Engineering: the skill that replaced prompt engineering in 2026"
+  (X post, provided as text; its statistics are unsourced). It supplied
+  the 7-layer checklist: tool orchestration, verification, context and
+  memory, guardrails, observability, routing, feedback.
 - Sumers et al., Cognitive Architectures for Language Agents (CoALA)
 - Pydantic AI comparisons (pydantic.dev/docs/ai/comparisons)
