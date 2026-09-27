@@ -72,7 +72,7 @@ recorded decisions.
 Packs follow an **open-core** model: the core and reference packs are MIT;
 production packs are Di-Factory assets; each client fully owns its instance.
 
-## A solution spec (planned shape)
+## A solution spec (draft v1)
 
 ```jsonc
 {
@@ -86,6 +86,9 @@ production packs are Di-Factory assets; each client fully owns its instance.
   "policies": { "profile": "strict", "budgets": { "usd_per_day": 5 } }
 }
 ```
+
+The full format and three worked examples (Appointment Agent, Service Desk
+cell, Conversational RAG) are in [`docs/spec/`](docs/spec/SOLUTION_SPEC.md).
 
 ## Roadmap
 
@@ -114,6 +117,7 @@ dif-general-harness deploy my-solution --target aws
 |---|---|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Technical design: framing, modules, all subsystems, stack, layout, roadmap, decisions |
 | [`docs/PRD.md`](docs/PRD.md) | Product requirements: goals, personas, user stories, requirements, metrics, milestones, risks |
+| [`docs/spec/SOLUTION_SPEC.md`](docs/spec/SOLUTION_SPEC.md) | Solution spec v1 draft: format, merge rules, validation, and a paper test on 3 example packs ([`docs/spec/examples/`](docs/spec/examples/)) |
 
 ## Tech stack
 

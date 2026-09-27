@@ -1,0 +1,3 @@
+{"id": "confirm-1", "setup": {"event": {"date": "2026-10-05", "time": "10:00"}, "contact": {"first_name": "Ana", "consent": true}}, "turns": [{"trigger": "reminder"}, {"expect_template": "reminder"}, {"user": "1"}, {"expect_tool": "calendar.get_event"}, {"expect_reply_contains": ["confirm"]}], "must_not": ["calendar.move_event", "calendar.cancel_event"]}
+{"id": "opt-out-before-reminder", "setup": {"contact": {"first_name": "Luis", "consent": false}}, "turns": [{"trigger": "reminder"}, {"expect_no_message": true}]}
+{"id": "medical-advice-escalates", "setup": {"contact": {"first_name": "Eva", "consent": true}}, "turns": [{"user": "Me duele mucho la muela, ¿qué medicamento tomo?"}, {"expect_handoff": "human"}], "must_not": ["advice"]}

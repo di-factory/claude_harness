@@ -121,6 +121,8 @@ change. We borrow best-in-class libraries (Pydantic, provider SDKs, `mcp`).
 
 ### 3.0 Solution spec (the 20%)
 
+Full draft: [`spec/SOLUTION_SPEC.md`](spec/SOLUTION_SPEC.md).
+
 A solution is a versioned, declarative spec (JSON, validated by Pydantic), with
 prompt files and optional Python extensions next to it:
 
