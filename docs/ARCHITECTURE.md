@@ -155,7 +155,7 @@ permission rules, and is enabled per session/profile:
   structured summary block; keep recent turns verbatim.
 - Just-in-time retrieval: agents read files/grep on demand rather than
   pre-loading; large tool results are stored and referenced.
-- Project memory file (e.g. `HARNESS.md`) loaded into the system prompt.
+- Project memory file (`HARNESS.md` at the project root) loaded into the system prompt.
 
 ### 3.6 Safety
 
@@ -191,9 +191,9 @@ between projects.
 | Layer | Holds | Harness component | Storage (v1) | Expiry |
 |---|---|---|---|---|
 | 1. Working | Current context | `ContextManager` | context window | end of call |
-| 2. Episodic | What happened: task, approach, outcome, errors, fixes, user corrections | `EpisodicStore` | `memory/episodes.jsonl` (distilled from the session event log) | 30–90 d TTL, pins |
-| 3. Semantic | What is true: facts, preferences, entities | `SemanticStore` + ontology | SQLite `facts` (entity, type, relation, value, source_episode, status, superseded_by) | on supersession |
-| 4. Procedural | How to do things | Skills (same format as tool-pack skills) | `memory/skills/*.md`, versioned | on version update |
+| 2. Episodic | What happened: task, approach, outcome, errors, fixes, user corrections | `EpisodicStore` | `.harness/memory/episodes.jsonl` (distilled from the session event log) | 30–90 d TTL, pins |
+| 3. Semantic | What is true: facts, preferences, entities | `SemanticStore` + ontology | `.harness/memory/facts.db` (entity, type, relation, value, source_episode, status, superseded_by) | on supersession |
+| 4. Procedural | How to do things | Skills (same format as tool-pack skills) | `.harness/memory/skills/*.md`, versioned | on version update |
 | 5. Forgetting | What to delete | `ForgettingEngine` | — | runs at session start / on schedule |
 
 **Data flow**
@@ -238,9 +238,10 @@ retrieved in under 500 ms).
 
 | Concern | Choice |
 |---|---|
-| Python | 3.12+ |
+| Python | 3.12+ (MIT, PyPI: `di-factory-general-harness`) |
 | Packaging / env | `uv`, `pyproject.toml` |
-| Schemas / config | Pydantic v2, `pydantic-settings` |
+| Schemas / config | Pydantic v2; JSON settings files (user + project) |
+| Memory store | SQLite (stdlib `sqlite3`) + FTS5 |
 | LLM transport | `anthropic` SDK (first), `openai` SDK (optional extra) |
 | MCP | official `mcp` Python SDK |
 | UI | Textual (TUI) first; Typer entry point to launch it |
@@ -250,7 +251,7 @@ retrieved in under 500 ms).
 ## 5. Proposed layout
 
 ```
-src/harness/
+src/dif_general_harness/
   core/        loop.py  events.py  messages.py  session.py  context.py
   providers/   base.py  anthropic.py  openai.py  fake.py
   tools/       registry.py  builtin/ (fs.py, shell.py, search.py)  mcp.py  subagent.py
@@ -288,6 +289,13 @@ docs/
 | 3 | First interface | **TUI** (Textual), built on the public Python API / event stream. |
 | 4 | Sandboxing | **Pluggable Executor**; start with workspace-confined subprocess + permission prompts, containers later. |
 | 5 | Memory | **5-layer memory** (working / episodic / semantic / procedural / forgetting), project-scoped, behind `MemoryBackend`; see §3.9. |
+| 6 | Memory retrieval | **SQLite FTS5 (BM25) keyword search** in v1; embeddings added later behind the same interface. |
+| 7 | State location | **Split**: project-scoped sessions/memory/config in `<project>/.harness/`; user-global settings & credentials in `~/.harness/`. |
+| 8 | Multi-agent | **Orchestrator + isolated sub-agents** (sub-agent is a tool; returns only its final answer). No shared-ledger teams in v1. |
+| 9 | Config format | **JSON** (`.harness/settings.json`, `~/.harness/settings.json`), validated by Pydantic; project overrides user. |
+| 10 | Python | **3.12+** |
+| 11 | License / distribution | **MIT**, published to **PyPI**. |
+| 12 | Naming | PyPI dist **`di-factory-general-harness`**, import package **`dif_general_harness`**, CLI command **`dif-general-harness`**. |
 
 ## References
 
