@@ -296,6 +296,9 @@ docs/
 | 10 | Python | **3.12+** |
 | 11 | License / distribution | **MIT**, published to **PyPI**. |
 | 12 | Naming | PyPI dist **`di-factory-general-harness`**, import package **`dif_general_harness`**, CLI command **`dif-general-harness`**. |
+| 13 | Default permissions | Read-only tools auto-allowed; **file writes, shell and network ask** (with "always allow" persisted to settings). |
+| 14 | Observability | JSONL session log always; **OpenTelemetry** (GenAI semantic conventions) as an opt-in extra. |
+| 15 | Credentials | `ANTHROPIC_API_KEY` env var, falling back to `~/.harness/credentials.json` (mode 600). Never stored in project settings. |
 
 ## References
 
