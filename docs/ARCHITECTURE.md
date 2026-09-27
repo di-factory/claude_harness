@@ -1,6 +1,6 @@
 # claude_harness — Architecture Proposal
 
-Status: **Draft / for discussion** · 2026-09-27
+Status: **Accepted (v1 decisions recorded in §7)** · 2026-09-27
 
 ## 1. What we mean by "harness"
 
@@ -52,7 +52,7 @@ schemas, the official `anthropic` SDK for transport, the `mcp` SDK for MCP).
 
 ```
                 ┌──────────────────────────────────────────────┐
-  Interfaces    │  CLI (Typer/Rich)  │  Python API  │  (later: HTTP/TUI) │
+  Interfaces    │  TUI (Textual)  │  Python API  │  (later: CLI/HTTP) │
                 └────────────────────────┬─────────────────────┘
                                          │ events (async stream)
                 ┌────────────────────────▼─────────────────────┐
@@ -118,12 +118,26 @@ interrupt.
 ### 3.3 Model providers
 
 A small `Protocol` (`stream(messages, tools, **opts)`, `count_tokens`,
-`capabilities`) with Anthropic as the first-class implementation (prompt
-caching, extended thinking, server tools) and a `FakeProvider` that replays
-scripted responses for deterministic tests. Other providers are added only when
-needed.
+`capabilities`). The harness is **provider-agnostic by design**: the core only
+sees the neutral message/event model, never a vendor SDK type. Provider-specific
+features (prompt caching, extended thinking, server tools) are exposed through
+a `capabilities` descriptor so the core can use them when present and degrade
+gracefully when not.
+
+M1 ships the `AnthropicProvider` plus a `FakeProvider` that replays scripted
+responses for deterministic tests. OpenAI and local models (Ollama) follow as
+additional adapters; a shared conformance test suite runs against every
+provider to keep them interchangeable.
 
 ### 3.4 Tools
+
+Tools are grouped into **tool packs** so the same core serves both coding and
+general-purpose agents. A pack bundles tools, prompt fragments and default
+permission rules, and is enabled per session/profile:
+
+- `coding` — read/write/edit files, bash, grep, glob.
+- `general` — web fetch/search, HTTP, scratch notes.
+- Third-party packs register via Python entry points; MCP servers appear as packs too.
 
 - Declared with a decorator; JSON schema generated from type hints via Pydantic.
 - Each tool declares `read_only: bool` and a permission category, so the
@@ -148,9 +162,10 @@ needed.
 - `PermissionPolicy`: rules like `allow: read_*`, `ask: bash(*)`,
   `deny: bash(rm -rf *)`, configurable per project/user.
 - `ask` produces a `PermissionRequested` event; the interface answers.
-- Shell runs in a subprocess confined to the workspace with timeouts; a
-  container sandbox can be plugged in later behind the same `Executor`
-  interface.
+- Execution goes through a pluggable `Executor` interface. v1 ships
+  `SubprocessExecutor` (workspace-confined cwd, path checks on file tools,
+  timeouts, output limits). A `ContainerExecutor` (Docker/Podman) is added
+  later behind the same interface without touching tools or the loop.
 
 ### 3.7 Hooks
 
@@ -174,7 +189,7 @@ veto, modify input, or inject context.
 | Schemas / config | Pydantic v2, `pydantic-settings` |
 | LLM transport | `anthropic` SDK (first), `openai` SDK (optional extra) |
 | MCP | official `mcp` Python SDK |
-| CLI / UI | Typer + Rich (Textual TUI later) |
+| UI | Textual (TUI) first; Typer entry point to launch it |
 | Tests | pytest + pytest-asyncio, FakeProvider |
 | Lint / types | ruff, mypy (strict on `core/`) |
 
@@ -188,7 +203,8 @@ src/harness/
   policy/      permissions.py  hooks.py
   store/       jsonl.py
   prompts/     system.md  builder.py
-  cli/         main.py
+  tools/packs/ coding/  general/
+  tui/         app.py  widgets/  (Textual)
 tests/
 evals/
 docs/
@@ -197,20 +213,21 @@ docs/
 ## 6. Roadmap
 
 1. **M0 – skeleton**: data model, FakeProvider, loop, JSONL store, tests.
-2. **M1 – usable agent**: Anthropic provider (streaming, caching), built-in
-   fs/shell/search tools, permission prompts, CLI REPL.
+2. **M1 – usable agent**: Anthropic provider (streaming, caching), coding +
+   general tool packs, SubprocessExecutor, permission prompts, Textual TUI.
 3. **M2 – long sessions**: compaction, resume/fork, project memory, hooks.
 4. **M3 – extensibility**: MCP client, sub-agents, skills.
-5. **M4 – hardening**: container sandbox, OpenTelemetry, eval suite, second
-   provider.
+5. **M4 – more providers & hardening**: OpenAI + Ollama adapters with
+   conformance suite, ContainerExecutor, OpenTelemetry, eval suite.
 
-## 7. Open questions
+## 7. Decisions (v1)
 
-1. Primary use case: coding agent (Claude Code–like) vs. general task agent?
-   This decides which built-in tools come first.
-2. Claude-only, or provider-agnostic from day one?
-3. Interface priority: CLI, library, or HTTP service?
-4. Required sandbox strength (subprocess jail vs. containers)?
+| # | Question | Decision |
+|---|---|---|
+| 1 | Primary use case | **Both, pluggable** — neutral core + tool packs (`coding`, `general`, MCP, third-party). |
+| 2 | Providers | **Multi-provider architecture now**; M1 implements **Anthropic** only (+ FakeProvider). OpenAI/Ollama next. |
+| 3 | First interface | **TUI** (Textual), built on the public Python API / event stream. |
+| 4 | Sandboxing | **Pluggable Executor**; start with workspace-confined subprocess + permission prompts, containers later. |
 
 ## References
 
