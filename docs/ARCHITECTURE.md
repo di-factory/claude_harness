@@ -78,6 +78,36 @@ business sells is delivered as an *instance* of that template.**
 - Not where Di-Factory's internal delivery agents run (they stay on
   OpenClaw/Paperclip); only client-facing ones run here.
 
+### 0.4 How a client solution gets built: the constructor agent
+
+The operating model: when Di-Factory sells a solution to client X, the
+**constructor agent** turns the request into a running instance in X's cloud.
+
+```
+1. Intake     "deploy solution S for client X"            (from Jag, or from Teky on OpenClaw)
+2. Match      S checked against the pack catalog  → fits a pack, or a combination → continue
+                                                  → no fit → stop: a new pack is Di-Factory design work
+3. Interview  asks only what the chosen packs declare as open (their questionnaire):
+              business details, channels, integrations, language, compliance, target cloud account
+4. Build      writes the instance spec (the 15–20%); any custom-code extension is flagged
+5. Verify     validates the resolved spec and runs the packs' evals against it in a sandbox
+6. Approve    plain-language summary + resolved spec + eval results → Jag approves
+7. Deploy     into the client's cloud; the client enters secrets straight into their own vault
+8. Hand over  smoke test, instance agent registers with the control plane, runbook delivered
+```
+
+- The constructor never invents missing capability. A request no pack covers
+  becomes a pack-design task, keeping the 80/20 model honest.
+- The questions come from the packs (`variables[*].ask`, see the spec), so a
+  new pack brings its own interview without changing the constructor.
+- The constructor ships **with the harness** (`dif-general-harness build`),
+  defined as a harness pack itself. A thin **OpenClaw skill** lets Teky
+  (Di-Factory's CTO agent) drive it.
+- **Only Jag approves deployments** (decision 37). The constructor never sees
+  secret values.
+- Adjusting a live instance uses the same path: change the answers → rebuild
+  → verify → approve → roll out as a new config version.
+
 ## 1. What we mean by "harness"
 
 An *agent harness* is everything around the model that turns a stateless
@@ -487,8 +517,10 @@ src/dif_general_harness/
   store/       jsonl.py sqlite.py postgres.py
   service/     app.py (FastAPI: channels, webhooks, admin, inbox)
   console/     tui/ (Textual)  cli.py
+  constructor/ catalog.py interview.py build.py verify.py deploy.py
   routing.py   checkpoints.py  telemetry.py
-packs/         reusable solution packs (spec fragments + prompts + evals)
+packs/         reusable solution packs (spec fragments + prompts + evals), incl. the constructor pack
+integrations/  openclaw-skill/ (thin wrapper so Teky can drive the constructor)
 deploy/        docker/  terraform/aws/
 tests/  evals/  docs/
 ```
@@ -513,7 +545,9 @@ tests/  evals/  docs/
    - secret redaction;
    - routing;
    - checkpoints;
-   - **TUI console** for building and testing instances locally.
+   - **TUI console** for building and testing instances locally;
+   - **constructor v1:** pack matching, interview from pack questionnaires,
+     instance-spec generation, validation and offline evals.
 3. **M2 – Headless runtime and governance minimum:**
    - FastAPI service;
    - channel adapters (a messaging gateway first) and triggers (scheduler,
@@ -525,6 +559,10 @@ tests/  evals/  docs/
    - versioned config;
    - **instance agent** (health, metrics, pulls approved config);
    - Docker image;
+   - **basic AWS deploy** (minimal Terraform: one container, Postgres,
+     Secrets Manager, single region);
+   - **constructor v2:** approval gate and deploy to Docker or basic AWS;
+     Teky wrapper skill.
    - PII tokenization, consent/opt-out, audit log and retention.
 4. **M3 – Intelligence modules:**
    - 5-layer memory;
@@ -534,7 +572,9 @@ tests/  evals/  docs/
    - agent teams and workflows;
    - evals per solution.
 5. **M4 – Operations hardening:**
-   - Terraform (AWS);
+   - Terraform hardening (sizing profiles, upgrades, rollback);
+   - **constructor v3:** full lifecycle (adjust, upgrade, control-plane
+     registration);
    - OpenTelemetry;
    - cost reports per tenant and vendor;
    - provider-region policy;
@@ -558,7 +598,7 @@ instance can start once the modules it needs have shipped.
 | 4 | Providers | Provider-neutral core; **Anthropic + OpenAI-compatible** from M1, conformance-tested. |
 | 5 | Tenancy | **Single-tenant per client cloud by default**, multi-tenant capable (tenant id on every record). |
 | 6 | Governance | **Minimum set before the first client instance**: PII tokenization, consent/opt-out, audit log, retention. Region policy and CNBV/NOM profiles later. |
-| 7 | Deployment | **AWS first**: Docker image + Terraform; GCP/Azure later. Local mode for development. |
+| 7 | Deployment | **AWS first**: Docker image + Terraform (basic in M2, hardened in M4); GCP/Azure later. Local mode for development. |
 | 8 | Sandboxing | Pluggable Executor; subprocess first, containers later. |
 | 9 | Memory | 5 layers, scoped per tenant / instance / contact; SQLite FTS5 locally, Postgres in production. |
 | 10 | Multi-agent | Orchestrator + sub-agents **and** agent teams with roles, handoffs and a shared ledger (M3). |
@@ -587,6 +627,10 @@ instance can start once the modules it needs have shipped.
 | 33 | Condition language | **CEL subset** for workflow branches, escalation rules and trigger filters. |
 | 34 | Language | **English by default**; Spanish (es-MX) only when a client asks. §3.23 |
 | 35 | Eval format | **YAML**, one case per document; specs stay JSON. |
+| 36 | Constructor agent | Ships **with the harness** (`dif-general-harness build`) as a harness pack, plus a thin **OpenClaw skill** so Teky can drive it. Flow: intake → match → interview → build → verify → approve → deploy → hand over. §0.4 |
+| 37 | Deploy approval | **Jag approves every deployment** into a client cloud; client sign-off happens outside the tool. |
+| 38 | Constructor timing | **Incremental:** v1 in M1 (interview, build, validate, evals), v2 in M2 (approval gate, deploy to Docker or basic AWS, Teky skill), v3 in M4 (full lifecycle). |
+| 39 | First-client deploy | **Basic AWS deploy moves to M2** (minimal Terraform); M4 hardens it. |
 
 ## 8. First instantiation candidates (parked)
 

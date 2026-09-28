@@ -15,6 +15,8 @@
 
 **Vision.** One template (core runtime, capability modules, governance and operations) and a declarative solution spec per client. Onboarding a client means writing a spec override and connecting secrets, not writing new code. It runs in the client's cloud, the client owns everything, there is no lock-in to one model or cloud, and third-party costs pass through at zero markup.
 
+**How it is used.** When Di-Factory sells solution S to client X, Jag (or Teky, Di-Factory's CTO agent on OpenClaw) asks the constructor agent to build it. The constructor matches S to the pack catalog, interviews for the open details, writes the instance spec, verifies it with evals, and after Jag's approval deploys it into X's cloud.
+
 **Summary.** A headless runtime (channels, triggers, admin and approvals API) with a terminal console for developers and operators. It is model-agnostic from the first usable release and deploys to AWS first. It is distributed on PyPI as `di-factory-general-harness` (command `dif-general-harness`, import `dif_general_harness`).
 
 ## Goals and non-goals
@@ -77,7 +79,7 @@ Four personas use the template; seven lines of business consume it as instances.
 
 ## User stories
 
-Fifteen stories define the template; each maps to requirements in the next section.
+Sixteen stories define the template; each maps to requirements in the next section.
 
 | # | As a… | I want… | So that… |
 | --- | --- | --- | --- |
@@ -96,6 +98,7 @@ Fifteen stories define the template; each maps to requirements in the next secti
 | US-13 | solution builder | agents to answer from the client's documents with citations | answers are grounded, not invented |
 | US-14 | solution builder | multi-step work to survive restarts and retries | long workflows never lose their place |
 | US-15 | Di-Factory operator | to see every client instance's health and cost, and roll out pack upgrades safely | I can run, adjust and upgrade many clients without touching their data |
+| US-16 | Di-Factory (Jag or Teky) | to ask the constructor agent to build solution S for client X, answer its questions, approve, and have it deployed in X's cloud | a new client goes from sale to running solution with configuration, not new code |
 
 ## Functional requirements
 
@@ -125,12 +128,16 @@ P0 = required for the milestone; P1 = planned for v1; P2 = after v1. Milestones 
 | FR-20 | Teams | Named long-lived agents with roles, handoffs, shared task ledger and sub-agents | P1 | M3 | US-14 |
 | FR-21 | Feedback | Candidate constraints and skills proposed via the inbox; approved ones pinned | P1 | M3 | US-8 |
 | FR-22 | Evals | Eval set per pack; run offline and against real models before model swaps and releases | P0 | M3 | US-3 |
-| FR-23 | Deploy | Terraform module for AWS (ECS or EC2, RDS, Secrets Manager); one-command deploy into the client account | P0 | M4 | US-5 |
+| FR-23 | Deploy | Hardened Terraform for AWS (sizing profiles, upgrades, rollback); one-command deploy into the client account | P0 | M4 | US-5 |
 | FR-24 | Observability | Cost per tenant, vendor and role; quality metrics; OpenTelemetry export | P1 | M2 (cost), M4 (OTel) | US-11 |
 | FR-25 | Governance | Provider-region policy; CNBV and NOM-024 profiles | P2 | M4+ | US-10 |
 | FR-26 | Channels | Voice (speech-to-text and text-to-speech); Slack | P2 | after v1 | US-6 |
 | FR-27 | Fleet | Instance agent (outbound only): reports health, metrics, costs and eval results; pulls approved config and pack upgrades; revocable by the client | P0 | M2 | US-15 |
 | FR-28 | Fleet | Control plane MVP: fleet view across clients, pack upgrades rolled out instance by instance and gated by evals, remote config through versioned config, audit of every change | P1 | M4 | US-15 |
+| FR-29 | Constructor | v1: match a request to packs, interview from pack questionnaires (`variables[*].ask`), write the instance spec, validate, run offline evals | P0 | M1 | US-16 |
+| FR-30 | Constructor | v2: approval gate (Jag), deploy to Docker or basic AWS, client-held secrets; OpenClaw skill so Teky can drive it | P0 | M2 | US-16 |
+| FR-31 | Constructor | v3: adjust and upgrade live instances through the same flow; register with the control plane | P1 | M4 | US-15, US-16 |
+| FR-32 | Deploy | Basic AWS deploy (minimal Terraform: container, Postgres, Secrets Manager, one region) | P0 | M2 | US-5 |
 
 ## Non-functional requirements
 
@@ -219,10 +226,10 @@ The template ships in five milestones, one 4-week sprint each, owned by Jag Pasc
 | Milestone | Due | Scope | Gate |
 | --- | --- | --- | --- |
 | M0 Core | 2026-10-23 | data model, event stream, agent loop, solution spec, tenant ids, offline tests | spec tests |
-| M1 Agent core | 2026-11-20 | two providers, tool registry, MCP and HTTP, permissions, budgets and secrets, TUI console | conformance |
-| M2 Runtime | 2026-12-18 | headless service, channels and triggers, durable queue, approvals inbox, PII and consent, audit and Postgres, instance agent | governance |
+| M1 Agent core | 2026-11-20 | two providers, tool registry, MCP and HTTP, permissions, budgets and secrets, TUI console, constructor v1 | conformance |
+| M2 Runtime | 2026-12-18 | headless service, channels and triggers, durable queue, approvals inbox, PII and consent, audit and Postgres, instance agent, basic AWS deploy, constructor v2 | governance |
 | M3 Intelligence | 2027-01-15 | 5-layer memory, knowledge (RAG), verification, agent teams, feedback loop, pack evals | eval suite |
-| M4 Operations | 2027-02-12 | Terraform (AWS), OpenTelemetry, cost reports, region policy, containers, control plane MVP; GCP and Azure later | v1.0 release |
+| M4 Operations | 2027-02-12 | Terraform (AWS), OpenTelemetry, cost reports, region policy, containers, control plane MVP, constructor v3; GCP and Azure later | v1.0 release |
 
 Each milestone is published to PyPI as a pre-release (0.x) once its gate passes; M4 ends with v1.0.
 
@@ -273,5 +280,9 @@ The largest risk is building a general platform before any instance proves it; t
 | Condition language | CEL subset |
 | Language | English by default; Spanish only when a client asks |
 | Eval format | YAML, one case per document |
+| Constructor agent | Ships with the harness (`dif-general-harness build`) plus an OpenClaw skill for Teky; flow intake → match → interview → build → verify → approve → deploy → hand over |
+| Deploy approval | Jag approves every deployment into a client cloud |
+| Constructor timing | v1 in M1, v2 in M2, v3 in M4 |
+| First-client deploy | Basic AWS deploy moves to M2; M4 hardens it |
 
 No open questions remain; new ones will be added here.

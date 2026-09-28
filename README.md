@@ -31,6 +31,18 @@ client is slow and fragile. `dif-general-harness` builds it **once**:
 Onboarding a client means writing a spec and connecting secrets, not writing
 a new codebase.
 
+## How a client solution gets built
+
+```
+Jag or Teky: "deploy solution S for client X"
+  → constructor agent matches S to the pack catalog (no fit → new pack needed)
+  → interviews for the open details the pack declares
+  → writes the instance spec (the 15–20%), validates it, runs the pack's evals
+  → Jag approves
+  → deploys into X's own cloud; X keeps its secrets in its own vault
+  → instance agent reports to Di-Factory's control plane
+```
+
 ## Principles
 
 | Principle | What it means in the code |
@@ -57,7 +69,7 @@ Platform     storage (SQLite / Postgres) · secrets vault · executor · deploy 
 
 We own the agent loop instead of wrapping a framework, so context handling,
 safety and cost stay visible and cheap to change. See
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and all 35
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and all 39
 recorded decisions.
 
 ## What you can build with it
@@ -104,10 +116,10 @@ cell, Conversational RAG) are in [`docs/spec/`](docs/spec/SOLUTION_SPEC.md).
 | Milestone | Due | Scope |
 |---|---|---|
 | **M0 Core** | 2026-10-23 | Data model, event stream, agent loop, solution-spec schema, tenant ids, offline tests |
-| **M1 Agent core** | 2026-11-20 | Anthropic + OpenAI-compatible providers, tool registry, MCP/HTTP tools, permissions, budgets, TUI console |
-| **M2 Runtime** | 2026-12-18 | Headless service, channels, triggers, durable queue, approvals inbox, PII/consent/audit, Postgres, instance agent |
+| **M1 Agent core** | 2026-11-20 | Anthropic + OpenAI-compatible providers, tool registry, MCP/HTTP tools, permissions, budgets, TUI console, constructor v1 |
+| **M2 Runtime** | 2026-12-18 | Headless service, channels, triggers, durable queue, approvals inbox, PII/consent/audit, Postgres, instance agent, basic AWS deploy, constructor v2 |
 | **M3 Intelligence** | 2027-01-15 | 5-layer memory, knowledge/RAG, verification, agent teams, feedback loop, pack evals |
-| **M4 Operations** | 2027-02-12 | Terraform (AWS), OpenTelemetry, cost reports, region policy, fleet control plane → **v1.0** |
+| **M4 Operations** | 2027-02-12 | Terraform (AWS), OpenTelemetry, cost reports, region policy, fleet control plane, constructor v3 → **v1.0** |
 
 Each milestone ships as a PyPI pre-release once its acceptance gate passes.
 
@@ -115,7 +127,7 @@ Each milestone ships as a PyPI pre-release once its acceptance gate passes.
 
 ```bash
 uv tool install di-factory-general-harness       # after the first release
-dif-general-harness new my-solution --pack pyme-appointment-agent
+dif-general-harness build --pack pyme-appointment-agent   # constructor: interview → spec → evals
 dif-general-harness console my-solution          # run locally with a fake or real model
 dif-general-harness deploy my-solution --target aws
 ```

@@ -14,51 +14,111 @@
     "business_name": {
       "type": "string",
       "required": true,
-      "description": "Name shown to patients"
+      "description": "Name shown to patients",
+      "ask": {
+        "question": "What is the business name patients should see?",
+        "answered_by": "client",
+        "group": "scheduling",
+        "order": 1
+      }
     },
     "business_hours": {
       "type": "schedule",
       "required": true,
-      "description": "Opening hours per weekday"
+      "description": "Opening hours per weekday",
+      "ask": {
+        "question": "What are the opening hours for each weekday?",
+        "answered_by": "client",
+        "group": "scheduling",
+        "order": 2
+      }
     },
     "whatsapp_number": {
       "type": "string",
       "required": true,
-      "description": "Client-owned sender number"
+      "description": "Client-owned sender number",
+      "ask": {
+        "question": "Which WhatsApp number (in the client's own gateway account) sends the messages?",
+        "answered_by": "client",
+        "group": "channels",
+        "order": 1
+      }
     },
     "calendar_ids": {
       "type": "list",
       "required": true,
-      "description": "Google Calendar id per practitioner"
+      "description": "Google Calendar id per practitioner",
+      "ask": {
+        "question": "Which Google Calendar belongs to each practitioner?",
+        "answered_by": "client",
+        "group": "integrations",
+        "order": 1
+      }
     },
     "reminder_hours": {
       "type": "integer",
       "default": 24,
       "min": 1,
-      "max": 72
+      "max": 72,
+      "ask": {
+        "question": "How many hours before an appointment should patients be reminded?",
+        "answered_by": "client",
+        "group": "scheduling",
+        "order": 3
+      }
     },
     "tpl_reminder_id": {
       "type": "string",
       "required": true,
-      "description": "Approved WhatsApp template id for reminders"
+      "description": "Approved WhatsApp template id for reminders",
+      "ask": {
+        "question": "What is the approved WhatsApp template id for reminders?",
+        "answered_by": "difactory",
+        "group": "channels",
+        "order": 2
+      }
     },
     "tpl_nudge_id": {
       "type": "string",
       "required": true,
-      "description": "Approved WhatsApp template id for the follow-up nudge"
+      "description": "Approved WhatsApp template id for the follow-up nudge",
+      "ask": {
+        "question": "What is the approved WhatsApp template id for the follow-up nudge?",
+        "answered_by": "difactory",
+        "group": "channels",
+        "order": 3
+      }
     },
     "ops_email": {
       "type": "string",
       "required": true,
-      "description": "Where approvals and escalations are notified"
+      "description": "Where approvals and escalations are notified",
+      "ask": {
+        "question": "Which email should receive approvals and escalations?",
+        "answered_by": "client",
+        "group": "operations",
+        "order": 1
+      }
     },
     "main_model": {
       "type": "string",
-      "default": "<main-model-id>"
+      "default": "<main-model-id>",
+      "ask": {
+        "question": "Which model should the main agent use?",
+        "answered_by": "difactory",
+        "group": "models",
+        "order": 1
+      }
     },
     "fast_model": {
       "type": "string",
-      "default": "<fast-model-id>"
+      "default": "<fast-model-id>",
+      "ask": {
+        "question": "Which low-cost model should handle routing and summaries?",
+        "answered_by": "difactory",
+        "group": "models",
+        "order": 2
+      }
     }
   },
   "secrets": {

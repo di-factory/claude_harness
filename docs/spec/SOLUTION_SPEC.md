@@ -122,6 +122,23 @@ semantic version), stored with every session and shown by
 overridden in the instance (`channels.<id>.templates.<name>.file`) with the
 client's approved wording.
 
+**Questionnaire (decision 36).** Each variable can carry an `ask` block. The
+constructor agent uses it to interview whoever sets up a new client, so a new
+pack brings its own questions:
+
+```json
+"reminder_hours": {
+  "type": "integer", "default": 24, "min": 1, "max": 72,
+  "ask": { "question": "How many hours before an appointment should patients be reminded?",
+           "answered_by": "client", "example": "24", "group": "scheduling", "order": 3 }
+}
+```
+
+- `answered_by` is `client`, `difactory` or `either`.
+- `group` and `order` shape the interview.
+- Secrets never get an `ask` for their value. The constructor only explains
+  where the client must store them.
+
 Variable types: `string`, `integer`, `number`, `boolean`, `enum`, `list`,
 `object`, `duration` (`"24h"`), `schedule` (opening hours), `file`.
 
