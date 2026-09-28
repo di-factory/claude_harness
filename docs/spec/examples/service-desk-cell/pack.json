@@ -8,7 +8,7 @@
     "name": "Service Desk Cell",
     "lob": "agentic-transformation",
     "description": "Agent team that resolves Tier-1 IT tickets 24/7: triage, knowledge lookup, password resets and escalation.",
-    "locale": "es-MX"
+    "locale": "en"
   },
   "variables": {
     "company_name": {
@@ -473,9 +473,9 @@
   },
   "evals": {
     "suites": [
-      "evals/triage.jsonl",
-      "evals/password_reset.jsonl",
-      "evals/escalation.jsonl"
+      "evals/triage.yaml",
+      "evals/password_reset.yaml",
+      "evals/escalation.yaml"
     ],
     "thresholds": {
       "pass_rate": 0.9,

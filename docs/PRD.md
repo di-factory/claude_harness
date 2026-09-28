@@ -9,7 +9,7 @@
 
 **dif-general-harness is Di-Factory's general solution template: an open-source (MIT) agent runtime with pluggable capability modules. Every client solution a line of business sells is delivered as an instance of it.**
 
-**Context.** Di-Factory (∂i~ƒ, Data Intelligence Factory, CDMX) sells seven lines of business: Tailored ML Models, MVP Development, Business Consulting, VC Partnership, Agentic Transformation (Dev, Ops and Service Desk cells), OPC Startup and SMB/PyME Solutions. Di-Factory itself runs on OpenClaw with Paperclip. The harness is separate from that: it is one delivery option for the solutions Di-Factory builds for clients.
+**Context.** Di-Factory (∂i~ƒ, Data Intelligence Factory, CDMX) sells seven lines of business: Tailored ML Models, MVP Development, Business Consulting, VC Partnership, Agentic Transformation (Dev, Ops and Service Desk cells), OPC Startup and SMB/PyME Solutions. Di-Factory itself runs on OpenClaw with Paperclip. The harness is separate from that: it is one base platform among several, used to run, adjust and deploy client solutions across every line of business where it applies. Di-Factory's internal delivery agents stay on OpenClaw/Paperclip; client-facing ones run on the harness.
 
 **Problem.** Each client solution is rebuilt from scratch: agents, channels, connectors, memory, safety and compliance. That makes fixed-price, fixed-time delivery fragile and cuts margins. The PyME promise "80% is already built, the 20% is yours" needs an actual 80% in code.
 
@@ -56,7 +56,7 @@ Four personas use the template; seven lines of business consume it as instances.
 
 **Line of business → capability modules** (● required, ○ optional, – not needed)
 
-| Module | PyME agents | Agentic cells | RAG assistant | ML models | Delivery agents (MVP, Consulting, VC) | OPC (on request) |
+| Module | PyME agents | Agentic cells | RAG assistant | ML models | Client-facing delivery agents (MVP, Consulting, VC) | OPC (on request) |
 | --- | --- | --- | --- | --- | --- | --- |
 | Core loop, providers, routing, budgets | ● | ● | ● | ● | ● | ● |
 | Solution spec | ● | ● | ● | ● | ● | ● |
@@ -77,7 +77,7 @@ Four personas use the template; seven lines of business consume it as instances.
 
 ## User stories
 
-Fourteen stories define the template; each maps to requirements in the next section.
+Fifteen stories define the template; each maps to requirements in the next section.
 
 | # | As a… | I want… | So that… |
 | --- | --- | --- | --- |
@@ -95,6 +95,7 @@ Fourteen stories define the template; each maps to requirements in the next sect
 | US-12 | client operator | the agent to remember each contact and past outcomes | conversations continue where they left off |
 | US-13 | solution builder | agents to answer from the client's documents with citations | answers are grounded, not invented |
 | US-14 | solution builder | multi-step work to survive restarts and retries | long workflows never lose their place |
+| US-15 | Di-Factory operator | to see every client instance's health and cost, and roll out pack upgrades safely | I can run, adjust and upgrade many clients without touching their data |
 
 ## Functional requirements
 
@@ -128,6 +129,8 @@ P0 = required for the milestone; P1 = planned for v1; P2 = after v1. Milestones 
 | FR-24 | Observability | Cost per tenant, vendor and role; quality metrics; OpenTelemetry export | P1 | M2 (cost), M4 (OTel) | US-11 |
 | FR-25 | Governance | Provider-region policy; CNBV and NOM-024 profiles | P2 | M4+ | US-10 |
 | FR-26 | Channels | Voice (speech-to-text and text-to-speech); Slack | P2 | after v1 | US-6 |
+| FR-27 | Fleet | Instance agent (outbound only): reports health, metrics, costs and eval results; pulls approved config and pack upgrades; revocable by the client | P0 | M2 | US-15 |
+| FR-28 | Fleet | Control plane MVP: fleet view across clients, pack upgrades rolled out instance by instance and gated by evals, remote config through versioned config, audit of every change | P1 | M4 | US-15 |
 
 ## Non-functional requirements
 
@@ -147,7 +150,7 @@ Safety, ownership and predictability outrank speed; every target below is testab
 | NFR-10 | Auditability | Every action traceable to tenant, instance, agent, plan, tool call and approver; audit log is append-only |
 | NFR-11 | Operability | Config changes are versioned with rollback and need no redeploy; health checks and runbook per instance |
 | NFR-12 | Maintainability | Strict mypy on the core; ruff clean; unit tests offline with FakeProvider; conformance and eval suites in CI |
-| NFR-13 | Localization | Spanish (es-MX) first for prompts, templates and console; English supported |
+| NFR-13 | Localization | English by default for prompts, templates, docs and console; Spanish (es-MX) added only when a client asks |
 
 ## Architecture and key decisions
 
@@ -217,9 +220,9 @@ The template ships in five milestones, one 4-week sprint each, owned by Jag Pasc
 | --- | --- | --- | --- |
 | M0 Core | 2026-10-23 | data model, event stream, agent loop, solution spec, tenant ids, offline tests | spec tests |
 | M1 Agent core | 2026-11-20 | two providers, tool registry, MCP and HTTP, permissions, budgets and secrets, TUI console | conformance |
-| M2 Runtime | 2026-12-18 | headless service, channels and triggers, durable queue, approvals inbox, PII and consent, audit and Postgres | governance |
+| M2 Runtime | 2026-12-18 | headless service, channels and triggers, durable queue, approvals inbox, PII and consent, audit and Postgres, instance agent | governance |
 | M3 Intelligence | 2027-01-15 | 5-layer memory, knowledge (RAG), verification, agent teams, feedback loop, pack evals | eval suite |
-| M4 Operations | 2027-02-12 | Terraform (AWS), OpenTelemetry, cost reports, region policy, containers; GCP and Azure later | v1.0 release |
+| M4 Operations | 2027-02-12 | Terraform (AWS), OpenTelemetry, cost reports, region policy, containers, control plane MVP; GCP and Azure later | v1.0 release |
 
 Each milestone is published to PyPI as a pre-release (0.x) once its gate passes; M4 ends with v1.0.
 
@@ -263,5 +266,12 @@ The largest risk is building a general platform before any instance proves it; t
 | Success targets | Accepted as listed under Success metrics |
 | Naming and state | PyPI name `di-factory-general-harness` is free (to be registered on first release); state in `.dif/` and `~/.dif/`, project memory file `DIF.md` |
 | Timeline | One 4-week sprint per milestone, M0 to M4 (dates above) |
+| Fleet operations | Control plane plus an outbound-only instance agent in each deployment; the client can revoke it (FR-27, FR-28) |
+| Spec portability | Harness-native, kept clean so exporters to other platforms can come later |
+| Delivery agents | Internal ones on OpenClaw/Paperclip; client-facing ones on the harness |
+| Spec coverage | Paper test 2 before M0: batch document job, Dev cell, OPC-style agent team |
+| Condition language | CEL subset |
+| Language | English by default; Spanish only when a client asks |
+| Eval format | YAML, one case per document |
 
 No open questions remain; new ones will be added here.

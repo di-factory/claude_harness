@@ -1,7 +1,7 @@
-# Preguntas frecuentes (ejemplo)
+# Frequently asked questions (example)
 
-## ¿Dónde están ubicados?
-Dirección de ejemplo. Estacionamiento disponible.
+## Where are you located?
+Example address. Parking available.
 
-## ¿Qué formas de pago aceptan?
-Efectivo, tarjeta de débito y crédito.
+## Which payment methods do you accept?
+Cash, debit and credit cards.

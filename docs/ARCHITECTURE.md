@@ -13,8 +13,17 @@ business sells is delivered as an *instance* of that template.**
   VC Partnership, Agentic Transformation (Dev / Ops / Service Desk cells), OPC
   Startup and SMB/PyME Solutions.
 - Di-Factory itself runs on OpenClaw with Paperclip. The harness is **not** the
-  company's operating system. It is **one delivery option** for the solutions
-  Di-Factory builds and deploys for clients.
+  company's operating system. It is **one base platform among several** (next
+  to OpenClaw/Hermes, the Django MVP stack and the ML Loop), used to **run,
+  adjust and deploy** client solutions across every line of business where it
+  applies.
+- Delivery agents that Di-Factory uses internally (business-plan research,
+  due diligence, internal MVP work) stay on OpenClaw/Paperclip. When a client
+  buys one of those agents (for example a Dev cell for their own backlog), it
+  runs on the harness in the client's cloud.
+- Solution specs are **harness-native**: clean and documented, so exporters
+  to other platforms can be added later. There is no cross-platform promise in
+  v1.
 - The PyME offer's "80% is already built, the 20% is yours" becomes concrete:
   the **80% is the template** (core and modules), and the **20% is the
   instance** (a solution spec with client prompts, rules, connectors and
@@ -40,7 +49,7 @@ business sells is delivered as an *instance* of that template.**
 
 ● required · ○ optional · – not needed
 
-| Module | PyME agents | Agentic cells | RAG assistant | ML models | Delivery agents (MVP, Consulting, VC) | OPC (if client picks harness) |
+| Module | PyME agents | Agentic cells | RAG assistant | ML models | Client-facing delivery agents (MVP, Consulting, VC) | OPC (if client picks harness) |
 |---|---|---|---|---|---|---|
 | Core loop, providers, routing, budgets | ● | ● | ● | ● | ● | ● |
 | Solution spec | ● | ● | ● | ● | ● | ● |
@@ -66,6 +75,8 @@ business sells is delivered as an *instance* of that template.**
   trained models plug in as tools.
 - Not a web-app framework. MVPs stay on the Django standard stack.
 - Not a no-code builder in v1. Solution specs are files written by developers.
+- Not where Di-Factory's internal delivery agents run (they stay on
+  OpenClaw/Paperclip); only client-facing ones run here.
 
 ## 1. What we mean by "harness"
 
@@ -128,7 +139,7 @@ prompt files and optional Python extensions next to it:
 
 | Section | Declares |
 |---|---|
-| `solution` | id, version, LOB, description, locale (es-MX first) |
+| `solution` | id, version, LOB, description, locale (English default) |
 | `agents` | named agents: role, system prompt file, model role, tools, memory policy, sub-agents |
 | `models` | per-role `{provider, model, effort}` (§3.11) and allowed provider regions |
 | `tools` | tool packs, MCP servers, HTTP/REST connectors (JSON-schema contracts), ML-model tools |
@@ -404,10 +415,39 @@ admin API; and a runbook generated from the spec.
 
 ### 3.21 Evals per solution
 
-Every pack ships an eval set: scripted conversations and tasks with expected
-outcomes and tool calls. Evals run offline against `FakeProvider` and against
+Every pack ships an eval set in **YAML**: scripted conversations and tasks,
+one case per document, with expected outcomes and tool calls. Evals run offline against `FakeProvider` and against
 real models before any model swap, pack upgrade or config release. Results are
 stored so behavioural drift is visible over time.
+
+### 3.22 Fleet operations: control plane and instance agent
+
+Di-Factory runs, adjusts and upgrades many client instances, each in a
+different client cloud:
+
+- **Instance agent:** a small component inside every deployment. Its
+  connections are **outbound only**. It reports health, metrics, costs and eval
+  results, and it **pulls** approved config versions and pack upgrades.
+  Nothing reaches into the client's cloud. The client can revoke it at any
+  time, and the instance keeps running without it.
+- **Control plane** (Di-Factory side):
+  - a fleet view across clients (health, costs, eval drift, escalation
+    rates);
+  - a pack-upgrade rollout that goes instance by instance, gated by each
+    instance's evals, with rollback;
+  - remote config changes, applied only through the instance's normal
+    versioned-config path;
+  - an audit record of every change.
+- It never reads raw client data. It receives only aggregates, and redacted
+  traces when the client allows them.
+
+### 3.23 Language
+
+**English is the default.** Pack prompts, templates, docs and the console are
+written in English. Spanish (es-MX) is added only when a client asks for it: the
+instance sets `solution.locale`, agents reply in that language, and any
+customer-facing templates are overridden in the instance with the client's
+wording.
 
 ## 4. Tech stack
 
@@ -441,6 +481,7 @@ src/dif_general_harness/
   channels/    base.py gateway.py telegram.py web.py email.py
   triggers/    scheduler.py webhooks.py
   hitl/        inbox.py escalation.py
+  fleet/       instance_agent.py  (the control plane is a separate component)
   governance/  pii.py consent.py audit.py retention.py region.py
   tenancy/     tenant.py config_versions.py secrets.py
   store/       jsonl.py sqlite.py postgres.py
@@ -482,6 +523,7 @@ tests/  evals/  docs/
    - approvals inbox and escalation;
    - secrets vault adapters;
    - versioned config;
+   - **instance agent** (health, metrics, pulls approved config);
    - Docker image;
    - PII tokenization, consent/opt-out, audit log and retention.
 4. **M3 – Intelligence modules:**
@@ -497,6 +539,7 @@ tests/  evals/  docs/
    - cost reports per tenant and vendor;
    - provider-region policy;
    - ContainerExecutor;
+   - **control plane MVP** (fleet view, gated pack rollouts, remote config);
    - GCP/Azure profiles.
 
 Target dates (4-week sprints from 2026-09-28): M0 2026-10-23, M1 2026-11-20,
@@ -537,6 +580,13 @@ instance can start once the modules it needs have shipped.
 | 26 | Success targets | ≥80% reuse · ≤2 weeks onboarding on an existing pack · ≤4 weeks per new pack · ≥90% eval pass · 0 unsafe actions · 0 leaks · 100% cost attribution. |
 | 27 | State directory | Project state in **`.dif/`**, user state in **`~/.dif/`**, project memory file **`DIF.md`**. |
 | 28 | Timeline | **4-week sprint per milestone**, owner Jag Pascoe (CEO) with agent builders: M0 2026-10-23 · M1 2026-11-20 · M2 2026-12-18 · M3 2027-01-15 · M4 2027-02-12. |
+| 29 | Fleet operations | **Control plane + outbound-only instance agent** that reports health, cost and evals and pulls approved config and pack upgrades; the client can revoke it. §3.22 |
+| 30 | Spec portability | **Harness-native**, kept clean so exporters to other platforms can come later; no cross-platform promise in v1. |
+| 31 | Delivery agents | Internal ones stay on OpenClaw/Paperclip; **client-facing ones run on the harness** in the client's cloud. |
+| 32 | Paper test 2 | Before M0, also test the spec on a **batch document job** (Receipt Processing), a **Dev cell** and an **OPC-style agent team**. |
+| 33 | Condition language | **CEL subset** for workflow branches, escalation rules and trigger filters. |
+| 34 | Language | **English by default**; Spanish (es-MX) only when a client asks. §3.23 |
+| 35 | Eval format | **YAML**, one case per document; specs stay JSON. |
 
 ## 8. First instantiation candidates (parked)
 

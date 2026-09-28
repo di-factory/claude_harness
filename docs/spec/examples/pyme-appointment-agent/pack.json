@@ -8,35 +8,105 @@
     "name": "Appointment Agent",
     "lob": "pyme",
     "description": "Confirms, reminds and reschedules appointments for clinics and practices over WhatsApp/SMS.",
-    "locale": "es-MX"
+    "locale": "en"
   },
   "variables": {
-    "business_name": { "type": "string", "required": true, "description": "Name shown to patients" },
-    "business_hours": { "type": "schedule", "required": true, "description": "Opening hours per weekday" },
-    "whatsapp_number": { "type": "string", "required": true, "description": "Client-owned sender number" },
-    "calendar_ids": { "type": "list", "required": true, "description": "Google Calendar id per practitioner" },
-    "reminder_hours": { "type": "integer", "default": 24, "min": 1, "max": 72 },
-    "tpl_reminder_id": { "type": "string", "required": true, "description": "Approved WhatsApp template id for reminders" },
-    "tpl_nudge_id": { "type": "string", "required": true, "description": "Approved WhatsApp template id for the follow-up nudge" },
-    "ops_email": { "type": "string", "required": true, "description": "Where approvals and escalations are notified" },
-    "main_model": { "type": "string", "default": "<main-model-id>" },
-    "fast_model": { "type": "string", "default": "<fast-model-id>" }
+    "business_name": {
+      "type": "string",
+      "required": true,
+      "description": "Name shown to patients"
+    },
+    "business_hours": {
+      "type": "schedule",
+      "required": true,
+      "description": "Opening hours per weekday"
+    },
+    "whatsapp_number": {
+      "type": "string",
+      "required": true,
+      "description": "Client-owned sender number"
+    },
+    "calendar_ids": {
+      "type": "list",
+      "required": true,
+      "description": "Google Calendar id per practitioner"
+    },
+    "reminder_hours": {
+      "type": "integer",
+      "default": 24,
+      "min": 1,
+      "max": 72
+    },
+    "tpl_reminder_id": {
+      "type": "string",
+      "required": true,
+      "description": "Approved WhatsApp template id for reminders"
+    },
+    "tpl_nudge_id": {
+      "type": "string",
+      "required": true,
+      "description": "Approved WhatsApp template id for the follow-up nudge"
+    },
+    "ops_email": {
+      "type": "string",
+      "required": true,
+      "description": "Where approvals and escalations are notified"
+    },
+    "main_model": {
+      "type": "string",
+      "default": "<main-model-id>"
+    },
+    "fast_model": {
+      "type": "string",
+      "default": "<fast-model-id>"
+    }
   },
   "secrets": {
-    "anthropic": { "description": "Model API key" },
-    "twilio": { "description": "Messaging gateway credentials (client-owned account)" },
-    "google": { "description": "Google Calendar service account" }
+    "anthropic": {
+      "description": "Model API key"
+    },
+    "twilio": {
+      "description": "Messaging gateway credentials (client-owned account)"
+    },
+    "google": {
+      "description": "Google Calendar service account"
+    }
   },
   "models": {
     "roles": {
-      "main": { "provider": "anthropic", "model": "{{var.main_model}}", "effort": "medium" },
-      "router": { "provider": "anthropic", "model": "{{var.fast_model}}", "effort": "low" },
-      "verifier": { "provider": "anthropic", "model": "{{var.fast_model}}", "effort": "medium" },
-      "compaction": { "provider": "anthropic", "model": "{{var.fast_model}}", "effort": "low" },
-      "memory_extraction": { "provider": "anthropic", "model": "{{var.fast_model}}", "effort": "low" }
+      "main": {
+        "provider": "anthropic",
+        "model": "{{var.main_model}}",
+        "effort": "medium"
+      },
+      "router": {
+        "provider": "anthropic",
+        "model": "{{var.fast_model}}",
+        "effort": "low"
+      },
+      "verifier": {
+        "provider": "anthropic",
+        "model": "{{var.fast_model}}",
+        "effort": "medium"
+      },
+      "compaction": {
+        "provider": "anthropic",
+        "model": "{{var.fast_model}}",
+        "effort": "low"
+      },
+      "memory_extraction": {
+        "provider": "anthropic",
+        "model": "{{var.fast_model}}",
+        "effort": "low"
+      }
     },
     "providers": {
-      "anthropic": { "api_key": { "$secret": "anthropic" }, "via": "direct" }
+      "anthropic": {
+        "api_key": {
+          "$secret": "anthropic"
+        },
+        "via": "direct"
+      }
     }
   },
   "agents": {
@@ -44,34 +114,72 @@
       "description": "Talks with patients: confirms, reschedules and cancels appointments; answers FAQ.",
       "prompt": "prompts/receptionist.md",
       "model_role": "main",
-      "tools": ["calendar.find_slots", "calendar.get_event", "calendar.move_event", "calendar.cancel_event", "calendar.check_conflicts", "knowledge.search_clinic_faq"],
-      "knowledge": ["clinic_faq"],
-      "memory": { "scope": "contact" },
-      "handoffs": ["human"],
+      "tools": [
+        "calendar.find_slots",
+        "calendar.get_event",
+        "calendar.move_event",
+        "calendar.cancel_event",
+        "calendar.check_conflicts",
+        "knowledge.search_clinic_faq"
+      ],
+      "knowledge": [
+        "clinic_faq"
+      ],
+      "memory": {
+        "scope": "contact"
+      },
+      "handoffs": [
+        "human"
+      ],
       "max_turns": 12
     }
   },
   "tools": {
-    "packs": ["connectors/google-calendar"],
+    "packs": [
+      "connectors/google-calendar"
+    ],
     "config": {
-      "connectors/google-calendar": { "credentials": { "$secret": "google" }, "calendar_ids": "{{var.calendar_ids}}" }
+      "connectors/google-calendar": {
+        "credentials": {
+          "$secret": "google"
+        },
+        "calendar_ids": "{{var.calendar_ids}}"
+      }
     },
     "overrides": {
-      "calendar.move_event": { "verify": "no-double-booking" },
-      "calendar.delete_event": { "permission": "deny" }
+      "calendar.move_event": {
+        "verify": "no-double-booking"
+      },
+      "calendar.delete_event": {
+        "permission": "deny"
+      }
     }
   },
   "knowledge": {
     "corpora": {
       "clinic_faq": {
-        "sources": [{ "type": "file", "path": "knowledge/faq.md" }],
+        "sources": [
+          {
+            "type": "file",
+            "path": "knowledge/faq.md"
+          }
+        ],
         "chunking": "layout",
-        "retrieval": { "mode": "hybrid", "top_k": 4, "min_score": 0.35, "cite": false, "not_found": "handoff" }
+        "retrieval": {
+          "mode": "hybrid",
+          "top_k": 4,
+          "min_score": 0.35,
+          "cite": false,
+          "not_found": "handoff"
+        }
       }
     }
   },
   "memory": {
-    "layers": ["episodic", "semantic"],
+    "layers": [
+      "episodic",
+      "semantic"
+    ],
     "scope": "contact",
     "episodic_ttl": "90d"
   },
@@ -79,14 +187,22 @@
     "whatsapp": {
       "type": "gateway",
       "provider": "twilio",
-      "credentials": { "$secret": "twilio" },
+      "credentials": {
+        "$secret": "twilio"
+      },
       "address": "{{var.whatsapp_number}}",
       "entry_agent": "receptionist",
       "contact_key": "phone",
       "session_window": "24h",
       "templates": {
-        "reminder": { "file": "prompts/tpl_reminder.md", "provider_template_id": "{{var.tpl_reminder_id}}" },
-        "reminder_nudge": { "file": "prompts/tpl_nudge.md", "provider_template_id": "{{var.tpl_nudge_id}}" }
+        "reminder": {
+          "file": "prompts/tpl_reminder.md",
+          "provider_template_id": "{{var.tpl_reminder_id}}"
+        },
+        "reminder_nudge": {
+          "file": "prompts/tpl_nudge.md",
+          "provider_template_id": "{{var.tpl_nudge_id}}"
+        }
       }
     }
   },
@@ -101,12 +217,38 @@
   },
   "workflows": {
     "send-reminder": {
-      "input": { "event": "calendar.event" },
+      "input": {
+        "event": "calendar.event"
+      },
       "steps": [
-        { "id": "msg", "type": "template", "channel": "whatsapp", "template": "reminder", "to": "{{event.contact}}" },
-        { "id": "wait", "type": "wait", "for": "reply", "timeout": "12h" },
-        { "id": "handle", "type": "agent", "agent": "receptionist", "input": "{{steps.wait.reply}}", "when": "steps.wait.replied" },
-        { "id": "nudge", "type": "template", "channel": "whatsapp", "template": "reminder_nudge", "to": "{{event.contact}}", "when": "not steps.wait.replied" }
+        {
+          "id": "msg",
+          "type": "template",
+          "channel": "whatsapp",
+          "template": "reminder",
+          "to": "{{event.contact}}"
+        },
+        {
+          "id": "wait",
+          "type": "wait",
+          "for": "reply",
+          "timeout": "12h"
+        },
+        {
+          "id": "handle",
+          "type": "agent",
+          "agent": "receptionist",
+          "input": "{{steps.wait.reply}}",
+          "when": "steps.wait.replied"
+        },
+        {
+          "id": "nudge",
+          "type": "template",
+          "channel": "whatsapp",
+          "template": "reminder_nudge",
+          "to": "{{event.contact}}",
+          "when": "not steps.wait.replied"
+        }
       ],
       "on_error": "escalate"
     }
@@ -114,42 +256,131 @@
   "policies": {
     "profile": "strict",
     "permissions": {
-      "allow": ["calendar.find_slots", "calendar.get_event", "calendar.check_conflicts", "knowledge.*"],
-      "ask": ["calendar.cancel_event"],
-      "deny": ["calendar.delete_event"]
+      "allow": [
+        "calendar.find_slots",
+        "calendar.get_event",
+        "calendar.check_conflicts",
+        "knowledge.*"
+      ],
+      "ask": [
+        "calendar.cancel_event"
+      ],
+      "deny": [
+        "calendar.delete_event"
+      ]
     },
-    "budgets": { "per_run": { "usd": 0.2, "turns": 12 }, "per_tenant_day": { "usd": 5 } },
+    "budgets": {
+      "per_run": {
+        "usd": 0.2,
+        "turns": 12
+      },
+      "per_tenant_day": {
+        "usd": 5
+      }
+    },
     "verification": {
       "checks": {
-        "no-double-booking": { "type": "tool", "tool": "calendar.check_conflicts", "expect": "no_conflicts" }
+        "no-double-booking": {
+          "type": "tool",
+          "tool": "calendar.check_conflicts",
+          "expect": "no_conflicts"
+        }
       },
-      "verifier": { "model_role": "verifier", "applies_to": ["effect:external"], "mode": "critical_only" }
+      "verifier": {
+        "model_role": "verifier",
+        "applies_to": [
+          "effect:external"
+        ],
+        "mode": "critical_only"
+      }
     },
     "escalation": {
       "rules": [
-        { "when": "intent in ['medical_advice', 'complaint', 'emergency']", "to": "human" },
-        { "when": "verification.failed_twice", "to": "human" }
+        {
+          "when": "intent in ['medical_advice', 'complaint', 'emergency']",
+          "to": "human"
+        },
+        {
+          "when": "verification.failed_twice",
+          "to": "human"
+        }
       ],
-      "handoff_to": { "type": "inbox" }
+      "handoff_to": {
+        "type": "inbox"
+      }
     },
-    "router": { "short_circuit": ["greeting", "hours", "address"], "model_role": "router" }
+    "router": {
+      "short_circuit": [
+        "greeting",
+        "hours",
+        "address"
+      ],
+      "model_role": "router"
+    }
   },
   "governance": {
-    "pii": { "classes": ["name", "phone", "email", "curp", "health"], "tokenize": true, "reveal_in_output": ["name"] },
-    "consent": { "required": true, "channels": ["whatsapp"], "opt_out_keywords": ["BAJA", "STOP", "ALTO"] },
-    "retention": { "conversations": "180d", "episodic": "90d", "audit": "5y" },
-    "audit": { "level": "full" },
-    "regions": { "data": "mx" },
-    "compliance": ["lfpdppp"]
+    "pii": {
+      "classes": [
+        "name",
+        "phone",
+        "email",
+        "curp",
+        "health"
+      ],
+      "tokenize": true,
+      "reveal_in_output": [
+        "name"
+      ]
+    },
+    "consent": {
+      "required": true,
+      "channels": [
+        "whatsapp"
+      ],
+      "opt_out_keywords": [
+        "BAJA",
+        "STOP",
+        "ALTO"
+      ]
+    },
+    "retention": {
+      "conversations": "180d",
+      "episodic": "90d",
+      "audit": "5y"
+    },
+    "audit": {
+      "level": "full"
+    },
+    "regions": {
+      "data": "mx"
+    },
+    "compliance": [
+      "lfpdppp"
+    ]
   },
   "hitl": {
-    "approvers": ["role:front_desk"],
-    "notify": [{ "channel": "email", "to": "{{var.ops_email}}" }],
+    "approvers": [
+      "role:front_desk"
+    ],
+    "notify": [
+      {
+        "channel": "email",
+        "to": "{{var.ops_email}}"
+      }
+    ],
     "approval_timeout": "2h",
     "on_timeout": "reject"
   },
   "evals": {
-    "suites": ["evals/confirm.jsonl", "evals/reschedule.jsonl", "evals/opt_out.jsonl", "evals/pii.jsonl"],
-    "thresholds": { "pass_rate": 0.9, "unsafe_actions": 0 }
+    "suites": [
+      "evals/confirm.yaml",
+      "evals/reschedule.yaml",
+      "evals/opt_out.yaml",
+      "evals/pii.yaml"
+    ],
+    "thresholds": {
+      "pass_rate": 0.9,
+      "unsafe_actions": 0
+    }
   }
 }

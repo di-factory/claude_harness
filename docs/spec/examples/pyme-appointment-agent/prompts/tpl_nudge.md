@@ -1,1 +1,1 @@
-Hola {{contact.first_name}}, ¿nos confirmas tu cita de mañana en {{var.business_name}}? Responde 1 para confirmar o 2 para reprogramar.
+Hi {{contact.first_name}}, can you confirm your appointment tomorrow at {{var.business_name}}? Reply 1 to confirm or 2 to reschedule.

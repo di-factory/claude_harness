@@ -1,6 +1,8 @@
 # dif-general-harness
 
-**The general solution template behind Di-Factory's agentic solutions.**
+**The general solution template behind Di-Factory's agentic solutions:** one of
+Di-Factory's base platforms, used to run, adjust and deploy client solutions
+across its lines of business.
 One open-source agent runtime, many client solutions: each one is a
 declarative *solution spec* on top of a shared core.
 
@@ -55,7 +57,7 @@ Platform     storage (SQLite / Postgres) · secrets vault · executor · deploy 
 
 We own the agent loop instead of wrapping a framework, so context handling,
 safety and cost stay visible and cheap to change. See
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and all 28
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and all 35
 recorded decisions.
 
 ## What you can build with it
@@ -66,7 +68,7 @@ recorded decisions.
 | Agentic Transformation | Dev, Ops and Service Desk cells as agent teams |
 | Conversational RAG | Cited answers from client documents over WhatsApp, Telegram, web or email |
 | ML Models | Trained models exposed to agents as tools |
-| MVP, Consulting, VC | Delivery agents that speed up Di-Factory's fixed-price engagements |
+| MVP, Consulting, VC | Client-facing agents (for example a Dev cell on the client's own backlog); Di-Factory's internal delivery agents run on its company platform |
 | OPC Startup | An AI C-suite roster, when the client chooses this runtime |
 
 Packs follow an **open-core** model: the core and reference packs are MIT;
@@ -74,16 +76,23 @@ production packs are Di-Factory assets; each client fully owns its instance.
 
 ## A solution spec (draft v1)
 
-```jsonc
+A client **instance** extends a reusable **pack** and supplies only its own
+values, secrets and deployment target:
+
+```json
 {
-  "solution": { "id": "clinic-appointments", "version": "1.0.0", "lob": "pyme", "locale": "es-MX" },
-  "extends": ["packs/pyme-appointment-agent@1"],
-  "models":  { "main": { "provider": "anthropic", "model": "<model-id>" } },
-  "channels": [{ "type": "gateway", "provider": "twilio", "secret": "twilio-creds" }],
-  "tools":   { "packs": ["connectors/google-calendar"] },
-  "triggers": [{ "type": "schedule", "cron": "0 9 * * *", "workflow": "send-reminders" }],
-  "governance": { "pii": ["name", "phone", "curp"], "retention_days": 90, "consent": "required" },
-  "policies": { "profile": "strict", "budgets": { "usd_per_day": 5 } }
+  "spec_version": "1",
+  "kind": "instance",
+  "solution": { "id": "clinica-sonrisa-appointments", "version": "1.0.0", "lob": "pyme", "locale": "es-MX" },
+  "extends": ["pyme-appointment-agent@^1.0"],
+  "tenant": { "id": "clinica-sonrisa", "name": "Clínica Sonrisa", "timezone": "America/Mexico_City" },
+  "values": {
+    "business_name": "Clínica Sonrisa",
+    "calendar_ids": ["dra-lopez@example.com"],
+    "reminder_hours": 24
+  },
+  "governance": { "retention": { "conversations": "90d" } },
+  "deploy": { "target": "aws", "region": "mx-central-1", "secrets_backend": "aws-secrets-manager" }
 }
 ```
 
@@ -96,9 +105,9 @@ cell, Conversational RAG) are in [`docs/spec/`](docs/spec/SOLUTION_SPEC.md).
 |---|---|---|
 | **M0 Core** | 2026-10-23 | Data model, event stream, agent loop, solution-spec schema, tenant ids, offline tests |
 | **M1 Agent core** | 2026-11-20 | Anthropic + OpenAI-compatible providers, tool registry, MCP/HTTP tools, permissions, budgets, TUI console |
-| **M2 Runtime** | 2026-12-18 | Headless service, channels, triggers, durable queue, approvals inbox, PII/consent/audit, Postgres |
+| **M2 Runtime** | 2026-12-18 | Headless service, channels, triggers, durable queue, approvals inbox, PII/consent/audit, Postgres, instance agent |
 | **M3 Intelligence** | 2027-01-15 | 5-layer memory, knowledge/RAG, verification, agent teams, feedback loop, pack evals |
-| **M4 Operations** | 2027-02-12 | Terraform (AWS), OpenTelemetry, cost reports, region policy → **v1.0** |
+| **M4 Operations** | 2027-02-12 | Terraform (AWS), OpenTelemetry, cost reports, region policy, fleet control plane → **v1.0** |
 
 Each milestone ships as a PyPI pre-release once its acceptance gate passes.
 

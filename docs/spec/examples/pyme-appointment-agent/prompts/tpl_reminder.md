@@ -1,1 +1,1 @@
-Hola {{contact.first_name}}, te recordamos tu cita en {{var.business_name}} el {{event.date}} a las {{event.time}}. Responde 1 para confirmar, 2 para reprogramar o 3 para cancelar.
+Hi {{contact.first_name}}, this is a reminder of your appointment at {{var.business_name}} on {{event.date}} at {{event.time}}. Reply 1 to confirm, 2 to reschedule or 3 to cancel.

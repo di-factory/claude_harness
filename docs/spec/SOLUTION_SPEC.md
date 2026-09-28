@@ -26,8 +26,8 @@ A pack directory:
 ```
 packs/pyme-appointment-agent/
   pack.json          # the spec
-  prompts/*.md       # system prompts and message templates (can use {{var.*}})
-  evals/*.jsonl      # scripted conversations with expected outcomes
+  prompts/*.md       # system prompts and message templates in English (can use {{var.*}})
+  evals/*.yaml       # scripted conversations with expected outcomes (YAML, one case per document)
   extensions/*.py    # optional escape hatch (see §8), counted against reuse
 ```
 
@@ -65,6 +65,7 @@ The spec stays declarative, with only these reference forms:
 | Secret reference | `{"$secret": "twilio"}` | a value from the instance's secret backend at runtime; never stored, logged or shown to the model |
 | Variable | `"{{var.clinic_name}}"` | the instance's value for a pack variable (strings, prompts, templates) |
 | Contact / event field | `"{{contact.first_name}}"`, `"{{event.start}}"` | runtime data in templates, triggers and workflow inputs, **after** PII detokenization rules apply |
+| Solution field | `"{{solution.locale}}"` | a value from the resolved `solution` section (for example the reply language) |
 | File | `"prompts/receptionist.md"` | a file relative to the pack or instance directory |
 | Tool name | `"calendar.find_slots"` | `<namespace>.<tool>` from the tool registry |
 | Agent / workflow / channel id | `"receptionist"`, `"send-reminders"` | keys in the corresponding section |
@@ -72,7 +73,8 @@ The spec stays declarative, with only these reference forms:
 **Conditions** (in workflows, escalation rules and triggers) use one small,
 safe expression language: comparison, boolean logic, `in`, field access, and
 no function calls. Example: `"ticket.priority in ['p1','p2'] and not contact.vip"`.
-The exact grammar is decided in M0 (CEL subset vs. JSONLogic; see §10).
+The language is a **CEL subset** (Common Expression Language: typed, safe,
+with a Python implementation), decision 33.
 
 ## 4. Merge rules (pack → instance)
 
@@ -105,7 +107,7 @@ semantic version), stored with every session and shown by
 
 ```json
 "solution": { "id": "pyme-appointment-agent", "version": "1.0.0", "name": "Appointment Agent",
-              "lob": "pyme", "description": "...", "locale": "es-MX" },
+              "lob": "pyme", "description": "...", "locale": "en" },
 "tenant":   { "id": "clinica-sonrisa", "name": "Clínica Sonrisa", "timezone": "America/Mexico_City" },
 "variables": {
   "business_name":  { "type": "string", "required": true, "description": "Shown to patients" },
@@ -113,6 +115,12 @@ semantic version), stored with every session and shown by
 },
 "values": { "business_name": "Clínica Sonrisa", "reminder_hours": 24 }
 ```
+
+**Language (decision 34).** Packs are written in English and default to
+`"locale": "en"`. When a client asks for Spanish, the instance sets
+`"locale": "es-MX"`: agents reply in Spanish, and customer-facing templates are
+overridden in the instance (`channels.<id>.templates.<name>.file`) with the
+client's approved wording.
 
 Variable types: `string`, `integer`, `number`, `boolean`, `enum`, `list`,
 `object`, `duration` (`"24h"`), `schedule` (opening hours), `file`.
@@ -369,7 +377,7 @@ Every step is persisted, so a restart resumes at the last completed step.
 ```json
 "hitl":   { "approvers": ["role:front_desk"], "notify": [{ "channel": "email", "to": "{{var.ops_email}}" }],
             "approval_timeout": "2h", "on_timeout": "reject" },
-"evals":  { "suites": ["evals/booking.jsonl", "evals/reschedule.jsonl", "evals/pii.jsonl"],
+"evals":  { "suites": ["evals/booking.yaml", "evals/reschedule.yaml", "evals/pii.yaml"],
             "thresholds": { "pass_rate": 0.9, "unsafe_actions": 0 } },
 "deploy": { "target": "aws", "profile": "small", "region": "us-east-1",
             "secrets_backend": "aws-secrets-manager", "database": "postgres" }
@@ -443,15 +451,16 @@ loader's validation tests: variables, secrets, model roles, agents, corpora,
 tool namespaces, workflows, templates, checks, permission coverage of external
 tools, consent for outbound triggers, required instance values and monotonic
 retention. The last run passed with no problems. Only one eval file
-(`pyme-appointment-agent/evals/confirm.jsonl`) is written, to fix the eval
+(`pyme-appointment-agent/evals/confirm.yaml`) is written, to fix the eval
 format; the rest are listed but not written yet.
 
-## 10. Open questions for M0
+## 10. Resolved questions
 
-1. **Condition language:** a CEL subset (typed, well specified) or JSONLogic
-   (pure JSON, easier to generate)? The current recommendation is a CEL
-   subset for readability.
-2. **Prompt language:** should packs ship es-MX and en prompts side by side
-   (`prompts/es-MX/…`), or one locale per pack version?
-3. **Eval file format:** JSONL of scripted turns (current draft), or YAML for
-   readability, given that specs are JSON?
+| Question | Decision |
+|---|---|
+| Condition language | CEL subset (decision 33) |
+| Prompt language | English by default; Spanish only when a client asks; instances override customer-facing templates (decision 34) |
+| Eval file format | YAML, one case per document (decision 35) |
+
+**Next:** paper test 2 (decision 32) adds a batch document job (Receipt
+Processing), a Dev cell and an OPC-style agent team.

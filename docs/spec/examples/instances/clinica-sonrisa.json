@@ -33,6 +33,18 @@
     "tpl_nudge_id": "HXXXXXXXXXXXXXXXX2",
     "ops_email": "recepcion@example.com"
   },
+  "channels": {
+    "whatsapp": {
+      "templates": {
+        "reminder": {
+          "file": "clinica-sonrisa/tpl_reminder.es-MX.md"
+        },
+        "reminder_nudge": {
+          "file": "clinica-sonrisa/tpl_nudge.es-MX.md"
+        }
+      }
+    }
+  },
   "policies": {
     "budgets": {
       "per_tenant_day": {
