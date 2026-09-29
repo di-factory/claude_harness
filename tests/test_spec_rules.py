@@ -32,6 +32,16 @@ def _no_address_delivery(d: dict[str, Any]) -> None:
 
 PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
     (
+        "pyme-appointment-agent",
+        "invalid_python_ref",
+        lambda d: d["tools"].update(python=["extensions/slots.py"]),
+    ),
+    (
+        "pyme-appointment-agent",
+        "missing_file",
+        lambda d: d["tools"].update(python=["extensions.nope:best_slot"]),
+    ),
+    (
         "conversational-rag",
         "invalid_sync_schedule",
         lambda d: d["knowledge"]["corpora"]["docs"]["sync"].update(schedule="every 4 hours"),

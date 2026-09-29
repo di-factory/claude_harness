@@ -46,6 +46,27 @@ def test_stage_is_self_contained_and_deterministic(examples: Path, tmp_path: Pat
     assert solution_hash(tmp_path / "c") != solution_hash(tmp_path / "a")  # one prompt line
 
 
+def test_stage_carries_extension_code(examples: Path, tmp_path: Path) -> None:
+    instance, catalog = _clinic(examples)
+    raw = json.loads(instance.read_text())
+    raw["tools"] = {"python": ["extensions.local:hello"]}
+    (instance.parent / "extensions").mkdir()
+    (instance.parent / "extensions" / "local.py").write_text(
+        "async def hello() -> str:\n    return 'hi'\n"
+    )
+    local = instance.parent / "local.json"
+    local.write_text(json.dumps(raw))
+    stage(local, catalog, tmp_path / "a")
+    files = {p.relative_to(tmp_path / "a").as_posix() for p in (tmp_path / "a").rglob("*.py")}
+    assert files == {"extensions/local.py", "packs/pyme-appointment-agent/extensions/slots.py"}
+    before = solution_hash(tmp_path / "a")
+    (instance.parent / "extensions" / "local.py").write_text(
+        "async def hello() -> str:\n    return 'pwned'\n"
+    )
+    stage(local, catalog, tmp_path / "b")
+    assert solution_hash(tmp_path / "b") != before  # the signature covers extension code
+
+
 def test_approval_gate(examples: Path, tmp_path: Path) -> None:
     instance, catalog = _clinic(examples)
     jag_key, jag_public = new_key(tmp_path / "keys", "jag")

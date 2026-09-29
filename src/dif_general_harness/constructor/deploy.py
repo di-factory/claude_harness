@@ -35,6 +35,7 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 
 from ..spec.loader import PackCatalog, ResolvedSpec, load_instance
+from ..tools import python as python_tools
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TARGETS = ("docker", "aws")
@@ -53,7 +54,8 @@ def _references(value: Any, base: Path) -> set[Path]:
     """Files an instance points at, relative to its folder."""
     found: set[Path] = set()
     if isinstance(value, str) and value and "{{" not in value and len(value) < 300:
-        candidate = (base / value).resolve()
+        parts = python_tools.split(python_tools.absolutize(value, base))
+        candidate = parts[0] if parts else (base / value).resolve()
         if candidate.is_file() and candidate.is_relative_to(base.resolve()):
             found.add(candidate)
     elif isinstance(value, dict):

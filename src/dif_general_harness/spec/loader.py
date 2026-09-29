@@ -21,6 +21,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from ..tools import python as python_tools
 from .errors import Issue, SpecError
 from .schema import TOP_LEVEL_KEYS, SolutionSpec
 
@@ -30,6 +31,7 @@ ADDITIVE: set[tuple[str, ...]] = {
     ("governance", "consent", "channels"),
     ("governance", "consent", "opt_out_keywords"),
     ("governance", "compliance"),
+    ("tools", "python"),  # extension tools accumulate across layers (deny one to drop it)
 }
 
 _VAR_FULL = re.compile(r"^\{\{\s*var\.([A-Za-z0-9_]+)\s*\}\}$")
@@ -94,6 +96,11 @@ def _absolutize(data: dict[str, Any], base: Path) -> None:
             for src in sources:
                 if isinstance(src, dict) and src.get("type") == "file" and "path" in src:
                     src["path"] = _abs(base, src["path"])
+    tools = data.get("tools") or {}
+    if isinstance(tools.get("python"), list):
+        tools["python"] = [
+            python_tools.absolutize(r, base) if isinstance(r, str) else r for r in tools["python"]
+        ]
     evals = data.get("evals") or {}
     if isinstance(evals.get("suites"), list):
         evals["suites"] = [_abs(base, s) for s in evals["suites"]]

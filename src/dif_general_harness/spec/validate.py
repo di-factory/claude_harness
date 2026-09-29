@@ -14,6 +14,7 @@ from typing import Any
 
 from ..core import cel
 from ..policy.permissions import Rule
+from ..tools import python as python_tools
 from ..triggers.cron import Cron, CronError
 from .errors import Issue
 from .schema import SolutionSpec, Step
@@ -126,6 +127,12 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
                 )
             else:
                 texts.append(f.read_text(encoding="utf-8"))
+    for i, ref in enumerate(spec.tools.python):
+        parts = python_tools.split(ref)
+        if parts is None:
+            err("invalid_python_ref", f"tools.python[{i}]", f"not module.path:function: {ref!r}")
+        elif not parts[0].is_file():
+            err("missing_file", f"tools.python[{i}]", f"file not found: {parts[0]}")
     for i, suite in enumerate(spec.evals.suites):
         if not Path(suite).exists():
             warn("eval_missing", f"evals.suites[{i}]", f"eval suite not written yet: {suite}")
@@ -161,6 +168,7 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
     namespaces = set(BUILTIN_NAMESPACES) | set(spec.tools.mcp) | set(spec.tools.http)
     for pack in spec.tools.packs:
         namespaces |= PACK_NAMESPACES.get(pack, {pack.rsplit("/", 1)[-1]})
+    namespaces |= {ns for r in spec.tools.python if (ns := python_tools.namespace(r))}
 
     # --- agents ----------------------------------------------------------------
     for name, agent in agents.items():

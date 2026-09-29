@@ -180,6 +180,7 @@
         "calendar.move_event",
         "calendar.cancel_event",
         "calendar.check_conflicts",
+        "slots.best_slot",
         "knowledge.search_clinic_faq"
       ],
       "knowledge": [
@@ -197,6 +198,9 @@
   "tools": {
     "packs": [
       "connectors/google-calendar"
+    ],
+    "python": [
+      "extensions.slots:best_slot"
     ],
     "config": {
       "connectors/google-calendar": {
@@ -321,6 +325,7 @@
         "calendar.find_slots",
         "calendar.get_event",
         "calendar.check_conflicts",
+        "slots.best_slot",
         "knowledge.*"
       ],
       "ask": [

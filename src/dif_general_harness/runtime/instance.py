@@ -15,8 +15,8 @@ de-tokenized with ``reveal_output``, tool calls land in the audit log and spend 
 per tenant, agent and model. The instance's database is SQLite under the state folder
 unless ``database_url`` (Postgres in production) or ``database`` is given.
 
-What the spec asks for but this build cannot provide (the calendar connector, Python
-extensions, knowledge sources other than files, checks that cannot run here) is reported in
+What the spec asks for but this build cannot provide (unknown tool packs, Python tools
+that fail to load, knowledge sources other than files, checks that cannot run here) is reported in
 ``issues`` rather than silently dropped; a tool whose check cannot run is asked about, so a
 missing check never lets a side effect through unreviewed. File knowledge sources are synced
 when the instance opens.
@@ -65,6 +65,7 @@ from ..store.db import Database, connect
 from ..store.sql import SqlSessionStore
 from ..teams import LedgerStore, handoff_tool, runs_tools, subagent_tool
 from ..tenancy.secrets import EnvSecrets, SecretBackend, SecretResolver
+from ..tools import python as python_tools
 from ..tools.http import ConnectorError, http_tools
 from ..tools.mcp import McpToolSource
 from ..tools.packs import NoteStore, Workspace, coding_tools, general_tools
@@ -451,8 +452,11 @@ class Instance:
                 self._warn(
                     "unavailable_pack", "tools.packs", f"tool pack {pack!r} is not built yet"
                 )
-        for ref in self.spec.tools.python:
-            self._warn("unavailable_tool", "tools.python", f"Python tool {ref!r} is not loaded yet")
+        for i, ref in enumerate(self.spec.tools.python):
+            try:
+                out.append(python_tools.load(ref))
+            except python_tools.PythonToolError as exc:
+                self._warn("python_tool_error", f"tools.python[{i}]", str(exc))
         return out
 
     async def _google_calendar(self, data: dict[str, Any], missing: set[str]) -> list[Tool]:
