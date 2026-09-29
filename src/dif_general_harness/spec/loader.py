@@ -114,6 +114,46 @@ def _version_tuple(v: str) -> tuple[int, int, int]:
     return major, minor, patch
 
 
+_TYPES: dict[str, tuple[type, ...]] = {
+    "string": (str,),
+    "file": (str,),
+    "duration": (str,),
+    "integer": (int,),
+    "number": (int, float),
+    "boolean": (bool,),
+    "list": (list,),
+    "object": (dict,),
+    "schedule": (dict, str),
+}
+
+
+def value_problem(decl: dict[str, Any], value: Any) -> str | None:
+    """Why an instance value does not fit its variable (type, range, options), or None. The
+    interview checks answers too; this catches hand edits and adjustments."""
+    kind = str(decl.get("type") or "string")
+    if value is None:
+        return None
+    if kind == "enum":
+        options = decl.get("options") or []
+        return None if not options or value in options else f"must be one of {options}"
+    wanted = _TYPES.get(kind)
+    wrong_bool = isinstance(value, bool) and kind in ("integer", "number")
+    if wanted is not None and (not isinstance(value, wanted) or wrong_bool):
+        return f"must be a {kind}, not {type(value).__name__}"
+    if kind == "duration":
+        try:
+            duration_days(value)
+        except ValueError as exc:
+            return str(exc)
+    if kind in ("integer", "number"):
+        low, high = decl.get("min"), decl.get("max")
+        if low is not None and value < low:
+            return f"must be at least {low:g}"
+        if high is not None and value > high:
+            return f"must be at most {high:g}"
+    return None
+
+
 def version_matches(version: str, rng: str | None) -> bool:
     """Supports exact ``1.2.3``, caret ``^1.2`` / ``^1.2.3`` and no range."""
     if not rng:
@@ -369,6 +409,9 @@ def load_instance(path: Path | str, catalog: PackCatalog) -> ResolvedSpec:
                     f"required variable {name!r} has no value",
                 )
             )
+    for name, value in inst.data.get("values", {}).items():
+        if name in variables and (why := value_problem(variables[name], value)):
+            issues.append(Issue("error", "invalid_value", f"values.{name}", why))
     for name in inst.data.get("values", {}):
         if name not in variables:
             issues.append(

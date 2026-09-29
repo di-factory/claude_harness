@@ -24,6 +24,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 from .constructor import EvalStore, RecordingApprover, build, load_answers, match, run_suites
 from .constructor.deploy import (
@@ -450,6 +451,116 @@ async def _eval(
     return 0 if report.ok else 1
 
 
+def _lifecycle(args: argparse.Namespace) -> int:
+    from .constructor.lifecycle import adjust, parse_value, upgrade
+
+    catalog = PackCatalog(roots=args.packs or [args.path.resolve().parent.parent])
+    try:
+        if args.group == "adjust":
+            values: dict[str, Any] = {}
+            for item in args.set:
+                name, sep, raw = item.partition("=")
+                if not sep or not name:
+                    print(f"--set expects NAME=VALUE, got {item!r}", file=sys.stderr)
+                    return 2
+                values[name] = parse_value(raw) if raw else None
+            plan = adjust(args.path, catalog, values)
+        else:
+            plan = upgrade(args.path, catalog, args.pack, args.to)
+    except (SpecError, ValueError) as exc:
+        print(f"cannot {args.group}: {exc}", file=sys.stderr)
+        return 2
+    for change in plan.changes:
+        print(change)
+    if not plan.changes:
+        print("no change")
+    for name in plan.missing:
+        print(f"needs a value: {name} (adjust --set {name}=...)")
+    for error in plan.errors():
+        print(f"error: {error}")
+    print(f"config {plan.before.version_hash[:12]} -> {plan.after.version_hash[:12]}")
+    if not plan.ok:
+        print("NOT WRITTEN: the result does not validate")
+        return 1
+    if args.dry_run:
+        print("dry run: nothing written")
+        return 0
+    plan.write()
+    print(f"wrote {args.path}; next: evals, then approve + deploy (or fleet offer)")
+    return 0
+
+
+async def _fleet(args: argparse.Namespace) -> int:
+    from .constructor.lifecycle import ControlClient, FleetError, container_data, write_token
+
+    token = os.environ.get("DIF_CONTROL_ADMIN_TOKEN", "")
+    if not args.control or not token:
+        print("set --control (or DIF_CONTROL_URL) and DIF_CONTROL_ADMIN_TOKEN", file=sys.stderr)
+        return 2
+    client = ControlClient(args.control, token)
+
+    def load(path: Path) -> tuple[ResolvedSpec, PackCatalog]:
+        catalog = PackCatalog(roots=args.packs or [path.resolve().parent.parent])
+        return load_instance(path, catalog), catalog
+
+    def target(resolved: ResolvedSpec) -> tuple[str, str]:
+        scope = scope_for(resolved.spec)
+        return scope.tenant_id, scope.instance_id
+
+    try:
+        if args.command == "register":
+            resolved, _ = load(args.path)
+            tenant, instance = target(resolved)
+            path = write_token(
+                args.out, tenant, instance, await client.register(tenant, instance, args.by)
+            )
+            key = await client.public_key()
+            print(f"registered {tenant}/{instance}")
+            print(f"token written to {path}: store it as the secret 'fleet_token' in the")
+            print("client's vault, then delete the file")
+            print(f"deploy with fleet_url={args.control} fleet_public_key={key}")
+        elif args.command == "offer":
+            resolved, catalog = load(args.path)
+            tenant, instance = target(resolved)
+            data = container_data(args.path, catalog)
+            made = await client.offer(tenant, instance, data, args.approved_by, args.gate)
+            print(f"offer {made['id']} to {tenant}/{instance}: {made['status']} (gate {args.gate})")
+        elif args.command == "rollout":
+            steps = []
+            for path in args.paths:
+                resolved, catalog = load(path)
+                tenant, instance = target(resolved)
+                steps.append(
+                    {"tenant": tenant, "instance": instance, "data": container_data(path, catalog)}
+                )
+            made = await client.rollout(args.name, args.approved_by, steps, args.gate)
+            print(f"rollout {made['id']} ({made['status']}): {len(steps)} instance(s), one by one")
+        elif args.command == "rollback":
+            if args.rollout:
+                made = await client.rollout_rollback(args.rollout, args.approved_by)
+                print(f"rollout {made['id']}: {made['status']}")
+            elif args.instance and args.to:
+                tenant, _, instance = args.instance.partition("/")
+                made = await client.rollback_instance(tenant, instance, args.to, args.approved_by)
+                print(f"rollback offer {made['id']} to {args.instance}")
+            else:
+                print("give --rollout ID, or --instance TENANT/INSTANCE --to HASH", file=sys.stderr)
+                return 2
+        else:
+            for row in await client.fleet():
+                state = "ok" if row["healthy"] else "STALE"
+                pending = row["pending_offer"]
+                print(
+                    f"{state:6} {row['tenant']}/{row['instance']}  config "
+                    f"{str(row['running_config'])[:12]}  spend ${row['spend_today_usd']:.2f}"
+                    + (f"  offer {pending['id']} {pending['status']}" if pending else "")
+                )
+    except (FleetError, SpecError, DeployError) as exc:
+        print(f"fleet {args.command}: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 async def _control_serve(args: argparse.Namespace) -> int:
     """The control plane: its admin token comes from DIF_CONTROL_ADMIN_TOKEN, never argv."""
     from cryptography.hazmat.primitives import serialization
@@ -545,6 +656,48 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
     _add_run(sub, "console")
     _add_run(sub, "eval")
     _add_run(sub, "serve")
+    for name, text in (
+        ("adjust", "constructor: change an instance's values (validated, diffed)"),
+        ("upgrade", "constructor: move an instance to a newer pack version"),
+    ):
+        life = sub.add_parser(name, help=text)
+        life.add_argument("path", type=Path, help="instance JSON")
+        life.add_argument("--packs", type=Path, action="append", help="folder containing packs")
+        life.add_argument("--dry-run", action="store_true", help="show the change; write nothing")
+        if name == "adjust":
+            life.add_argument(
+                "--set",
+                action="append",
+                default=[],
+                metavar="NAME=VALUE",
+                help="a value (JSON or text); NAME= removes it (repeatable)",
+            )
+        else:
+            life.add_argument("--pack", required=True, help="the pack to move (its id)")
+            life.add_argument("--to", required=True, help="the pack version, e.g. 1.1.0")
+    fleet = sub.add_parser("fleet", help="operate instances through the control plane")
+    fleet.add_argument("--control", default=os.environ.get("DIF_CONTROL_URL", ""))
+    fleet.add_argument("--packs", type=Path, action="append", help="folder containing packs")
+    fleet_sub = fleet.add_subparsers(dest="command", required=True)
+    f_register = fleet_sub.add_parser("register", help="register an instance; writes its token")
+    f_register.add_argument("path", type=Path, help="instance JSON")
+    f_register.add_argument("--by", required=True)
+    f_register.add_argument("--out", type=Path, default=Path.home() / ".dif" / "fleet")
+    f_offer = fleet_sub.add_parser("offer", help="offer an instance its current spec (signed)")
+    f_offer.add_argument("path", type=Path, help="instance JSON")
+    f_offer.add_argument("--approved-by", required=True)
+    f_offer.add_argument("--gate", choices=["evals", "none"], default="evals")
+    f_rollout = fleet_sub.add_parser("rollout", help="take instances' specs out one by one")
+    f_rollout.add_argument("paths", type=Path, nargs="+", help="instance JSON files, in order")
+    f_rollout.add_argument("--name", required=True)
+    f_rollout.add_argument("--approved-by", required=True)
+    f_rollout.add_argument("--gate", choices=["evals", "none"], default="evals")
+    f_back = fleet_sub.add_parser("rollback", help="roll a rollout (or one instance) back")
+    f_back.add_argument("--rollout", help="rollout id")
+    f_back.add_argument("--instance", help="TENANT/INSTANCE (with --to)")
+    f_back.add_argument("--to", help="the config hash to return to")
+    f_back.add_argument("--approved-by", required=True)
+    fleet_sub.add_parser("status", help="the fleet view")
     control = sub.add_parser("control", help="the Di-Factory control plane (fleet operations)")
     control_sub = control.add_subparsers(dest="command", required=True)
     control_serve = control_sub.add_parser("serve", help="run the control plane API")
@@ -608,6 +761,10 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
         return 0
     if args.group == "control":
         return asyncio.run(_control_serve(args))
+    if args.group in {"adjust", "upgrade"}:
+        return _lifecycle(args)
+    if args.group == "fleet":
+        return asyncio.run(_fleet(args))
     if args.group in {"approve", "deploy"}:
         return _approve_or_deploy(args)
 

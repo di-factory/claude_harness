@@ -42,6 +42,21 @@ class ControlError(ValueError):
     pass
 
 
+def offer_errors(data: dict[str, Any]) -> list[str]:
+    """What is wrong with an offered config, as far as the control plane can tell. File
+    references point into the instance's container, so the instance checks those itself
+    (and refuses an offer whose files it does not have)."""
+    try:
+        resolved = resolved_from_data(data, "offer")
+    except SpecError as exc:
+        return [f"the config does not parse: {exc}"]
+    return [
+        f"{i.path}: {i.message}"
+        for i in resolved.issues
+        if i.severity == "error" and i.code != "missing_file"
+    ]
+
+
 def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -228,16 +243,9 @@ class ControlPlane:
             raise ControlError(f"gate must be one of {GATES}")
         if not approved_by:
             raise ControlError("an offer names who approved it")
-        try:
-            resolved = resolved_from_data(data, "offer")
-        except SpecError as exc:
-            raise ControlError(f"the config does not parse: {exc}") from None
-        if not resolved.ok:
-            errors = "; ".join(
-                f"{i.path}: {i.message}" for i in resolved.issues if i.severity == "error"
-            )
-            raise ControlError(f"the config does not validate: {errors}")
-        spec = resolved.spec
+        if errors := offer_errors(data):
+            raise ControlError(f"the config does not validate: {'; '.join(errors)}")
+        spec = resolved_from_data(data, "offer").spec
         target = (spec.tenant.id if spec.tenant else "", spec.solution.id)
         if target != (tenant, instance):
             raise ControlError(
@@ -371,9 +379,9 @@ class ControlPlane:
             raise ControlError("a rollout needs at least one step")
         for step in steps:
             await self._known(str(step["tenant"]), str(step["instance"]))
-            resolved = resolved_from_data(step["data"], "rollout")
-            if not resolved.ok:
-                raise ControlError(f"step {step['tenant']}/{step['instance']} does not validate")
+            if errors := offer_errors(step["data"]):
+                where = f"{step['tenant']}/{step['instance']}"
+                raise ControlError(f"step {where} does not validate: {'; '.join(errors)}")
         rollout_id = uuid.uuid4().hex[:12]
         plan = [
             {

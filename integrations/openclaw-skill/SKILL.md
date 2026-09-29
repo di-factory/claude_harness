@@ -73,5 +73,34 @@ uv run dif-general-harness deploy instances/<client>/<id>.json --packs <packs-di
 
 ## Adjusting a live instance
 
-Edit `<id>.answers.yaml`, rebuild with `--answers`, verify, and ask Jag to approve again.
-Then deploy as above, or have the control plane push the new version.
+```bash
+uv run dif-general-harness adjust instances/<client>/<id>.json --packs <packs-dir> \
+  --set reminder_hours=48 --dry-run            # shows exactly what changes; writes nothing
+uv run dif-general-harness adjust ... --set reminder_hours=48    # writes only if it validates
+uv run dif-general-harness eval instances/<client>/<id>.json --packs <packs-dir>
+```
+
+- `NOT WRITTEN` means the change does not validate (a value out of range, a safety rule a
+  later layer may not weaken): report the errors; never work around them.
+- Then either deploy again (Jag approves the new staged solution), or, for value and policy
+  changes that need no new files, ask Jag to push it through the control plane:
+  `fleet offer <instance.json> --approved-by jag` (the instance runs its evals before it
+  activates the change and refuses it if they fail).
+
+## Upgrading to a newer pack version
+
+```bash
+uv run dif-general-harness upgrade instances/<client>/<id>.json --packs <packs-dir> \
+  --pack <pack-id> --to <version> --dry-run
+```
+
+It lists the new values the pack needs (`needs a value: ...`): ask the client, then
+`adjust --set` them. A pack upgrade brings new files, so it ships as a new deploy (approve +
+deploy); across many instances Jag uses `fleet rollout` (instance by instance, gated by each
+instance's evals, rolled back automatically if one fails).
+
+## Fleet commands (Jag or a Di-Factory operator)
+
+`fleet register | offer | rollout | rollback | status` talk to the control plane with
+`DIF_CONTROL_ADMIN_TOKEN`. You do not hold that token. `register` writes the instance's
+`fleet_token` to an owner-only file for the client's vault; never read it or paste it.
