@@ -106,3 +106,21 @@ class SqlSessionStore:
             " WHERE tenant_id = ? AND instance_id = ? AND session_id = ?",
             (state, scope.tenant_id, scope.instance_id, session_id),
         )
+
+    async def binding(self, scope: Scope, session_id: str) -> tuple[str, str] | None:
+        """``(channel, contact_key)`` of a session started from a channel."""
+        row = await self.db.fetchone(
+            "SELECT channel, contact_key FROM sessions WHERE tenant_id = ? AND instance_id = ?"
+            " AND session_id = ?",
+            (scope.tenant_id, scope.instance_id, session_id),
+        )
+        if row is None or not row["channel"] or not row["contact_key"]:
+            return None
+        return str(row["channel"]), str(row["contact_key"])
+
+    async def state(self, scope: Scope, session_id: str) -> str | None:
+        row = await self.db.fetchone(
+            "SELECT state FROM sessions WHERE tenant_id = ? AND instance_id = ? AND session_id = ?",
+            (scope.tenant_id, scope.instance_id, session_id),
+        )
+        return str(row["state"]) if row else None

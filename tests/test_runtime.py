@@ -236,6 +236,7 @@ async def test_service_desk_tools_policy_and_redaction(examples: Path, tmp_path:
 
         resolver = inst.agent("resolver")
         assert resolver.tools.names() == [
+            "handoff.human",  # the agent lists 'human' among its handoffs
             "helpdesk.get_ticket",
             "helpdesk.solve_ticket",
             "identity.lookup_user",

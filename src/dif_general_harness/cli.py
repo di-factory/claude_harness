@@ -7,6 +7,8 @@
 - ``dif-general-harness build``: the constructor: match a pack, interview, write and
   validate the instance spec (``--answers FILE`` for a non-interactive build).
 - ``dif-general-harness eval INSTANCE``: run the instance's eval suites.
+- ``dif-general-harness serve INSTANCE``: the headless service (``--database-url`` for
+  Postgres); the admin token is the ``admin_token`` secret.
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -48,6 +51,7 @@ def _add_run(sub: argparse._SubParsersAction[argparse.ArgumentParser], name: str
         "run": "run an instance's agent headless",
         "console": "chat with an agent (TUI)",
         "eval": "run the instance's eval suites",
+        "serve": "run the headless service (channels, triggers, inbox, admin API)",
     }
     cmd = sub.add_parser(name, help=helps[name])
     cmd.add_argument("path", type=Path, help="instance JSON")
@@ -57,15 +61,30 @@ def _add_run(sub: argparse._SubParsersAction[argparse.ArgumentParser], name: str
         cmd.add_argument("-m", "--message", help="one user message; default: read stdin lines")
     if name == "eval":
         cmd.add_argument("--suite", type=Path, action="append", help="suite file (repeatable)")
+    if name == "serve":
+        cmd.add_argument(
+            "--database-url",
+            default=os.environ.get("DIF_DATABASE_URL"),
+            help="postgresql://... (default: DIF_DATABASE_URL, else SQLite in the state folder)",
+        )
+        cmd.add_argument("--host", default="0.0.0.0")
+        cmd.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8080")))
+        cmd.add_argument(
+            "--public-url",
+            default=os.environ.get("DIF_PUBLIC_URL"),
+            help="the URL providers call (for signature checks behind a load balancer)",
+        )
+        cmd.add_argument("--lanes", type=int, default=4, help="concurrent worker lanes")
     cmd.add_argument("--session", help="resume a session id")
     cmd.add_argument("--state", type=Path, default=Path(".dif/state"), help="state folder")
     cmd.add_argument("--secrets-dir", type=Path, help="one file per secret; default: env vars")
     cmd.add_argument(
         "--workspace", action="append", default=[], metavar="NAME=DIR", help="local workspace"
     )
-    cmd.add_argument(
-        "--yes", action="store_true", help="approve every 'ask' (trusted local runs only)"
-    )
+    if name != "serve":  # the service never auto-approves: approvals go to the inbox
+        cmd.add_argument(
+            "--yes", action="store_true", help="approve every 'ask' (trusted local runs only)"
+        )
 
 
 def _options(
@@ -81,9 +100,10 @@ def _options(
     return RuntimeOptions(
         state_root=args.state,
         secrets=FileSecrets(args.secrets_dir) if args.secrets_dir else EnvSecrets(),
-        approver=AutoApprover() if args.yes else approver,
+        approver=AutoApprover() if getattr(args, "yes", False) else approver,
         workspaces=workspaces,
         provider=provider,
+        database_url=getattr(args, "database_url", None),
     )
 
 
@@ -159,6 +179,34 @@ async def _run(
                     )
                     code = 0 if event.reason == "end_turn" else 1
         return code
+
+
+async def _serve(
+    args: argparse.Namespace, resolved: ResolvedSpec, provider: ModelProvider | None
+) -> int:
+    import uvicorn
+
+    from .service import Headless, create_app
+
+    options = _options(args, provider, None)
+    if options is None:
+        return 2
+    try:
+        instance = await Instance.open(resolved, options)
+    except (InstanceError, RoutingError) as exc:
+        print(f"cannot start: {exc}", file=sys.stderr)
+        return 2
+    async with instance:
+        headless = await Headless.build(instance, public_url=args.public_url)
+        for issue in [*instance.issues, *headless.issues]:
+            print(issue, file=sys.stderr)
+        admin_token = options.secrets.get("admin_token")
+        if not admin_token:
+            print("note: no admin_token secret; the admin API is off", file=sys.stderr)
+        app = create_app(headless, admin_token=admin_token, worker_lanes=args.lanes)
+        config = uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
+        await uvicorn.Server(config).serve()
+    return 0
 
 
 def _default_roots() -> list[Path]:
@@ -274,6 +322,7 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
     _add_run(sub, "run")
     _add_run(sub, "console")
     _add_run(sub, "eval")
+    _add_run(sub, "serve")
     build_cmd = sub.add_parser("build", help="constructor: interview and build an instance")
     build_cmd.add_argument("--request", help="what the client needs, in plain words")
     build_cmd.add_argument("--pack", action="append", help="pack id (skip matching)")
@@ -298,6 +347,8 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
         return asyncio.run(_console(args, resolved, provider))
     if args.group == "eval":
         return asyncio.run(_eval(args, resolved, provider))
+    if args.group == "serve":
+        return asyncio.run(_serve(args, resolved, provider))
     if args.command == "resolve":
         print(json.dumps(resolved.data, indent=2, ensure_ascii=False))
         return 0 if resolved.ok else 1

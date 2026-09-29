@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import dataclasses
 import fnmatch
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +38,7 @@ from ..core.loop import LoopConfig, run
 from ..core.scope import Scope
 from ..core.session import Session
 from ..governance import AuditLog, ConsentStore, GovernedTools, PiiPolicy, Tokenizer, TokenVault
+from ..hitl.inbox import Inbox
 from ..policy import Approver, DailySpend, Limits, PermissionPolicy, PolicyGate, Redactor, RunMeter
 from ..policy.spend import SpendStore
 from ..providers.base import ModelProvider
@@ -52,10 +53,13 @@ from ..tools.mcp import McpToolSource
 from ..tools.packs import NoteStore, Workspace, coding_tools, general_tools
 from ..tools.packs.coding import Executor
 from ..tools.registry import Effect, Tool, ToolRegistry
+from .context import current_session
 from .prompts import load_text, render
 from .routing import ProviderFactory, build_router
 
 LOCAL_TENANT = "local"
+HANDOFF_TOOL = "handoff.human"
+Notify = Callable[[str, str], Awaitable[None]]  # (inbox item id, one-line summary)
 
 
 class InstanceError(RuntimeError):
@@ -111,6 +115,8 @@ class Instance:
         self.consent: ConsentStore
         self.audit: AuditLog
         self.spend: SpendStore
+        self.inbox: Inbox
+        self.notify: Notify | None = None  # set by the service: tells a person about inbox items
 
     # --- lifecycle -----------------------------------------------------------------
 
@@ -154,6 +160,7 @@ class Instance:
         self.consent = ConsentStore(self.db)
         self.audit = AuditLog(self.db)
         self.spend = SpendStore(self.db)
+        self.inbox = Inbox(self.db, self.scope)
         if policy.tokenize and policy.undetectable:
             self._warn(
                 "pii_undetectable",
@@ -186,7 +193,43 @@ class Instance:
         tools += self._packs(data)
         tools += self._http(data, missing)
         tools += await self._mcp(data, missing)
+        if any("human" in a.handoffs for a in spec.agents.values()):
+            tools.append(self._handoff_tool())
         self._configure(tools)
+
+    def _handoff_tool(self) -> Tool:
+        from ..tools.registry import tool
+
+        @tool(HANDOFF_TOOL, effect=Effect.WRITE)
+        async def handoff(reason: str) -> str:
+            """Hand this conversation to a person (medical advice, complaints, emergencies,
+            anything outside your rules). Say why in one sentence; then tell the contact a
+            person will reply."""
+            session = current_session.get()
+            if session is None:
+                raise RuntimeError("no conversation to hand off")
+            item = await self.escalate(session, reason, by=f"agent:{session.agent_id}")
+            return f"handed off to a person (escalation {item}); a person will reply here"
+
+        return handoff
+
+    async def escalate(self, session: Session, reason: str, *, by: str) -> str:
+        """File an escalation with the recent transcript and stop the agent replying."""
+        transcript = [
+            {"role": str(m.role), "text": m.text()} for m in session.messages[-12:] if m.text()
+        ]
+        item = await self.inbox.create(
+            "escalation",
+            reason[:200],
+            {"reason": reason, "agent": session.agent_id, "contact": session.contact_key,
+             "transcript": transcript},
+            session.id,
+        )  # fmt: skip
+        await self.store.set_state(self.scope, session.id, "escalated")
+        await self.audit.record(self.scope, by, "escalation", f"inbox/{item}", {"reason": reason})
+        if self.notify is not None:
+            await self.notify(item, f"Escalation: {reason[:120]}")
+        return item
 
     def _packs(self, data: dict[str, Any]) -> list[Tool]:
         out: list[Tool] = []
@@ -255,6 +298,8 @@ class Instance:
                     t = dataclasses.replace(t, verify=o.verify)
             if t.verify:
                 ask.append(t.name)  # until verification checks run, a person reviews the call
+            if t.name == HANDOFF_TOOL:
+                allow.append(t.name)  # asking a person is always allowed
             self.tools.register(t)
         for name, o in overrides.items():
             if o.permission:
@@ -289,8 +334,9 @@ class AgentRuntime:
         self.spec = spec
         self.system = render(load_text(spec.prompt), instance.spec)
         registry = instance.tools
+        patterns = [*spec.tools, *([HANDOFF_TOOL] if "human" in spec.handoffs else [])]
         selected = ToolRegistry(
-            [t for n in registry.names() if _matches(n, spec.tools) and (t := registry.get(n))]
+            [t for n in registry.names() if _matches(n, patterns) and (t := registry.get(n))]
         )
         self.tools = GovernedTools(selected, instance.pii)
         self.missing_tools = [
@@ -352,6 +398,24 @@ class AgentRuntime:
         full = inst.spec.governance.audit.get("level") == "full"
         started: dict[str, ToolCallStarted] = {}
         safe_text = await inst.pii.tokenize(text, names or [])
+        token = current_session.set(session)
+        try:
+            async for event in self._run(session, safe_text, meter, started, full):
+                yield event
+        finally:
+            current_session.reset(token)
+
+    async def _run(
+        self,
+        session: Session,
+        safe_text: str,
+        meter: RunMeter,
+        started: dict[str, ToolCallStarted],
+        full: bool,
+    ) -> AsyncIterator[Event]:
+        inst = self.instance
+        scope = inst.scope
+        assert inst.provider is not None
         async for event in run(
             session, safe_text, inst.provider, self.tools, self.config, gate=self.gate, meter=meter
         ):
