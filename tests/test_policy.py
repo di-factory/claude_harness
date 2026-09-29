@@ -384,3 +384,19 @@ def test_store_redacts_but_keeps_ids_and_signatures(tmp_path: Path, scope: Scope
     result = resumed.messages[2].content[0]
     assert isinstance(result, ToolResultBlock) and result.tool_use_id == tool_id
     assert result.content == "[REDACTED]"
+
+
+def test_agent_budgets_only_tighten() -> None:
+    instance = Limits(usd=0.5, turns=20)
+    assert instance.tighten(Limits(usd=2.0)) == Limits(usd=0.5, turns=20)
+    assert instance.tighten(Limits(usd=0.1, tokens=1000)) == Limits(usd=0.1, tokens=1000, turns=20)
+
+
+def test_agent_daily_limit() -> None:
+    daily = DailySpend()
+    cto = RunMeter("opc", Limits(), daily=daily, agent="cto", per_agent_day=Limits(usd=1.0))
+    cto.charge(Usage(output_tokens=60_000), "claude-opus-5-5")  # $1.20
+    again = RunMeter("opc", Limits(), daily=daily, agent="cto", per_agent_day=Limits(usd=1.0))
+    assert "agent spent" in (again.exceeded(0) or "")
+    cgo = RunMeter("opc", Limits(), daily=daily, agent="cgo", per_agent_day=Limits(usd=1.0))
+    assert cgo.exceeded(0) is None

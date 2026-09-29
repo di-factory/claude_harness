@@ -69,6 +69,19 @@ class Limits:
             wall_time_s=_duration_s(str(wall)) if wall else None,
         )
 
+    def tighten(self, other: Limits) -> Limits:
+        """The stricter of two limits, field by field (a per-agent budget never loosens)."""
+
+        def pick[T: (int, float)](a: T | None, b: T | None) -> T | None:
+            return b if a is None else a if b is None else min(a, b)
+
+        return Limits(
+            usd=pick(self.usd, other.usd),
+            tokens=pick(self.tokens, other.tokens),
+            turns=pick(self.turns, other.turns),
+            wall_time_s=pick(self.wall_time_s, other.wall_time_s),
+        )
+
 
 def _num(v: object) -> float | None:
     return float(v) if isinstance(v, (int, float)) else None
@@ -111,10 +124,14 @@ class RunMeter:
         *,
         prices: dict[str, Price] | None = None,
         daily: DailySpend | None = None,
+        agent: str | None = None,
+        per_agent_day: Limits | None = None,
     ) -> None:
         self.tenant = tenant
         self.per_run = per_run
         self.per_day = per_tenant_day or Limits()
+        self.agent_key = f"{tenant}/{agent}" if agent else None
+        self.per_agent_day = per_agent_day or Limits()
         self.prices = DEFAULT_PRICES if prices is None else prices
         self.daily = daily or DailySpend()
         self.total = Usage()
@@ -130,6 +147,8 @@ class RunMeter:
             priced = usage.model_copy(update={"cost_usd": cost_usd(usage, price)})
         self.total = self.total + priced
         self.daily.add(self.tenant, priced.cost_usd)
+        if self.agent_key:
+            self.daily.add(self.agent_key, priced.cost_usd)
         return priced
 
     def exceeded(self, turns: int) -> str | None:
@@ -146,4 +165,9 @@ class RunMeter:
             return f"run took {elapsed:.0f}s, limit {run.wall_time_s:.0f}s"
         if day.usd is not None and self.daily.today(self.tenant) >= day.usd:
             return f"tenant spent ${self.daily.today(self.tenant):.4f} today, limit ${day.usd}"
+        agent_day = self.per_agent_day.usd
+        if self.agent_key and agent_day is not None:
+            spent = self.daily.today(self.agent_key)
+            if spent >= agent_day:
+                return f"agent spent ${spent:.4f} today, limit ${agent_day}"
         return None
