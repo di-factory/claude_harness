@@ -69,6 +69,8 @@ from ..tools.http import ConnectorError, http_tools
 from ..tools.mcp import McpToolSource
 from ..tools.packs import NoteStore, Workspace, coding_tools, general_tools
 from ..tools.packs.coding import Executor
+from ..tools.packs.google_calendar import PACK as GOOGLE_CALENDAR
+from ..tools.packs.google_calendar import CalendarError, Source, calendar_tools
 from ..tools.registry import Effect, Tool, ToolRegistry
 from ..verify import Verifier
 from .context import current_session
@@ -145,6 +147,7 @@ class Instance:
         self.emit: Emit | None = None  # set by the service: internal events (ledger, workflows)
         self.ledger: LedgerStore | None = None
         self.pending_handoffs: dict[str, tuple[str, str, str]] = {}  # source session -> target
+        self.sources: dict[str, tuple[Source, float]] = {}  # item feeds: (fetch, every seconds)
 
     # --- lifecycle -----------------------------------------------------------------
 
@@ -231,7 +234,7 @@ class Instance:
         for corpus in self.spec.knowledge.corpora:
             await self.sync_knowledge(corpus)
         tools: list[Tool] = []
-        tools += self._packs(data)
+        tools += await self._packs(data, missing)
         tools += self._http(data, missing)
         tools += await self._mcp(data, missing)
         if any("human" in a.handoffs for a in spec.agents.values()):
@@ -424,10 +427,12 @@ class Instance:
             await self.notify(item, f"Escalation: {reason[:120]}")
         return item
 
-    def _packs(self, data: dict[str, Any]) -> list[Tool]:
+    async def _packs(self, data: dict[str, Any], missing: set[str]) -> list[Tool]:
         out: list[Tool] = []
         for pack in self.spec.tools.packs:
-            if pack == "general":
+            if pack == GOOGLE_CALENDAR:
+                out += await self._google_calendar(data, missing)
+            elif pack == "general":
                 out += general_tools(NoteStore(self.options.state_root, self.scope))
             elif pack == "coding":
                 roots = self.options.workspaces
@@ -449,6 +454,25 @@ class Instance:
         for ref in self.spec.tools.python:
             self._warn("unavailable_tool", "tools.python", f"Python tool {ref!r} is not loaded yet")
         return out
+
+    async def _google_calendar(self, data: dict[str, Any], missing: set[str]) -> list[Tool]:
+        raw = (data.get("tools", {}).get("config") or {}).get(GOOGLE_CALENDAR) or {}
+        where = f"tools.config.{GOOGLE_CALENDAR}"
+        if _secret_refs(raw) & missing:
+            self._warn("missing_secret", where, "skipped: a secret is not set")
+            return []
+        http = self.options.http_client
+        if http is None:
+            http = await self._stack.enter_async_context(httpx2.AsyncClient(timeout=30.0))
+        tz = self.spec.tenant.timezone if self.spec.tenant else "UTC"
+        try:
+            tools, sources, every = calendar_tools(self.secrets.resolve(raw), tz, http)
+        except (CalendarError, ValueError, TypeError) as exc:
+            self._warn("connector_error", where, str(exc))
+            return []
+        for name, fetch in sources.items():
+            self.sources[name] = (fetch, every)
+        return tools
 
     def _http(self, data: dict[str, Any], missing: set[str]) -> list[Tool]:
         out: list[Tool] = []

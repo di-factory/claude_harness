@@ -177,8 +177,8 @@ async def test_clinic_instance_runs_and_reports_gaps(examples: Path, tmp_path: P
             "clinica-sonrisa",
             "clinica-sonrisa-appointments",
         )
-        codes = {i.code for i in inst.issues}
-        assert "unavailable_pack" in codes
+        gaps = {(i.code, i.path) for i in inst.issues}
+        assert ("missing_secret", "tools.config.connectors/google-calendar") in gaps  # no key
 
         agent = inst.agent()
         assert agent.name == "receptionist"

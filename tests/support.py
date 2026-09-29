@@ -151,16 +151,21 @@ class Env:
         script: list[Any],
         edit: Any = None,
         secrets: dict[str, str] | None = None,
+        routes: Any = None,
     ) -> None:
         self.tmp_path = tmp_path
         self.edit = edit
         self.secrets = secrets or {}
+        self.routes = routes  # request -> Response | None: extra fake APIs (Google...)
         self.provider = FakeProvider(script)
         self.sent: list[httpx2.Request] = []
         self.clock = Clock()
 
     def outbound(self) -> httpx2.AsyncClient:
         def handle(request: httpx2.Request) -> httpx2.Response:
+            answer = self.routes(request) if self.routes is not None else None
+            if answer is not None:
+                return answer  # type: ignore[no-any-return]
             self.sent.append(request)
             if "telegram" in request.url.host:
                 return httpx2.Response(200, json={"ok": True, "result": {"message_id": 7}})
@@ -190,6 +195,7 @@ class Env:
             secrets=secrets,
             provider=self.provider,
             database=database,
+            http_client=self.outbound(),
         )
         inst = await Instance.open(resolved, options)
         headless = await Headless.build(

@@ -203,7 +203,8 @@
         "credentials": {
           "$secret": "google"
         },
-        "calendar_ids": "{{var.calendar_ids}}"
+        "calendar_ids": "{{var.calendar_ids}}",
+        "business_hours": "{{var.business_hours}}"
       }
     },
     "overrides": {

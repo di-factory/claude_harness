@@ -223,6 +223,7 @@ class Headless:
             "agent_task": self._job_agent_task,
             "memory_extract": self._job_memory_extract,
             "knowledge_sync": self._job_knowledge_sync,
+            "source_sync": self._job_source_sync,
         }
 
     def worker(self, **kw: Any) -> Worker:
@@ -238,6 +239,12 @@ class Headless:
             await self.scan_relative()
         for corpus in self.instance.spec.knowledge.corpora:
             await self._sync_next(corpus, now)
+        watched = {str(t.source) for t in self.triggers.values() if t.type == "relative"}
+        for source in sorted(watched & set(self.instance.sources)):
+            await self.queue.enqueue(
+                self.scope, "source_sync", {"source": source},
+                dedupe_key=f"source_sync:{source}:{int(now)}",
+            )  # fmt: skip
         tomorrow = datetime.fromtimestamp(now, UTC).date().isoformat()
         await self.queue.enqueue(
             self.scope, "retention", {}, delay_s=60, dedupe_key=f"retention:{tomorrow}"
@@ -399,6 +406,22 @@ class Headless:
             self.scope, "knowledge_sync", {"corpus": corpus},
             run_at=at, dedupe_key=f"knowledge_sync:{corpus}:{int(at)}",
         )  # fmt: skip
+
+    async def _job_source_sync(self, job: Job) -> None:
+        """Pull a connector's items (upcoming calendar events) for the relative triggers
+        watching them, then come back in ``sync_every``."""
+        source = job.payload["source"]
+        found = self.instance.sources.get(source)
+        if found is None:
+            return  # the connector was removed since this job was queued
+        fetch, every = found
+        at = max(job.run_at, self.queue.clock()) + every
+        await self.queue.enqueue(
+            self.scope, "source_sync", {"source": source}, run_at=at,
+            dedupe_key=f"source_sync:{source}:{int(at)}",
+        )  # fmt: skip
+        items = [i for i in await fetch() if i.get("start")]
+        await self.upsert_items(source, items, replace=True)
 
     async def _job_knowledge_sync(self, job: Job) -> None:
         corpus = job.payload["corpus"]
