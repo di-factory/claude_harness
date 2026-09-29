@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import fnmatch
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal, Protocol
@@ -176,15 +177,32 @@ class AutoApprover:
         return ApprovalDecision(True)
 
 
+class VerifyResult(Protocol):
+    @property
+    def passed(self) -> bool: ...
+    @property
+    def reason(self) -> str: ...
+
+
+VerifyHook = Callable[[Session, ToolUseBlock, Tool | None], Awaitable[VerifyResult]]
+
+
 class PolicyGate:
-    """The loop's ``ToolGate``: applies the policy, asks the approver when needed."""
+    """The loop's ``ToolGate``: applies the policy, verifies side effects, then asks the
+    approver when needed. Verification comes first, so a person only approves actions that
+    already passed their checks."""
 
     def __init__(
-        self, policy: PermissionPolicy, tools: ToolRegistry, approver: Approver | None = None
+        self,
+        policy: PermissionPolicy,
+        tools: ToolRegistry,
+        approver: Approver | None = None,
+        verify: VerifyHook | None = None,
     ) -> None:
         self.policy = policy
         self.tools = tools
         self.approver = approver or DenyApprover()
+        self.verify = verify
         self._remembered: set[tuple[str, str]] = set()  # (session id, tool)
 
     async def check(self, session: Session, call: ToolUseBlock) -> GateDecision:
@@ -193,6 +211,10 @@ class PolicyGate:
         decision = self.policy.decide(call.name, effect, call.input, primary_argument(tool))
         if decision.verdict is Verdict.DENY:
             return GateDecision(False, f"denied by rule {decision.rule!r}")
+        if self.verify is not None:
+            verdict = await self.verify(session, call, tool)
+            if not verdict.passed:
+                return GateDecision(False, f"verification failed: {verdict.reason}")
         if decision.verdict is Verdict.ALLOW:
             return GateDecision(True)
         if (session.id, call.name) in self._remembered:

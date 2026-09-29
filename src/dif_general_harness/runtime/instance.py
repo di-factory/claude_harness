@@ -35,12 +35,14 @@ import httpx2
 
 from ..core.events import Event, ToolCallFinished, ToolCallStarted, TurnEnded
 from ..core.loop import LoopConfig, run
-from ..core.messages import ToolResultBlock
+from ..core.messages import ToolResultBlock, ToolUseBlock
 from ..core.scope import Scope
 from ..core.session import Session
 from ..governance import AuditLog, ConsentStore, GovernedTools, PiiPolicy, Tokenizer, TokenVault
+from ..governance.contacts import ContactStore
 from ..hitl.inbox import Inbox
 from ..policy import Approver, DailySpend, Limits, PermissionPolicy, PolicyGate, Redactor, RunMeter
+from ..policy.escalation import first_match
 from ..policy.spend import SpendStore
 from ..providers.base import ModelProvider
 from ..spec.errors import Issue
@@ -54,6 +56,7 @@ from ..tools.mcp import McpToolSource
 from ..tools.packs import NoteStore, Workspace, coding_tools, general_tools
 from ..tools.packs.coding import Executor
 from ..tools.registry import Effect, Tool, ToolRegistry
+from ..verify import Verifier
 from .context import current_session
 from .prompts import load_text, render
 from .routing import ProviderFactory, build_router
@@ -118,6 +121,8 @@ class Instance:
         self.audit: AuditLog
         self.spend: SpendStore
         self.inbox: Inbox
+        self.contacts: ContactStore
+        self.verifier = Verifier(self, on_failed_twice=self._verification_failed_twice)
         self.notify: Notify | None = None  # set by the service: tells a person about inbox items
 
     # --- lifecycle -----------------------------------------------------------------
@@ -166,6 +171,7 @@ class Instance:
         self.audit = AuditLog(self.db)
         self.spend = SpendStore(self.db)
         self.inbox = Inbox(self.db, self.scope)
+        self.contacts = ContactStore(self.db)
         if policy.tokenize and policy.undetectable:
             self._warn(
                 "pii_undetectable",
@@ -217,6 +223,21 @@ class Instance:
             return f"handed off to a person (escalation {item}); a person will reply here"
 
         return handoff
+
+    async def _verification_failed_twice(
+        self, session: Session, call: ToolUseBlock, reason: str
+    ) -> None:
+        escalation = self.spec.policies.escalation or {}
+        context = {
+            "verification": {"failed_twice": True, "reason": reason},
+            "tool": call.name,
+            "var": self.spec.values,
+        }
+        rule = first_match(list(escalation.get("rules") or []), context)
+        if rule is not None and rule.get("to") == "human":
+            await self.escalate(
+                session, f"verification of {call.name} failed twice: {reason}", by="verifier"
+            )
 
     async def escalate(self, session: Session, reason: str, *, by: str) -> str:
         """File an escalation with the recent transcript and stop the agent replying."""
@@ -314,23 +335,22 @@ class Instance:
                     t = dataclasses.replace(t, effect=Effect(o.effect))
                 if o.verify:
                     t = dataclasses.replace(t, verify=o.verify)
-            if t.verify:
-                ask.append(t.name)  # until verification checks run, a person reviews the call
             if t.name == HANDOFF_TOOL:
                 allow.append(t.name)  # asking a person is always allowed
             self.tools.register(t)
+        for name in self.tools.names():  # a check that cannot run here: a person reviews
+            registered = self.tools.get(name)
+            check = registered.verify if registered else None
+            why = self.verifier.unrunnable(check) if check else None
+            if why:
+                ask.append(name)
+                self._warn("verification_unavailable", f"tools.{name}", f"{why}; asking instead")
         for name, o in overrides.items():
             if o.permission:
                 {"allow": allow, "ask": ask, "deny": deny}[o.permission].append(name)
         self.policy = PermissionPolicy(
             allow=allow, ask=ask, deny=deny, profile=self.spec.policies.profile
         )
-        if self.spec.policies.verification.checks:
-            self._warn(
-                "verification_pending",
-                "policies.verification",
-                "verification checks are not run yet; tools with verify require approval",
-            )
 
     # --- agents --------------------------------------------------------------------
 
@@ -360,7 +380,9 @@ class AgentRuntime:
         self.missing_tools = [
             p for p in spec.tools if not any(_matches(n, [p]) for n in self.tools.names())
         ]
-        self.gate = PolicyGate(instance.policy, self.tools, instance.options.approver)
+        self.gate = PolicyGate(
+            instance.policy, self.tools, instance.options.approver, instance.verifier.verify
+        )
         budgets = instance.spec.policies.budgets
         own = spec.budgets or {}
         self.per_run = Limits.from_spec(budgets.get("per_run")).tighten(

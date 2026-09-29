@@ -227,6 +227,16 @@ def create_app(
         )
         return {"status": change.status}
 
+    @app.patch("/admin/contacts/{contact_key}", dependencies=[Depends(admin)])
+    async def contact(contact_key: str, attrs: dict[str, Any]) -> dict[str, Any]:
+        """Set contact attributes that conditions read (``contact.verified``...); null
+        removes one. Set by the client's systems, never by the model."""
+        merged = await current().contacts.update(scope, contact_key, attrs)
+        await current().audit.record(
+            scope, "admin", "contact_updated", "contact", {"keys": sorted(attrs)}
+        )
+        return merged
+
     @app.get("/admin/audit/verify", dependencies=[Depends(admin)])
     async def audit_verify() -> dict[str, Any]:
         broken = await current().audit.verify(scope)

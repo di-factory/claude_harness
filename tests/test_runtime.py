@@ -178,7 +178,7 @@ async def test_clinic_instance_runs_and_reports_gaps(examples: Path, tmp_path: P
             "clinica-sonrisa-appointments",
         )
         codes = {i.code for i in inst.issues}
-        assert {"unavailable_pack", "verification_pending"} <= codes
+        assert "unavailable_pack" in codes
 
         agent = inst.agent()
         assert agent.name == "receptionist"
@@ -227,8 +227,8 @@ async def test_service_desk_tools_policy_and_redaction(examples: Path, tmp_path:
 
         policy = inst.policy
         assert policy.decide("helpdesk.delete_ticket", Effect.EXTERNAL, {}).verdict is Verdict.DENY
-        # tools with verify need a person until verification checks exist
-        assert policy.decide("helpdesk.solve_ticket", Effect.EXTERNAL, {}).verdict is Verdict.ASK
+        # the pack allows it explicitly; its verifier check gates it (no forced ask any more)
+        assert policy.decide("helpdesk.solve_ticket", Effect.EXTERNAL, {}).verdict is Verdict.ALLOW
         assert (
             policy.decide("identity.reset_password", Effect.EXTERNAL, {"user_id": "u"}).verdict
             is Verdict.ASK

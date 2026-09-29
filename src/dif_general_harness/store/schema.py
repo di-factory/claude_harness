@@ -66,6 +66,12 @@ MIGRATIONS: list[list[str]] = [
             day TEXT NOT NULL, usd DOUBLE PRECISION NOT NULL,
             PRIMARY KEY (tenant_id, instance_id, key, day))""",
     ],
+    [  # M3: contact attributes for conditions
+        """CREATE TABLE IF NOT EXISTS contacts (
+            tenant_id TEXT NOT NULL, instance_id TEXT NOT NULL, contact_key TEXT NOT NULL,
+            attrs TEXT NOT NULL, updated_at DOUBLE PRECISION NOT NULL,
+            PRIMARY KEY (tenant_id, instance_id, contact_key))""",
+    ],
 ]
 
 
