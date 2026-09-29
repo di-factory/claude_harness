@@ -7,9 +7,11 @@ harness loads it, validates it (Pydantic, in M0) and builds a tenant-scoped
 **instance** from it. The goal is the PyME promise made concrete: the
 **template** is the 80%, and the spec is the 20%.
 
-This draft was checked on paper against three different line-of-business
-shapes (§9): a PyME Appointment Agent, a Service Desk cell and a
-Conversational RAG assistant.
+This draft was checked on paper against six different solution shapes (§9):
+- chat-style: a PyME Appointment Agent, a Service Desk cell and a
+  Conversational RAG assistant;
+- non-chat: a batch Receipt Processing job, a Dev cell and an OPC-style
+  agent team.
 
 ## 1. Files and kinds
 
@@ -55,6 +57,8 @@ packs/pyme-appointment-agent/
 | `evals` | ● | ○ | eval suites and pass thresholds |
 | `deploy` | – | ● | target (local, docker, aws), sizing, secret backend |
 | `extensions` | ○ | ○ | Python modules for logic the spec cannot express (§8) |
+| `workspaces` | ○ | ○ | sandboxed working copies (for example a git repo) and the executor they run in (§5.14) |
+| `ledger` | ○ | ○ | the shared task ledger for agent teams: fields, backend, who can see it (§5.15) |
 
 ## 3. References and expressions
 
@@ -400,6 +404,50 @@ Every step is persisted, so a restart resumes at the last completed step.
             "secrets_backend": "aws-secrets-manager", "database": "postgres" }
 ```
 
+### 5.14 `workspaces` (added by paper test 2)
+
+```json
+"workspaces": {
+  "repo": {
+    "type": "git", "source": "https://github.com/{{var.github_org}}/{{input.repo}}",
+    "credentials": { "$secret": "github_app" },
+    "executor": { "type": "container", "image": "{{var.sandbox_image}}", "network": "deny-by-default",
+                  "allow_hosts": ["pypi.org"], "cpu": 2, "memory": "4g", "timeout": "30m" }
+  }
+}
+```
+
+An agent with `"workspace": "repo"` gets its coding tools bound to that
+sandbox. `command` checks run in the same workspace.
+
+### 5.15 `ledger` (added by paper test 2)
+
+```json
+"ledger": {
+  "backend": "builtin",
+  "fields": { "title": "string", "owner": "agent", "status": "enum:todo,doing,blocked,done",
+              "due": "date", "needs_founder": "boolean" },
+  "visible_to": ["cgo", "coo", "cto", "human"]
+}
+```
+
+The ledger is exposed through the built-in `ledger.*` tools. Assigning a task
+to an agent emits `ledger.task_assigned`, which a trigger can route to that
+agent. The backend is `builtin` (Postgres); external boards (Linear, Notion)
+come later as adapters.
+
+### 5.16 Other additions from paper test 2
+
+| Where | Addition |
+|---|---|
+| `agents.*` | `output_schema` (a JSON Schema file for structured results), `workspace`, and per-agent `budgets` |
+| `tools` | **Built-in namespaces:** `ledger`, `runs`, `knowledge`, `memory`. **Tool packs declare their namespaces** (`general` → `http`, `web`, `notes`), so specs reference tools, not packs. New `documents` pack (read, OCR). |
+| `triggers` | type `file` (new files in a bucket or folder, with `match` and a required `dedupe_key`); an optional `when` CEL filter; a trigger can target an **agent** (`agent` + `input`) instead of a workflow, including `{{event.*}}` routing |
+| `workflows` | `concurrency`; step types `message` (free text to a channel), `timer` (start a `delay` trigger) and `parallel` (with `branches`); `approval` gets `summary` and `on_reject`; `end` gets an `outcome` |
+| `policies.verification.checks` | type `command` (run a command in a workspace; for example, tests must exit 0) |
+| `governance.pii` | `reveal_to_tools`: which PII classes are de-tokenized for which tools (for example, the RFC must reach the ERP) |
+| `governance.consent` | applies to messages sent **to contacts**; channels with purpose `hitl`, `founder` or `outbound` (operators) are exempt |
+
 ## 6. Validation (what the loader enforces)
 
 1. JSON Schema and Pydantic types for every section.
@@ -415,6 +463,10 @@ Every step is persisted, so a restart resumes at the last completed step.
 6. The deploy region satisfies `governance.regions.data` (for example `mx` →
    AWS `mx-central-1`).
 7. Every pack declares at least one eval suite.
+8. Agent tool wildcards (`coding.*`, `crm.*`) are **expanded against the tool
+   registry at load time**. Every resulting tool with an `external` effect must
+   be covered by `ask`, `verify`, or an explicit `allow` with a reason.
+9. References to `var.*` inside CEL conditions count as uses of the variable.
 
 ## 7. Versioning
 
@@ -471,6 +523,45 @@ retention. The last run passed with no problems. Only one eval file
 (`pyme-appointment-agent/evals/confirm.yaml`) is written, to fix the eval
 format; the rest are listed but not written yet.
 
+### Paper test 2: non-chat shapes (decision 32)
+
+| Shape | File | What it exercises |
+|---|---|---|
+| Batch document job | [`pyme-receipt-processing/pack.json`](examples/pyme-receipt-processing/pack.json) | file trigger with dedupe, structured extraction to a JSON Schema, validation, duplicate check, amount-based approval, posting to an ERP, daily report, PII revealed only to the ERP |
+| Dev cell | [`dev-cell/pack.json`](examples/dev-cell/pack.json) | GitHub webhook with a CEL filter, sandboxed git workspace in a container, coding tools, tests as a `command` check before opening a PR, merges denied |
+| OPC-style agent team | [`opc-c-suite/pack.json`](examples/opc-c-suite/pack.json) | long-lived CGO/COO/CTO agents, shared ledger, schedules that wake agents directly, event-routed delegation, parallel stand-up, founder approvals over Telegram |
+
+**What paper test 2 changed:**
+
+| Gap found | Found in | Fix |
+|---|---|---|
+| Work arrives as files, not messages | Receipts | `file` trigger with `match` and a required `dedupe_key` |
+| An extraction must return exact fields | Receipts | agent `output_schema` (JSON Schema) |
+| The RFC is tokenized for the model, but the ERP needs the real value | Receipts | `governance.pii.reveal_to_tools` |
+| The daily report to staff was flagged as needing consent | Receipts | consent covers messages to contacts only; operator channels are exempt |
+| Summaries and ledgers need tools no pack provides | Receipts, OPC | built-in namespaces (`runs`, `ledger`, `knowledge`, `memory`) |
+| Pack names ≠ tool names (`general` gives `http.get`) | OPC | packs declare their namespaces |
+| Coding agents need an isolated working copy and toolchain | Dev cell | `workspaces` with a container executor |
+| "Tests pass" is a command, not a tool call or condition | Dev cell | `command` check type |
+| Only issues with a given label should start work | Dev cell | CEL `when` filter on triggers |
+| `coding.*` and `crm.*` grant tools the spec never names | Dev cell, OPC | wildcards expanded at load time (validation rule 8) |
+| Long-lived agents must wake up on their own schedules | OPC | triggers that target an `agent` directly |
+| Agents delegate work to each other | OPC | `ledger` section and a `ledger.task_assigned` event |
+| Each executive needs its own spending cap | OPC | per-agent `budgets` |
+| I first modelled "drafts" as a fake HTTP call | OPC (self-review) | removed; drafts are ledger items |
+
+**Roadmap consequences:**
+- The **Dev cell needs the container executor**, which is planned for M4. The
+  Dev cell pack therefore can't ship before M4 unless that executor moves
+  earlier (decision pending).
+- The **`documents` tool pack** (OCR, parsing) and the **built-in ledger** are
+  new modules. The ledger fits M3 (agent teams); `documents` is needed when
+  Receipt Processing is first sold.
+
+The checker ran on all six packs plus the instance and reported no problems.
+It was then mutation-tested with planted errors (unknown workspace, unknown
+agent, missing ledger, missing `dedupe_key`), and it caught all four.
+
 ## 10. Resolved questions
 
 | Question | Decision |
@@ -479,5 +570,4 @@ format; the rest are listed but not written yet.
 | Prompt language | English by default; Spanish only when a client asks; instances override customer-facing templates (decision 34) |
 | Eval file format | YAML, one case per document (decision 35) |
 
-**Next:** paper test 2 (decision 32) adds a batch document job (Receipt
-Processing), a Dev cell and an OPC-style agent team.
+Paper test 2 is done (see above).

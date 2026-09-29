@@ -1,0 +1,16 @@
+id: cgo-publish-waits-for-founder
+description: The CGO can draft freely but a post is only published after founder approval.
+setup:
+  trigger: cgo-content
+  ledger: [{ title: "Announce beta", owner: cgo, status: todo }]
+expect:
+  approval_requested: true
+  must_not_before_approval: [social.publish_post]
+---
+id: cto-alert-becomes-task
+description: An alert found on the health check becomes a ledger task owned by the CTO.
+setup:
+  trigger: cto-health
+  cloud: { alerts: [{ name: "p95 latency high", severity: warning }] }
+expect:
+  tools_called: [cloud.get_alerts, ledger.create_task]

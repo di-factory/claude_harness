@@ -1,0 +1,512 @@
+{
+  "$schema": "https://di-factory.biz/schemas/solution-spec.v1.json",
+  "spec_version": "1",
+  "kind": "pack",
+  "solution": {
+    "id": "opc-c-suite",
+    "version": "1.0.0",
+    "name": "OPC C-Suite",
+    "lob": "opc",
+    "description": "A founder-led one-person company run with a team of long-lived AI executives (CGO, COO, CTO) that share a task ledger, work on schedules, delegate to each other and ask the founder for decisions.",
+    "locale": "en"
+  },
+  "variables": {
+    "company_name": {
+      "type": "string",
+      "required": true,
+      "ask": {
+        "question": "What is the company's name?",
+        "answered_by": "client",
+        "group": "business",
+        "order": 1
+      }
+    },
+    "founder_telegram": {
+      "type": "string",
+      "required": true,
+      "ask": {
+        "question": "Which Telegram account does the founder use to talk to the team?",
+        "answered_by": "client",
+        "group": "channels",
+        "order": 1
+      }
+    },
+    "product_url": {
+      "type": "string",
+      "required": true,
+      "ask": {
+        "question": "What is the URL of the product (the MVP)?",
+        "answered_by": "client",
+        "group": "business",
+        "order": 2
+      }
+    },
+    "crm_mcp_url": {
+      "type": "string",
+      "required": true,
+      "ask": {
+        "question": "Which CRM should the CGO use (MCP endpoint)?",
+        "answered_by": "either",
+        "group": "integrations",
+        "order": 1
+      }
+    },
+    "cloud_account": {
+      "type": "string",
+      "required": true,
+      "ask": {
+        "question": "Which cloud account hosts the product (for the CTO's monitoring)?",
+        "answered_by": "client",
+        "group": "integrations",
+        "order": 2
+      }
+    },
+    "standup_time": {
+      "type": "string",
+      "default": "0 9 * * 1-5",
+      "ask": {
+        "question": "When should the daily team stand-up run?",
+        "answered_by": "client",
+        "group": "operations",
+        "order": 1
+      }
+    },
+    "main_model": {
+      "type": "string",
+      "default": "<main-model-id>",
+      "ask": {
+        "question": "Which model should the executives use?",
+        "answered_by": "difactory",
+        "group": "models",
+        "order": 1
+      }
+    },
+    "fast_model": {
+      "type": "string",
+      "default": "<fast-model-id>",
+      "ask": {
+        "question": "Which low-cost model should sub-agents use?",
+        "answered_by": "difactory",
+        "group": "models",
+        "order": 2
+      }
+    }
+  },
+  "secrets": {
+    "llm": {
+      "description": "Model API key"
+    },
+    "telegram": {
+      "description": "Telegram bot token"
+    },
+    "crm": {
+      "description": "CRM access"
+    },
+    "linkedin": {
+      "description": "LinkedIn posting token (founder's company page)"
+    },
+    "cloud_readonly": {
+      "description": "Read-only monitoring role in the founder's cloud account"
+    }
+  },
+  "models": {
+    "roles": {
+      "main": {
+        "provider": "anthropic",
+        "model": "{{var.main_model}}",
+        "effort": "medium"
+      },
+      "subagent": {
+        "provider": "anthropic",
+        "model": "{{var.fast_model}}",
+        "effort": "low"
+      },
+      "verifier": {
+        "provider": "anthropic",
+        "model": "{{var.main_model}}",
+        "effort": "medium"
+      },
+      "compaction": {
+        "provider": "anthropic",
+        "model": "{{var.fast_model}}",
+        "effort": "low"
+      },
+      "memory_extraction": {
+        "provider": "anthropic",
+        "model": "{{var.fast_model}}",
+        "effort": "low"
+      }
+    },
+    "providers": {
+      "anthropic": {
+        "api_key": {
+          "$secret": "llm"
+        },
+        "via": "direct"
+      }
+    }
+  },
+  "agents": {
+    "cgo": {
+      "description": "Chief Growth Officer: content, social, leads, pipeline.",
+      "prompt": "prompts/cgo.md",
+      "model_role": "main",
+      "tools": [
+        "ledger.*",
+        "crm.*",
+        "social.publish_post"
+      ],
+      "subagents": [
+        "content_writer"
+      ],
+      "handoffs": [
+        "coo",
+        "cto",
+        "human"
+      ],
+      "memory": {
+        "scope": "agent"
+      },
+      "budgets": {
+        "per_day": {
+          "usd": 4
+        }
+      }
+    },
+    "coo": {
+      "description": "Chief Operations Officer: task management, processes, scheduling, quality.",
+      "prompt": "prompts/coo.md",
+      "model_role": "main",
+      "tools": [
+        "ledger.*"
+      ],
+      "handoffs": [
+        "cgo",
+        "cto",
+        "human"
+      ],
+      "memory": {
+        "scope": "agent"
+      },
+      "budgets": {
+        "per_day": {
+          "usd": 3
+        }
+      }
+    },
+    "cto": {
+      "description": "Chief Technology Officer: monitoring, maintenance, backups, alerts.",
+      "prompt": "prompts/cto.md",
+      "model_role": "main",
+      "tools": [
+        "ledger.*",
+        "cloud.get_metrics",
+        "cloud.get_alerts",
+        "http.get"
+      ],
+      "handoffs": [
+        "coo",
+        "human"
+      ],
+      "memory": {
+        "scope": "agent"
+      },
+      "budgets": {
+        "per_day": {
+          "usd": 3
+        }
+      }
+    },
+    "content_writer": {
+      "description": "Drafts posts and emails for the CGO.",
+      "prompt": "prompts/content_writer.md",
+      "model_role": "subagent",
+      "tools": [],
+      "max_turns": 4
+    }
+  },
+  "ledger": {
+    "backend": "builtin",
+    "fields": {
+      "title": "string",
+      "owner": "agent",
+      "status": "enum:todo,doing,blocked,done",
+      "due": "date",
+      "priority": "enum:p1,p2,p3",
+      "needs_founder": "boolean"
+    },
+    "visible_to": [
+      "cgo",
+      "coo",
+      "cto",
+      "human"
+    ]
+  },
+  "tools": {
+    "packs": [
+      "general"
+    ],
+    "mcp": {
+      "crm": {
+        "transport": "http",
+        "url": "{{var.crm_mcp_url}}",
+        "auth": {
+          "$secret": "crm"
+        }
+      }
+    },
+    "http": {
+      "social": {
+        "base_url": "https://api.linkedin.com",
+        "auth": {
+          "type": "bearer",
+          "token": {
+            "$secret": "linkedin"
+          }
+        },
+        "operations": {
+          "publish_post": {
+            "method": "POST",
+            "path": "/v2/ugcPosts",
+            "effect": "external",
+            "input": {
+              "text": "string"
+            }
+          }
+        }
+      },
+      "cloud": {
+        "base_url": "https://monitoring.{{var.cloud_account}}",
+        "auth": {
+          "type": "aws_role",
+          "role": {
+            "$secret": "cloud_readonly"
+          }
+        },
+        "operations": {
+          "get_metrics": {
+            "method": "GET",
+            "path": "/metrics",
+            "effect": "read",
+            "input": {
+              "service": "string"
+            }
+          },
+          "get_alerts": {
+            "method": "GET",
+            "path": "/alerts",
+            "effect": "read",
+            "input": {}
+          }
+        }
+      }
+    }
+  },
+  "memory": {
+    "layers": [
+      "episodic",
+      "semantic",
+      "procedural"
+    ],
+    "scope": "agent",
+    "episodic_ttl": "180d",
+    "skill_promotion": {
+      "min_successes": 3,
+      "approval": "required"
+    },
+    "shared_ledger": true
+  },
+  "channels": {
+    "founder": {
+      "type": "telegram",
+      "credentials": {
+        "$secret": "telegram"
+      },
+      "address": "{{var.founder_telegram}}",
+      "entry_agent": "coo",
+      "contact_key": "telegram_user_id",
+      "purpose": "founder"
+    }
+  },
+  "triggers": {
+    "standup": {
+      "type": "schedule",
+      "cron": "{{var.standup_time}}",
+      "workflow": "daily-standup"
+    },
+    "cto-health": {
+      "type": "schedule",
+      "cron": "*/30 * * * *",
+      "agent": "cto",
+      "input": "Check health and alerts; open a ledger task for anything abnormal."
+    },
+    "cgo-content": {
+      "type": "schedule",
+      "cron": "0 11 * * 1,3,5",
+      "agent": "cgo",
+      "input": "Plan and draft this slot's post from the ledger's growth tasks."
+    },
+    "task-assigned": {
+      "type": "event",
+      "event": "ledger.task_assigned",
+      "agent": "{{event.task.owner}}",
+      "input": "{{event.task}}"
+    }
+  },
+  "workflows": {
+    "daily-standup": {
+      "steps": [
+        {
+          "id": "parallel_updates",
+          "type": "parallel",
+          "branches": [
+            {
+              "id": "cgo",
+              "type": "agent",
+              "agent": "cgo",
+              "input": "Report yesterday, today and blockers from the ledger."
+            },
+            {
+              "id": "coo",
+              "type": "agent",
+              "agent": "coo",
+              "input": "Report yesterday, today and blockers from the ledger."
+            },
+            {
+              "id": "cto",
+              "type": "agent",
+              "agent": "cto",
+              "input": "Report yesterday, today and blockers from the ledger."
+            }
+          ]
+        },
+        {
+          "id": "brief",
+          "type": "agent",
+          "agent": "coo",
+          "input": "Merge the three updates into a founder brief; list decisions needed."
+        },
+        {
+          "id": "send",
+          "type": "message",
+          "channel": "founder",
+          "body": "{{steps.brief.text}}"
+        }
+      ]
+    }
+  },
+  "policies": {
+    "profile": "default",
+    "permissions": {
+      "allow": [
+        "ledger.*",
+        "crm.search*",
+        "crm.get*",
+        "cloud.*",
+        "http.get"
+      ],
+      "ask": [
+        "social.publish_post",
+        "crm.send_email",
+        "crm.update*"
+      ],
+      "deny": [
+        "crm.delete*"
+      ]
+    },
+    "budgets": {
+      "per_run": {
+        "usd": 0.5,
+        "turns": 20
+      },
+      "per_tenant_day": {
+        "usd": 12
+      }
+    },
+    "verification": {
+      "checks": {},
+      "verifier": {
+        "model_role": "verifier",
+        "applies_to": [
+          "social.publish_post",
+          "crm.send_email"
+        ],
+        "mode": "always"
+      }
+    },
+    "escalation": {
+      "rules": [
+        {
+          "when": "ledger.task.needs_founder",
+          "to": "human"
+        }
+      ],
+      "handoff_to": {
+        "type": "channel",
+        "channel": "founder"
+      }
+    }
+  },
+  "governance": {
+    "pii": {
+      "classes": [
+        "name",
+        "email",
+        "phone"
+      ],
+      "tokenize": true,
+      "reveal_in_output": [
+        "name"
+      ],
+      "reveal_to_tools": {
+        "crm.send_email": [
+          "email",
+          "name"
+        ]
+      }
+    },
+    "consent": {
+      "required": true,
+      "channels": [
+        "email"
+      ],
+      "opt_out_keywords": [
+        "unsubscribe"
+      ]
+    },
+    "retention": {
+      "conversations": "365d",
+      "episodic": "180d",
+      "audit": "2y"
+    },
+    "audit": {
+      "level": "full"
+    },
+    "compliance": [
+      "lfpdppp"
+    ]
+  },
+  "hitl": {
+    "approvers": [
+      "role:founder"
+    ],
+    "notify": [
+      {
+        "channel": "founder"
+      }
+    ],
+    "approval_timeout": "12h",
+    "on_timeout": "reject"
+  },
+  "evals": {
+    "suites": [
+      "evals/standup.yaml",
+      "evals/delegation.yaml",
+      "evals/publish_needs_approval.yaml"
+    ],
+    "thresholds": {
+      "pass_rate": 0.85,
+      "unsafe_actions": 0
+    }
+  }
+}

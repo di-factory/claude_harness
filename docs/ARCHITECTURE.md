@@ -246,7 +246,11 @@ evals.
   - `general`: web fetch/search, HTTP, notes;
   - connector packs (calendar, CRM, messaging, spreadsheets, ERP), added
     as instances need them;
-  - `ml`: call a deployed model endpoint for predict/score.
+  - `ml`: call a deployed model endpoint for predict/score;
+  - `documents`: read, OCR and parse files (PDF, images, CFDI XML).
+- **Built-in tools:** `ledger.*` (team task ledger), `runs.*` (run
+  summaries), `knowledge.*` and `memory.*`. Packs declare the namespaces they
+  expose.
 - **Checkpoints:** file writes are snapshotted for `/undo` and rewind. For
   external actions, the audit log records what was done, so compensating
   actions are possible.
@@ -631,6 +635,7 @@ instance can start once the modules it needs have shipped.
 | 37 | Deploy approval | **Jag approves every deployment** into a client cloud; client sign-off happens outside the tool. |
 | 38 | Constructor timing | **Incremental:** v1 in M1 (interview, build, validate, evals), v2 in M2 (approval gate, deploy to Docker or basic AWS, Teky skill), v3 in M4 (full lifecycle). |
 | 39 | First-client deploy | **Basic AWS deploy moves to M2** (minimal Terraform); M4 hardens it. |
+| 40 | Paper test 2 result | The spec covers batch, coding and agent-team shapes after the additions in SOLUTION_SPEC §5.14–5.16. **Pending:** the Dev cell needs the container executor (M4) — move it earlier, or ship the Dev cell after M4. |
 
 ## 8. First instantiation candidates (parked)
 

@@ -69,7 +69,7 @@ Platform     storage (SQLite / Postgres) · secrets vault · executor · deploy 
 
 We own the agent loop instead of wrapping a framework, so context handling,
 safety and cost stay visible and cheap to change. See
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and all 39
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and all 40
 recorded decisions.
 
 ## What you can build with it
@@ -108,8 +108,8 @@ values, secrets and deployment target:
 }
 ```
 
-The full format and three worked examples (Appointment Agent, Service Desk
-cell, Conversational RAG) are in [`docs/spec/`](docs/spec/SOLUTION_SPEC.md).
+The full format and six worked examples (Appointment Agent, Service Desk
+cell, Conversational RAG, Receipt Processing, Dev cell, OPC C-suite) are in [`docs/spec/`](docs/spec/SOLUTION_SPEC.md).
 
 ## Roadmap
 
@@ -138,7 +138,7 @@ dif-general-harness deploy my-solution --target aws
 |---|---|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Technical design: framing, modules, all subsystems, stack, layout, roadmap, decisions |
 | [`docs/PRD.md`](docs/PRD.md) | Product requirements: goals, personas, user stories, requirements, metrics, milestones, risks |
-| [`docs/spec/SOLUTION_SPEC.md`](docs/spec/SOLUTION_SPEC.md) | Solution spec v1 draft: format, merge rules, validation, and a paper test on 3 example packs ([`docs/spec/examples/`](docs/spec/examples/)) |
+| [`docs/spec/SOLUTION_SPEC.md`](docs/spec/SOLUTION_SPEC.md) | Solution spec v1 draft: format, merge rules, validation, and paper tests on 6 example packs ([`docs/spec/examples/`](docs/spec/examples/)) |
 
 ## Tech stack
 

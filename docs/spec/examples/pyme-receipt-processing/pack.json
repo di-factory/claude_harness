@@ -1,0 +1,163 @@
+{
+  "$schema": "https://di-factory.biz/schemas/solution-spec.v1.json",
+  "spec_version": "1",
+  "kind": "pack",
+  "solution": {
+    "id": "pyme-receipt-processing",
+    "version": "1.0.0",
+    "name": "Receipt Processing Agent",
+    "lob": "pyme",
+    "description": "Batch job: reads incoming invoices and receipts (CFDI XML/PDF, photos), extracts structured data, validates it and posts it to the client's accounting system. Exceptions go to a person. No chat.",
+    "locale": "en"
+  },
+  "variables": {
+    "company_rfc": {
+      "type": "string", "required": true,
+      "ask": { "question": "What is the company's RFC (tax id) receiving these invoices?", "answered_by": "client", "group": "business", "order": 1 }
+    },
+    "inbox_bucket": {
+      "type": "string", "required": true,
+      "ask": { "question": "Which storage location receives the documents (S3 bucket/prefix in the client's account)?", "answered_by": "either", "group": "inputs", "order": 1 }
+    },
+    "erp_base_url": {
+      "type": "string", "required": true,
+      "ask": { "question": "What is the base URL of the accounting system's API?", "answered_by": "client", "group": "integrations", "order": 1 }
+    },
+    "auto_post_limit_mxn": {
+      "type": "number", "default": 20000,
+      "ask": { "question": "Up to what amount (MXN) may documents be posted without human approval?", "answered_by": "client", "group": "policies", "order": 1 }
+    },
+    "report_email": {
+      "type": "string", "required": true,
+      "ask": { "question": "Which email receives the daily summary and exceptions?", "answered_by": "client", "group": "operations", "order": 1 }
+    },
+    "main_model": { "type": "string", "default": "<main-model-id>", "ask": { "question": "Which model should extract documents?", "answered_by": "difactory", "group": "models", "order": 1 } },
+    "fast_model": { "type": "string", "default": "<fast-model-id>", "ask": { "question": "Which low-cost model should classify documents?", "answered_by": "difactory", "group": "models", "order": 2 } }
+  },
+  "secrets": {
+    "llm": { "description": "Model API key" },
+    "erp": { "description": "Accounting system API token (scoped to create entries)" },
+    "storage": { "description": "Read access to the inbox bucket" },
+    "sat": { "description": "Credentials for the CFDI validation service" },
+    "smtp": { "description": "Email sending for reports" }
+  },
+  "models": {
+    "roles": {
+      "main": { "provider": "anthropic", "model": "{{var.main_model}}", "effort": "medium" },
+      "router": { "provider": "anthropic", "model": "{{var.fast_model}}", "effort": "low" },
+      "verifier": { "provider": "anthropic", "model": "{{var.main_model}}", "effort": "high" }
+    },
+    "providers": { "anthropic": { "api_key": { "$secret": "llm" }, "via": "direct" } }
+  },
+  "agents": {
+    "extractor": {
+      "description": "Extracts invoice fields from one document into the output schema.",
+      "prompt": "prompts/extractor.md",
+      "model_role": "main",
+      "tools": ["documents.read", "documents.ocr", "cfdi.parse_xml"],
+      "output_schema": "schemas/invoice.json",
+      "max_turns": 6
+    }
+  },
+  "tools": {
+    "packs": ["documents"],
+    "config": { "documents": { "storage": { "type": "s3", "bucket": "{{var.inbox_bucket}}", "credentials": { "$secret": "storage" } } } },
+    "http": {
+      "cfdi": {
+        "base_url": "https://cfdi-validator.example",
+        "auth": { "type": "bearer", "token": { "$secret": "sat" } },
+        "operations": {
+          "parse_xml": { "method": "POST", "path": "/parse", "effect": "read", "input": { "xml": "string" } },
+          "validate": { "method": "POST", "path": "/validate", "effect": "read", "input": { "uuid": "string", "rfc_emisor": "string", "rfc_receptor": "string", "total": "number" } }
+        }
+      },
+      "erp": {
+        "base_url": "{{var.erp_base_url}}",
+        "auth": { "type": "bearer", "token": { "$secret": "erp" } },
+        "operations": {
+          "find_entry": { "method": "GET", "path": "/entries?uuid={uuid}", "effect": "read", "input": { "uuid": "string" } },
+          "create_entry": { "method": "POST", "path": "/entries", "effect": "external", "input": { "invoice": "object" }, "verify": "invoice-valid" }
+        }
+      }
+    }
+  },
+  "channels": {
+    "email_reports": { "type": "email", "credentials": { "$secret": "smtp" }, "purpose": "outbound" }
+  },
+  "triggers": {
+    "new-document": {
+      "type": "file",
+      "source": { "type": "s3", "bucket": "{{var.inbox_bucket}}", "credentials": { "$secret": "storage" } },
+      "match": ["*.xml", "*.pdf", "*.jpg", "*.png"],
+      "dedupe_key": "file.sha256",
+      "workflow": "process-document"
+    },
+    "daily-report": { "type": "schedule", "cron": "0 19 * * 1-5", "workflow": "send-report" }
+  },
+  "workflows": {
+    "process-document": {
+      "input": { "file": "file" },
+      "concurrency": 5,
+      "steps": [
+        { "id": "extract", "type": "agent", "agent": "extractor", "input": "{{input.file}}" },
+        { "id": "validate", "type": "tool", "tool": "cfdi.validate", "args": { "uuid": "{{steps.extract.output.uuid}}", "rfc_emisor": "{{steps.extract.output.rfc_emisor}}", "rfc_receptor": "{{steps.extract.output.rfc_receptor}}", "total": "{{steps.extract.output.total}}" } },
+        { "id": "dup", "type": "tool", "tool": "erp.find_entry", "args": { "uuid": "{{steps.extract.output.uuid}}" } },
+        { "id": "route", "type": "branch", "cases": [
+          { "when": "steps.dup.found", "goto": "skip" },
+          { "when": "not steps.validate.valid or steps.extract.output.rfc_receptor != var.company_rfc", "goto": "exception" },
+          { "when": "steps.extract.output.total > var.auto_post_limit_mxn", "goto": "approve" },
+          { "when": "true", "goto": "post" }
+        ] },
+        { "id": "approve", "type": "approval", "summary": "Post invoice {{steps.extract.output.uuid}} for {{steps.extract.output.total}} MXN?", "on_reject": "exception" },
+        { "id": "post", "type": "tool", "tool": "erp.create_entry", "args": { "invoice": "{{steps.extract.output}}" } },
+        { "id": "done", "type": "end" },
+        { "id": "skip", "type": "end", "outcome": "duplicate" },
+        { "id": "exception", "type": "handoff", "to": "human", "outcome": "exception" }
+      ],
+      "on_error": "escalate"
+    },
+    "send-report": {
+      "steps": [
+        { "id": "summary", "type": "tool", "tool": "runs.summarize", "args": { "workflow": "process-document", "since": "24h" } },
+        { "id": "mail", "type": "message", "channel": "email_reports", "to": "{{var.report_email}}", "body": "{{steps.summary.text}}" }
+      ]
+    }
+  },
+  "policies": {
+    "profile": "strict",
+    "permissions": {
+      "allow": ["documents.*", "cfdi.*", "erp.find_entry", "runs.summarize"],
+      "ask": [],
+      "deny": ["erp.delete_entry"]
+    },
+    "budgets": { "per_run": { "usd": 0.08, "turns": 6 }, "per_tenant_day": { "usd": 15 } },
+    "verification": {
+      "checks": {
+        "invoice-valid": { "type": "condition", "expr": "steps.validate.valid and not steps.dup.found" }
+      },
+      "verifier": { "model_role": "verifier", "applies_to": ["erp.create_entry"], "mode": "sampled", "sample_rate": 0.1 }
+    },
+    "escalation": {
+      "rules": [{ "when": "steps.extract.confidence < 0.8", "to": "human" }],
+      "handoff_to": { "type": "inbox" }
+    }
+  },
+  "governance": {
+    "pii": { "classes": ["name", "rfc", "address"], "tokenize": true, "reveal_in_output": [], "reveal_to_tools": { "erp.create_entry": ["rfc", "name", "address"], "cfdi.validate": ["rfc"] } },
+    "consent": { "required": false },
+    "retention": { "documents": "5y", "conversations": "30d", "audit": "5y" },
+    "audit": { "level": "full" },
+    "regions": { "data": "mx" },
+    "compliance": ["lfpdppp"]
+  },
+  "hitl": {
+    "approvers": ["role:accounting"],
+    "notify": [{ "channel": "email_reports", "to": "{{var.report_email}}" }],
+    "approval_timeout": "24h",
+    "on_timeout": "escalate"
+  },
+  "evals": {
+    "suites": ["evals/extraction.yaml", "evals/duplicates.yaml", "evals/limits.yaml"],
+    "thresholds": { "pass_rate": 0.95, "unsafe_actions": 0, "field_accuracy": 0.98 }
+  }
+}

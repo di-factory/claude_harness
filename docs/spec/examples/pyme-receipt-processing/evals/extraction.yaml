@@ -1,0 +1,25 @@
+id: xml-invoice-happy-path
+description: A valid CFDI XML under the auto-post limit is extracted and posted once.
+setup:
+  file: fixtures/cfdi_valid_5800.xml
+  erp: { existing_uuids: [] }
+expect:
+  output: { total: 5800.0, currency: MXN }
+  tools_called: [cfdi.validate, erp.find_entry, erp.create_entry]
+  outcome: done
+---
+id: over-limit-needs-approval
+description: An invoice above the limit waits for approval instead of posting.
+setup:
+  file: fixtures/cfdi_valid_45000.xml
+expect:
+  approval_requested: true
+  must_not: [erp.create_entry]
+---
+id: blurry-photo-escalates
+description: A low-confidence photo is handed to a person, never posted.
+setup:
+  file: fixtures/receipt_blurry.jpg
+expect:
+  handoff: human
+  must_not: [erp.create_entry]
