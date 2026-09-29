@@ -37,6 +37,7 @@ from .constructor.deploy import (
 )
 from .constructor.interview import Question
 from .core.events import ErrorEvent, TextDelta, ToolCallFinished, ToolCallStarted, TurnEnded
+from .observability import UsageStore, quality
 from .policy import Approver, AutoApprover
 from .providers.base import ModelProvider
 from .runtime import (
@@ -448,6 +449,46 @@ async def _eval(
     return 0 if report.ok else 1
 
 
+async def _costs(args: argparse.Namespace, resolved: ResolvedSpec) -> int:
+    url = args.database_url or f"sqlite:///{args.state.resolve() / 'dif.db'}"
+    if url.startswith("sqlite") and not (args.state / "dif.db").exists():
+        print(f"no database at {args.state / 'dif.db'}: nothing has run yet", file=sys.stderr)
+        return 2
+    db = await connect(url)
+    try:
+        scope = scope_for(resolved.spec)
+        try:
+            report = await UsageStore(db).report(
+                scope, since=args.since, until=args.until, by=args.by.split(",")
+            )
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        metrics = await quality(db, scope, "30d")
+    finally:
+        await db.close()
+    if args.json:
+        print(json.dumps({"costs": report, "metrics": metrics}, indent=2))
+        return 0
+    dims = report["by"]
+    print(f"{scope.tenant_id}/{scope.instance_id}  {report['since']} .. {report['until']}")
+    for row in report["rows"]:
+        label = " / ".join(str(row[d]) for d in dims)
+        tokens = row["input_tokens"] + row["output_tokens"]
+        print(f"  {label:48} {row['calls']:6} calls {tokens:10} tokens  ${row['usd']:.4f}")
+    total = report["total"]
+    print(f"  {'total':48} {total.get('calls', 0):6} calls {'':17}  ${total.get('usd', 0.0):.4f}")
+    if report["unpriced"]:
+        print(f"  unpriced (no list price; add one): {', '.join(report['unpriced'])}")
+    rate = metrics["tool_success_rate"]
+    print(
+        f"quality (30d): tool success {'n/a' if rate is None else f'{rate:.0%}'}, "
+        f"escalations {metrics['escalations']}/{metrics['conversations']}, "
+        f"cost per resolved {metrics['cost_per_resolved_usd']}"
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None) -> int:
     """``provider`` replaces the spec's models (tests and offline demos)."""
     parser = argparse.ArgumentParser(prog="dif-general-harness")
@@ -470,6 +511,15 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
     _add_run(sub, "console")
     _add_run(sub, "eval")
     _add_run(sub, "serve")
+    costs_cmd = sub.add_parser("costs", help="model spend and quality metrics of an instance")
+    costs_cmd.add_argument("path", type=Path, help="instance JSON")
+    costs_cmd.add_argument("--packs", type=Path, action="append", help="folder containing packs")
+    costs_cmd.add_argument("--state", type=Path, default=Path(".dif/state"), help="state folder")
+    costs_cmd.add_argument("--database-url", default=os.environ.get("DIF_DATABASE_URL"))
+    costs_cmd.add_argument("--since", help="first day (YYYY-MM-DD); default: 30 days ago")
+    costs_cmd.add_argument("--until", help="last day (YYYY-MM-DD); default: today")
+    costs_cmd.add_argument("--by", default="vendor", help="day,agent,role,vendor,model")
+    costs_cmd.add_argument("--json", action="store_true", help="print JSON")
     build_cmd = sub.add_parser("build", help="constructor: interview and build an instance")
     build_cmd.add_argument("--request", help="what the client needs, in plain words")
     build_cmd.add_argument("--pack", action="append", help="pack id (skip matching)")
@@ -530,6 +580,8 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
         return asyncio.run(_eval(args, resolved, provider))
     if args.group == "serve":
         return asyncio.run(_serve(args, resolved, provider))
+    if args.group == "costs":
+        return asyncio.run(_costs(args, resolved))
     if args.command == "resolve":
         print(json.dumps(resolved.data, indent=2, ensure_ascii=False))
         return 0 if resolved.ok else 1

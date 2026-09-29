@@ -140,6 +140,15 @@ MIGRATIONS: list[list[str]] = [
         """CREATE INDEX IF NOT EXISTS eval_results_by_instance
             ON eval_results (tenant_id, instance_id, created_at)""",
     ],
+    [  # M4: model usage per day, agent, role, vendor and model (cost reports)
+        """CREATE TABLE IF NOT EXISTS usage (
+            tenant_id TEXT NOT NULL, instance_id TEXT NOT NULL, day TEXT NOT NULL,
+            agent TEXT NOT NULL, role TEXT NOT NULL, vendor TEXT NOT NULL, model TEXT NOT NULL,
+            calls INTEGER NOT NULL, input_tokens BIGINT NOT NULL, output_tokens BIGINT NOT NULL,
+            cache_read_tokens BIGINT NOT NULL, cache_write_tokens BIGINT NOT NULL,
+            usd DOUBLE PRECISION NOT NULL,
+            PRIMARY KEY (tenant_id, instance_id, day, agent, role, vendor, model))""",
+    ],
 ]
 
 

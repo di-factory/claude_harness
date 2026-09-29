@@ -28,6 +28,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from ..channels import ChannelError, Handshake, Inbound, Unauthorized
+from ..observability import quality
 from ..runtime import Instance
 from ..tenancy.config_versions import ConfigError, ConfigStore
 from .config import apply_active, watch_config
@@ -286,6 +287,27 @@ def create_app(
     @app.get("/admin/spend", dependencies=[Depends(admin)])
     async def spend(day: str | None = None) -> dict[str, float]:
         return await current().spend.day(scope, day)
+
+    @app.get("/admin/costs", dependencies=[Depends(admin)])
+    async def costs(
+        since: str | None = None, until: str | None = None, by: str = "vendor"
+    ) -> dict[str, Any]:
+        """Model spend at vendor list prices (no markup), grouped by any of day, agent, role,
+        vendor and model (comma-separated)."""
+        try:
+            return await current().usage.report(
+                scope, since=since, until=until, by=[b.strip() for b in by.split(",") if b]
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
+
+    @app.get("/admin/metrics", dependencies=[Depends(admin)])
+    async def metrics(since: str = "7d") -> dict[str, Any]:
+        """Quality metrics: tool success, verify pass, escalation rate, cost per resolved."""
+        try:
+            return await quality(current().db, scope, since)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from None
 
     @app.get("/admin/config", dependencies=[Depends(admin)])
     async def config() -> dict[str, Any]:

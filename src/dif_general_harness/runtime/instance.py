@@ -36,7 +36,7 @@ import httpx2
 
 from ..core.events import Event, MessageAdded, ToolCallFinished, ToolCallStarted, TurnEnded
 from ..core.loop import LoopConfig, run
-from ..core.messages import Message, Role, ToolResultBlock, ToolUseBlock
+from ..core.messages import Message, Role, ToolResultBlock, ToolUseBlock, Usage
 from ..core.scope import Scope
 from ..core.session import Session
 from ..feedback.store import ALL_AGENTS, ConstraintStore, pinned_block
@@ -54,10 +54,12 @@ from ..knowledge.tools import (
 )
 from ..memory.agent import memory_block, memory_tools, record_episode
 from ..memory.store import Memory, MemoryStore
+from ..observability.costs import UsageStore
 from ..policy import Approver, DailySpend, Limits, PermissionPolicy, PolicyGate, Redactor, RunMeter
+from ..policy.budgets import DEFAULT_PRICES, cost_usd
 from ..policy.escalation import first_match
 from ..policy.spend import SpendStore
-from ..providers.base import ModelProvider
+from ..providers.base import ModelProvider, ProviderMessage
 from ..spec.errors import Issue
 from ..spec.loader import ResolvedSpec
 from ..spec.schema import Agent, SolutionSpec
@@ -138,6 +140,7 @@ class Instance:
         self.consent: ConsentStore
         self.audit: AuditLog
         self.spend: SpendStore
+        self.usage: UsageStore
         self.inbox: Inbox
         self.contacts: ContactStore
         self.memory: MemoryStore
@@ -195,6 +198,7 @@ class Instance:
         self.consent = ConsentStore(self.db)
         self.audit = AuditLog(self.db)
         self.spend = SpendStore(self.db)
+        self.usage = UsageStore(self.db)
         self.inbox = Inbox(self.db, self.scope)
         self.contacts = ContactStore(self.db)
         self.memory = MemoryStore(self.db, self.scope)
@@ -321,6 +325,35 @@ class Instance:
             if self.notify is not None:
                 await self.notify(item, f"A rule was proposed for {agent} ({source})")
         return constraint.id
+
+    def vendor(self, role: str) -> str:
+        """The provider that serves a model role (the router falls back to ``main``)."""
+        roles = self.spec.models.roles if self.spec.models else {}
+        config = roles.get(role) or roles.get("main")
+        return config.provider if config else "unknown"
+
+    async def record_usage(self, agent: str, role: str, model: str | None, usage: Usage) -> None:
+        """One priced model call: budget totals (tenant, agent, model, role, vendor) and the
+        usage ledger that cost reports read."""
+        name, vendor, usd = model or "unknown", self.vendor(role), usage.cost_usd
+        for key in ("tenant", f"agent:{agent}", f"model:{name}", f"role:{role}",
+                    f"vendor:{vendor}"):  # fmt: skip
+            await self.spend.add(self.scope, key, usd)
+        await self.usage.add(
+            self.scope, agent=agent, role=role, vendor=vendor, model=name, usage=usage
+        )
+
+    async def charge(self, agent: str, role: str, final: ProviderMessage) -> Usage:
+        """Price and record a model call made outside an agent run (verifier, extraction,
+        eval judge)."""
+        price = DEFAULT_PRICES.get(final.model or "")
+        priced = (
+            final.usage.model_copy(update={"cost_usd": cost_usd(final.usage, price)})
+            if price
+            else final.usage
+        )
+        await self.record_usage(agent, role, final.model, priced)
+        return priced
 
     async def flag_contradiction(self, previous: Memory, value: str, new_id: str) -> None:
         """A fact changed: keep the new value, and let a person restore the old one."""
@@ -754,10 +787,9 @@ class AgentRuntime:
                     )  # fmt: skip
             elif isinstance(event, TurnEnded):
                 await record_episode(inst, self.name, session)
-                await inst.spend.add(scope, "tenant", meter.total.cost_usd)
-                await inst.spend.add(scope, f"agent:{self.name}", meter.total.cost_usd)
-                for model, usd in meter.by_model.items():
-                    await inst.spend.add(scope, f"model:{model}", usd)
+                for model, usage in meter.pending:  # each call once, even across rewrites
+                    await inst.record_usage(self.name, self.config.model_role, model, usage)
+                meter.pending.clear()
             yield event
 
     async def reply(self, text: str) -> str:

@@ -235,15 +235,7 @@ class Verifier:
 
 
 async def _charge(inst: Instance, final: ProviderMessage) -> None:
-    from ..policy.budgets import DEFAULT_PRICES, cost_usd
-
-    price = DEFAULT_PRICES.get(final.model or "")
-    if price is None:
-        return
-    usd = cost_usd(final.usage, price)
-    await inst.spend.add(inst.scope, "tenant", usd)
-    await inst.spend.add(inst.scope, "role:verifier", usd)
-    await inst.spend.add(inst.scope, f"model:{final.model}", usd)
+    await inst.charge("verifier", "verifier", final)
 
 
 def _matches(result: Any, expect: Any, expr: Any) -> bool:

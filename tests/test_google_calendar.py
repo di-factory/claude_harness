@@ -163,6 +163,8 @@ def _calendar(spec: dict[str, Any]) -> None:
             }
         },
     }
+    for name in ("morning", "report"):  # daily schedules would fire as the test's clock moves
+        spec["triggers"].pop(name)
     spec["triggers"]["reminder"] = {
         "type": "relative",
         "source": "calendar.events",

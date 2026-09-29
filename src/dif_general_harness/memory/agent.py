@@ -215,6 +215,7 @@ async def extract_facts(instance: Instance, agent_name: str, session: Session) -
             final = event
     if final is None:
         return 0
+    await instance.charge(agent_name, "memory_extraction", final)
     match = re.search(r"\{.*\}", final.message.text(), re.DOTALL)
     try:
         facts = json.loads(match.group(0))["facts"] if match else []

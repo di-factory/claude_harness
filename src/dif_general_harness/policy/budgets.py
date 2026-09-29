@@ -141,6 +141,7 @@ class RunMeter:
         self.total = Usage()
         self.by_model: dict[str, float] = {}
         self.unpriced: set[str] = set()
+        self.pending: list[tuple[str, Usage]] = []  # priced calls not yet persisted
         self._started = time.monotonic()
 
     def charge(self, usage: Usage, model: str | None) -> Usage:
@@ -153,6 +154,7 @@ class RunMeter:
         self.total = self.total + priced
         name = model or "unknown"
         self.by_model[name] = self.by_model.get(name, 0.0) + priced.cost_usd
+        self.pending.append((name, priced))
         self.daily.add(self.tenant, priced.cost_usd)
         if self.agent_key:
             self.daily.add(self.agent_key, priced.cost_usd)

@@ -390,6 +390,8 @@ class _Case:
             async for event in provider.stream(request):
                 if isinstance(event, ProviderMessage):
                     final = event
+            if final is not None:
+                await self.inst.charge("eval-judge", "verifier", final)
             text = final.message.text() if final else ""
             match = re.search(r"\{.*\}", text, re.DOTALL)
             try:
