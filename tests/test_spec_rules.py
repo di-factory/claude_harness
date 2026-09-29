@@ -167,6 +167,24 @@ INSTANCE_MUTATIONS: list[tuple[str, Mutator]] = [
     ("safety_weakened", lambda d: d.setdefault("governance", {}).update(pii={"tokenize": False})),
     ("safety_weakened", lambda d: d["governance"].update(consent={"required": False})),
     ("safety_weakened", lambda d: d["policies"]["budgets"]["per_tenant_day"].update(usd=50)),
+    (
+        "safety_weakened",
+        lambda d: d["governance"].update(regions={"models": ["us", "mx", "eu"]}),
+    ),
+    ("safety_weakened", lambda d: d["governance"].update(regions={"data": "us"})),
+    (
+        "model_region_violation",
+        lambda d: d["governance"].update(regions={"models": ["mx"]}),
+    ),
+    (
+        "model_region_unknown",
+        lambda d: d.update(
+            models={
+                "roles": {"verifier": {"provider": "openai-compatible", "model": "local-7b"}},
+                "providers": {"openai-compatible": {"base_url": "http://llm.internal/v1"}},
+            }
+        ),
+    ),
 ]
 
 

@@ -176,6 +176,13 @@ The instance's `deploy.secrets_backend` decides where the values live: `env`,
 }
 ```
 
+Each provider may declare the `region` where it processes requests (the direct
+Anthropic API defaults to `us`). When `models.allowed_regions` or
+`governance.regions.models` is set, every role must use a provider with a known region in
+both lists (`model_region_violation`, `model_region_unknown`), the runtime refuses to
+route elsewhere, and later layers can only narrow the lists; `governance.regions.data`
+cannot change once set.
+
 The roles are `main`, `subagent`, `verifier`, `compaction`,
 `memory_extraction`, `router` and `title`. Agents pick a role; they never
 name a model directly. A model swap is therefore one edit, and the pack's

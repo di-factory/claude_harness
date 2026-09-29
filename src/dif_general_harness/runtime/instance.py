@@ -65,6 +65,7 @@ from ..policy.spend import SpendStore
 from ..providers.base import ModelProvider, ProviderMessage
 from ..spec.errors import Issue
 from ..spec.loader import ResolvedSpec
+from ..spec.regions import region_violations
 from ..spec.schema import Agent, SolutionSpec
 from ..store.db import Database, connect
 from ..store.sql import SqlSessionStore
@@ -236,6 +237,8 @@ class Instance:
                 raise InstanceError(
                     [Issue("error", "missing_secret", f"secrets.{n}", "not set") for n in blocking]
                 )
+            if outside := region_violations(spec):  # never route outside the allowed regions
+                raise InstanceError([Issue("error", c, p, m) for c, p, m in outside])
             settings = self.secrets.resolve(raw)
             self.provider = build_router(
                 spec.models.roles, settings, self.options.provider_factories

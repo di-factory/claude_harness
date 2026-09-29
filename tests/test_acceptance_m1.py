@@ -71,7 +71,9 @@ async def test_model_swap(examples: Path, tmp_path: Path) -> None:
         "secrets": {"openai": {"description": "OpenAI-compatible key"}},
         "models": {
             "roles": {"main": {"provider": "openai", "model": "gpt-5.2", "effort": "medium"}},
-            "providers": {"openai": {"api_key": {"$secret": "openai"}, "via": "direct"}},
+            "providers": {
+                "openai": {"api_key": {"$secret": "openai"}, "via": "direct", "region": "us"}
+            },
         },
     }
     async with await Instance.open(_instance(examples, swapped), options) as inst:

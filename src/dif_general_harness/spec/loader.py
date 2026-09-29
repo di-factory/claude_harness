@@ -241,6 +241,20 @@ def _check_monotonic(
         except ValueError as exc:
             issues.append(Issue("error", "invalid_duration", where, str(exc)))
     elif (
+        here in (("governance", "regions", "models"), ("models", "allowed_regions"))
+        and isinstance(old, list)
+        and isinstance(new, list)
+        and set(map(str, new)) - set(map(str, old))
+    ):
+        widened = sorted(set(map(str, new)) - set(map(str, old)))
+        issues.append(
+            Issue("error", "safety_weakened", where, f"model regions can only narrow (+{widened})")
+        )
+    elif here == ("governance", "regions", "data") and old is not None and new != old:
+        issues.append(
+            Issue("error", "safety_weakened", where, f"the data region cannot move: {old} -> {new}")
+        )
+    elif (
         here[:2] == ("policies", "budgets")
         and isinstance(old, (int, float))
         and isinstance(new, (int, float))

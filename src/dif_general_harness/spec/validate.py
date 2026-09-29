@@ -17,6 +17,7 @@ from ..policy.permissions import Rule
 from ..tools import python as python_tools
 from ..triggers.cron import Cron, CronError
 from .errors import Issue
+from .regions import region_violations
 from .schema import SolutionSpec, Step
 
 BUILTIN_NAMESPACES = {"ledger", "runs", "knowledge", "memory"}
@@ -331,6 +332,9 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
         and spec.ledger is None
     ):
         err("missing_ledger", "ledger", "agents use ledger tools but no ledger is defined")
+
+    for code, path, message in region_violations(spec):
+        err(code, path, message)
 
     # --- instance-only ----------------------------------------------------------
     if is_instance:

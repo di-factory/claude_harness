@@ -418,7 +418,11 @@
       "level": "full"
     },
     "regions": {
-      "data": "mx"
+      "data": "mx",
+      "models": [
+        "us",
+        "mx"
+      ]
     },
     "compliance": [
       "lfpdppp"
