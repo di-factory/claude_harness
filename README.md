@@ -6,9 +6,10 @@ across its lines of business.
 One open-source agent runtime, many client solutions: each one is a
 declarative *solution spec* on top of a shared core.
 
-> **Status: building M0.** The architecture, PRD and solution spec are approved;
-> implementation has started with milestone M0 (core skeleton). Commands and APIs
-> described below are the planned interface unless marked available.
+> **Status: M1 (agent core) done; M2 next.** Instances run locally from their spec:
+> real providers, tools, permissions, budgets, redaction, a TUI console and the
+> constructor v1. Channels, triggers and deploy arrive with M2. Commands marked
+> *planned* below are not available yet.
 
 ---
 
@@ -115,8 +116,8 @@ cell, Conversational RAG, Receipt Processing, Dev cell, OPC C-suite) are in [`do
 
 | Milestone | Scope |
 |---|---|
-| **M0 Core** | Data model, event stream, agent loop, solution-spec schema, tenant ids, offline tests |
-| **M1 Agent core** | Anthropic + OpenAI-compatible providers, tool registry, MCP/HTTP tools, permissions, budgets, TUI console, constructor v1 |
+| **M0 Core** ✓ | Data model, event stream, agent loop, solution-spec schema, tenant ids, offline tests |
+| **M1 Agent core** ✓ | Anthropic + OpenAI-compatible providers, tool registry, MCP/HTTP tools, permissions, budgets, TUI console, constructor v1 |
 | **M2 Runtime** | Headless service, channels, triggers, durable queue, approvals inbox, PII/consent/audit, Postgres, instance agent, basic AWS deploy, constructor v2 |
 | **M3 Intelligence** | 5-layer memory, knowledge/RAG, verification, agent teams, feedback loop, pack evals |
 | **M4 Operations** | Terraform (AWS), OpenTelemetry, cost reports, region policy, fleet control plane, constructor v3 → **v1.0** |
@@ -125,22 +126,34 @@ No time goals: each milestone is done when its acceptance gate passes, and ships
 
 ## Getting started
 
-Available now (M0):
+Available now (M1):
 
 ```bash
 uv sync
+uv run pytest -q                                   # offline: no API keys needed
+
+# specs
 uv run dif-general-harness spec validate docs/spec/examples/pyme-appointment-agent
 uv run dif-general-harness spec resolve docs/spec/examples/instances/clinica-sonrisa.json
-uv run pytest -q
+
+# constructor v1: match a pack, interview, write + validate the instance spec
+uv run dif-general-harness build --packs docs/spec/examples --out instances \
+    --request "appointment reminders for a dental clinic on WhatsApp"
+#   (add --answers answers.yaml for a non-interactive build; outputs <id>.json,
+#    <id>.answers.yaml and <id>.summary.md for approval)
+
+# run an instance locally (secrets: DIF_SECRET_<NAME> env vars or --secrets-dir)
+export DIF_SECRET_ANTHROPIC=...
+uv run dif-general-harness console instances/<id>.json --packs docs/spec/examples
+uv run dif-general-harness run instances/<id>.json --packs docs/spec/examples -m "Hola"
+uv run dif-general-harness eval instances/<id>.json --packs docs/spec/examples
 ```
 
 Planned:
 
 ```bash
 uv tool install di-factory-general-harness       # after the first release
-dif-general-harness build --pack pyme-appointment-agent   # constructor: interview → spec → evals
-dif-general-harness console my-solution          # run locally with a fake or real model
-dif-general-harness deploy my-solution --target aws
+dif-general-harness deploy my-solution --target aws   # M2
 ```
 
 ## Documentation
