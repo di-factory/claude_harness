@@ -93,6 +93,7 @@ class Instance:
         self.tools = ToolRegistry()
         self.policy = PermissionPolicy()
         self.provider: ModelProvider | None = None
+        self.workspace: Workspace | None = None  # the coding pack's, for undo
         self._stack = AsyncExitStack()
 
     # --- lifecycle -----------------------------------------------------------------
@@ -165,7 +166,8 @@ class Instance:
                         f"the coding pack needs a local directory for workspace {name!r}",
                     )
                     continue
-                out += coding_tools(Workspace(root), self.options.executor)
+                self.workspace = Workspace(root)
+                out += coding_tools(self.workspace, self.options.executor)
             else:
                 self._warn(
                     "unavailable_pack", "tools.packs", f"tool pack {pack!r} is not built yet"

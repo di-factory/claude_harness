@@ -3,6 +3,7 @@
 - ``dif-general-harness spec validate|resolve PATH``
 - ``dif-general-harness run INSTANCE [-m TEXT]``: run an agent headless; without ``-m``
   each stdin line is one user turn. Text streams to stdout, tool activity to stderr.
+- ``dif-general-harness console INSTANCE``: the same agent in the TUI, with approvals.
 """
 
 from __future__ import annotations
@@ -14,9 +15,16 @@ import sys
 from pathlib import Path
 
 from .core.events import ErrorEvent, TextDelta, ToolCallFinished, ToolCallStarted, TurnEnded
-from .policy import AutoApprover
+from .policy import Approver, AutoApprover
 from .providers.base import ModelProvider
-from .runtime import Instance, InstanceError, PromptError, RoutingError, RuntimeOptions
+from .runtime import (
+    AgentRuntime,
+    Instance,
+    InstanceError,
+    PromptError,
+    RoutingError,
+    RuntimeOptions,
+)
 from .spec import PackCatalog, ResolvedSpec, SpecError, load_instance, load_pack
 from .tenancy import EnvSecrets, FileSecrets
 
@@ -30,12 +38,14 @@ def _load(path: Path, packs: list[Path] | None) -> ResolvedSpec:
     return load_instance(target, PackCatalog(roots=[r for r in roots if r.exists()]))
 
 
-def _add_run(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    cmd = sub.add_parser("run", help="run an instance's agent headless")
+def _add_run(sub: argparse._SubParsersAction[argparse.ArgumentParser], name: str) -> None:
+    helps = {"run": "run an instance's agent headless", "console": "chat with an agent (TUI)"}
+    cmd = sub.add_parser(name, help=helps[name])
     cmd.add_argument("path", type=Path, help="instance JSON")
     cmd.add_argument("--packs", type=Path, action="append", help="folder containing packs")
     cmd.add_argument("--agent", help="agent name; default: the first agent")
-    cmd.add_argument("-m", "--message", help="one user message; default: read stdin lines")
+    if name == "run":
+        cmd.add_argument("-m", "--message", help="one user message; default: read stdin lines")
     cmd.add_argument("--session", help="resume a session id")
     cmd.add_argument("--state", type=Path, default=Path(".dif/state"), help="state folder")
     cmd.add_argument("--secrets-dir", type=Path, help="one file per secret; default: env vars")
@@ -47,36 +57,71 @@ def _add_run(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     )
 
 
-async def _run(
-    args: argparse.Namespace, resolved: ResolvedSpec, provider: ModelProvider | None
-) -> int:
+def _options(
+    args: argparse.Namespace, provider: ModelProvider | None, approver: Approver | None
+) -> RuntimeOptions | None:
     workspaces = {}
     for item in args.workspace:
         name, sep, folder = item.partition("=")
         if not sep:
             print(f"--workspace expects NAME=DIR, got {item!r}", file=sys.stderr)
-            return 2
+            return None
         workspaces[name] = Path(folder)
-    options = RuntimeOptions(
+    return RuntimeOptions(
         state_root=args.state,
         secrets=FileSecrets(args.secrets_dir) if args.secrets_dir else EnvSecrets(),
-        approver=AutoApprover() if args.yes else None,
+        approver=AutoApprover() if args.yes else approver,
         workspaces=workspaces,
         provider=provider,
     )
+
+
+async def _start(
+    args: argparse.Namespace, resolved: ResolvedSpec, options: RuntimeOptions
+) -> tuple[Instance, AgentRuntime] | None:
     try:
         instance = await Instance.open(resolved, options)
     except (InstanceError, RoutingError) as exc:
         print(f"cannot start: {exc}", file=sys.stderr)
+        return None
+    try:
+        return instance, instance.agent(args.agent)
+    except (KeyError, PromptError) as exc:
+        await instance.close()
+        print(f"cannot start: {exc}", file=sys.stderr)
+        return None
+
+
+async def _console(
+    args: argparse.Namespace, resolved: ResolvedSpec, provider: ModelProvider | None
+) -> int:
+    from .console import ConsoleApp, ConsoleApprover  # textual loads only for the console
+
+    approver = ConsoleApprover()
+    options = _options(args, provider, approver)
+    started = await _start(args, resolved, options) if options else None
+    if started is None:
         return 2
+    instance, agent = started
+    async with instance:
+        session = agent.resume(args.session) if args.session else agent.new_session()
+        app = ConsoleApp(instance, agent, session)
+        approver.app = app
+        await app.run_async()
+    return 0
+
+
+async def _run(
+    args: argparse.Namespace, resolved: ResolvedSpec, provider: ModelProvider | None
+) -> int:
+    options = _options(args, provider, None)
+    started = await _start(args, resolved, options) if options else None
+    if started is None:
+        return 2
+    instance, agent = started
     async with instance:
         for issue in instance.issues:
             print(issue, file=sys.stderr)
-        try:
-            agent = instance.agent(args.agent)
-        except (KeyError, PromptError) as exc:
-            print(f"cannot start: {exc}", file=sys.stderr)
-            return 2
         if agent.missing_tools:
             print(f"note: tools not available: {', '.join(agent.missing_tools)}", file=sys.stderr)
         session = agent.resume(args.session) if args.session else agent.new_session()
@@ -123,7 +168,8 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
             action="append",
             help="folder containing packs (repeatable); default: next to the instance",
         )
-    _add_run(sub)
+    _add_run(sub, "run")
+    _add_run(sub, "console")
     args = parser.parse_args(argv)
 
     try:
@@ -135,6 +181,8 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
 
     if args.group == "run":
         return asyncio.run(_run(args, resolved, provider))
+    if args.group == "console":
+        return asyncio.run(_console(args, resolved, provider))
     if args.command == "resolve":
         print(json.dumps(resolved.data, indent=2, ensure_ascii=False))
         return 0 if resolved.ok else 1
