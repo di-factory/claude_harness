@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import dataclasses
 import fnmatch
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
@@ -36,7 +37,7 @@ import httpx2
 
 from ..core.events import Event, MessageAdded, ToolCallFinished, ToolCallStarted, TurnEnded
 from ..core.loop import LoopConfig, run
-from ..core.messages import Message, Role, ToolResultBlock, ToolUseBlock, Usage
+from ..core.messages import Message, Role, ToolResultBlock, ToolStatus, ToolUseBlock, Usage
 from ..core.scope import Scope
 from ..core.session import Session
 from ..feedback.store import ALL_AGENTS, ConstraintStore, pinned_block
@@ -55,6 +56,8 @@ from ..knowledge.tools import (
 from ..memory.agent import memory_block, memory_tools, record_episode
 from ..memory.store import Memory, MemoryStore
 from ..observability.costs import UsageStore
+from ..observability.otel import OtlpExporter, TracedProvider, Tracer, exporter_from_env
+from ..observability.otel import _current as _current_span
 from ..policy import Approver, DailySpend, Limits, PermissionPolicy, PolicyGate, Redactor, RunMeter
 from ..policy.budgets import DEFAULT_PRICES, cost_usd
 from ..policy.escalation import first_match
@@ -107,6 +110,7 @@ class RuntimeOptions:
     http_client: httpx2.AsyncClient | None = None  # shared by HTTP connectors (tests: a mock)
     database_url: str | None = None  # default: sqlite:///<state_root>/dif.db
     database: Database | None = None  # an open database (the service shares one)
+    telemetry: OtlpExporter | None = None  # default: from OTEL_EXPORTER_OTLP_ENDPOINT, if set
 
 
 def scope_for(spec: SolutionSpec) -> Scope:
@@ -151,7 +155,8 @@ class Instance:
         self.emit: Emit | None = None  # set by the service: internal events (ledger, workflows)
         self.ledger: LedgerStore | None = None
         self.pending_handoffs: dict[str, tuple[str, str, str]] = {}  # source session -> target
-        self.sources: dict[str, tuple[Source, float]] = {}  # item feeds: (fetch, every seconds)
+        self.sources: dict[str, tuple[Source, float]] = {}  # item feeds: (fetch, every s)
+        self.tracer: Tracer | None = None  # OpenTelemetry, when an OTLP endpoint is set
 
     # --- lifecycle -----------------------------------------------------------------
 
@@ -236,6 +241,13 @@ class Instance:
                 spec.models.roles, settings, self.options.provider_factories
             )
 
+        exporter = self.options.telemetry or exporter_from_env(client=self.options.http_client)
+        if exporter is not None:
+            self.tracer = Tracer(exporter, {
+                "dif.tenant_id": self.scope.tenant_id, "dif.instance_id": self.scope.instance_id,
+                "dif.config_version": self.resolved.version_hash[:12],
+            })  # fmt: skip
+            self.provider = TracedProvider(self.provider, self.tracer, self.vendor)
         for corpus in self.spec.knowledge.corpora:
             await self.sync_knowledge(corpus)
         tools: list[Tool] = []
@@ -676,11 +688,34 @@ class AgentRuntime:
         started: dict[str, ToolCallStarted] = {}
         safe_text = await inst.pii.tokenize(text, names or [])
         token = current_session.set(session)
+        tracer = inst.tracer
+        root = (
+            tracer.start(
+                f"invoke_agent {self.name}",
+                gen_ai__operation__name="invoke_agent",
+                gen_ai__agent__name=self.name,
+                gen_ai__conversation__id=session.id,
+                dif__tenant_id=scope.tenant_id,
+                dif__instance_id=scope.instance_id,
+            )
+            if tracer
+            else None
+        )
+        span_token = _current_span.set(root) if root else None
         try:
             async for event in self._run(session, safe_text, meter, started, full):
+                if root is not None and isinstance(event, TurnEnded):
+                    root.set(dif__turn_reason=event.reason, dif__cost_usd=meter.total.cost_usd,
+                             gen_ai__usage__input_tokens=meter.total.input_tokens,
+                             gen_ai__usage__output_tokens=meter.total.output_tokens)  # fmt: skip
                 yield event
         finally:
             current_session.reset(token)
+            if tracer is not None and root is not None and span_token is not None:
+                _current_span.reset(span_token)
+                tracer.finish(root)
+                if root.parent_id is None:  # a sub-agent's run is part of its caller's trace
+                    await tracer.flush(root.trace_id)
 
     async def _run(
         self,
@@ -763,6 +798,7 @@ class AgentRuntime:
         inst = self.instance
         scope = inst.scope
         assert inst.provider is not None
+        tool_starts: dict[str, int] = {}
         pinned = pinned_block(await inst.constraints.active(self.name))
         remembered = await memory_block(inst, self.name, session)
         config = dataclasses.replace(self.config, system=self.system + pinned + remembered)
@@ -772,9 +808,23 @@ class AgentRuntime:
             await inst.store.append(event)
             if isinstance(event, ToolCallStarted):
                 started[event.tool_use_id] = event
+                tool_starts[event.tool_use_id] = time.time_ns()
             elif isinstance(event, ToolCallFinished):
                 tool = self.tools.get(event.name)
                 effect = tool.effect if tool else Effect.EXTERNAL
+                if inst.tracer is not None:
+                    span = inst.tracer.start(
+                        f"execute_tool {event.name}",
+                        gen_ai__operation__name="execute_tool",
+                        gen_ai__tool__name=event.name,
+                        gen_ai__tool__call__id=event.tool_use_id,
+                        dif__tool_status=str(event.status),
+                        dif__tool_effect=str(effect),
+                    )
+                    span.start_ns = tool_starts.pop(event.tool_use_id, span.start_ns)
+                    if event.status is not ToolStatus.OK:
+                        span.error = str(event.status)
+                    inst.tracer.finish(span)
                 if full or effect is not Effect.READ:
                     call = started.get(event.tool_use_id)
                     await inst.audit.record(

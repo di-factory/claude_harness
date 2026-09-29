@@ -152,11 +152,13 @@ class Env:
         edit: Any = None,
         secrets: dict[str, str] | None = None,
         routes: Any = None,
+        telemetry: Any = None,
     ) -> None:
         self.tmp_path = tmp_path
         self.edit = edit
         self.secrets = secrets or {}
         self.routes = routes  # request -> Response | None: extra fake APIs (Google...)
+        self.telemetry = telemetry  # an OtlpExporter (tests: pointed at a mock collector)
         self.provider = FakeProvider(script)
         self.sent: list[httpx2.Request] = []
         self.clock = Clock()
@@ -196,6 +198,7 @@ class Env:
             provider=self.provider,
             database=database,
             http_client=self.outbound(),
+            telemetry=self.telemetry,
         )
         inst = await Instance.open(resolved, options)
         headless = await Headless.build(
