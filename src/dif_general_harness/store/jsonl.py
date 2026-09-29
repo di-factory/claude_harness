@@ -49,7 +49,7 @@ class JsonlSessionStore:
             raise ValueError(f"invalid session id {session_id!r}")
         return self.root / scope.tenant_id / scope.instance_id / "sessions" / f"{session_id}.jsonl"
 
-    def append(self, event: Event) -> None:
+    async def append(self, event: Event) -> None:
         if isinstance(event, TextDelta):
             return
         path = self._path(event.scope, event.session_id)
@@ -62,7 +62,7 @@ class JsonlSessionStore:
             fh.write(line + "\n")
             fh.flush()
 
-    def read(self, scope: Scope, session_id: str) -> list[Event]:
+    async def read(self, scope: Scope, session_id: str) -> list[Event]:
         path = self._path(scope, session_id)
         lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
         events: list[Event] = []
@@ -76,9 +76,9 @@ class JsonlSessionStore:
                 raise ValueError(f"{path}: corrupted event on line {i + 1}") from None
         return events
 
-    def load(self, scope: Scope, session_id: str) -> Session:
-        return Session.from_events(self.read(scope, session_id))
+    async def load(self, scope: Scope, session_id: str) -> Session:
+        return Session.from_events(await self.read(scope, session_id))
 
-    def list_sessions(self, scope: Scope) -> list[str]:
+    async def list_sessions(self, scope: Scope) -> list[str]:
         folder = self.root / scope.tenant_id / scope.instance_id / "sessions"
         return sorted(p.stem for p in folder.glob("*.jsonl")) if folder.exists() else []

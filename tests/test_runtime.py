@@ -186,13 +186,13 @@ async def test_clinic_instance_runs_and_reports_gaps(examples: Path, tmp_path: P
         assert "calendar.find_slots" in agent.missing_tools
         assert agent.per_run.usd == 0.2 and agent.config.max_turns == 12
 
-        session = agent.new_session(contact_key="+5215512345678")
+        session = await agent.new_session(contact_key="+5215512345678")
         events = [e async for e in agent.send(session, "Hola")]
         assert isinstance(events[-1], TurnEnded) and events[-1].reason == "end_turn"
         assert provider.requests[0].system == agent.system
         assert provider.requests[0].model_role == "main"
 
-        resumed = agent.resume(session.id)
+        resumed = await agent.resume(session.id)
         assert [m.role for m in resumed.messages] == [Role.USER, Role.ASSISTANT]
         assert resumed.config_version == inst.resolved.version_hash
         files = list(
@@ -247,7 +247,7 @@ async def test_service_desk_tools_policy_and_redaction(examples: Path, tmp_path:
         ]
         assert resolver.missing_tools == ["helpdesk.add_comment"]
 
-        session = resolver.new_session()
+        session = await resolver.new_session()
         [e async for e in resolver.send(session, "Ana is locked out, ticket T-9")]
         results = {
             b.tool_use_id: b for b in session.messages[2].content if isinstance(b, ToolResultBlock)
@@ -277,7 +277,7 @@ async def test_approver_and_budgets(examples: Path, tmp_path: Path) -> None:
     )
     async with await Instance.open(_service_desk(examples), options) as inst:
         triage = inst.agent("triage")
-        events: list[Event] = [e async for e in triage.send(triage.new_session(), "T-1?")]
+        events: list[Event] = [e async for e in triage.send(await triage.new_session(), "T-1?")]
         assert isinstance(events[-1], TurnEnded) and events[-1].reason == "budget"
         assert len(provider.requests) == 1
 

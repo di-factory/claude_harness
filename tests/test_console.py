@@ -58,7 +58,7 @@ async def test_chat_streams_and_reports_cost(tmp_path: Path, helper_solution: Pa
     )
     async with instance:
         agent = instance.agent()
-        app = ConsoleApp(instance, agent, agent.new_session())
+        app = ConsoleApp(instance, agent, await agent.new_session())
         approver.app = app
         async with app.run_test() as pilot:
             await _say(app, pilot, "hi")
@@ -82,7 +82,7 @@ async def test_approvals(
     instance, approver, _ = await _open(tmp_path, helper_solution, script)
     async with instance:
         agent = instance.agent()
-        app = ConsoleApp(instance, agent, agent.new_session())
+        app = ConsoleApp(instance, agent, await agent.new_session())
         approver.app = app
         async with app.run_test() as pilot:
             await _say(app, pilot, "save a note")
@@ -108,7 +108,7 @@ async def test_commands_and_undo(tmp_path: Path, helper_solution: Path) -> None:
     )
     async with instance:
         agent = instance.agent()
-        app = ConsoleApp(instance, agent, agent.new_session())
+        app = ConsoleApp(instance, agent, await agent.new_session())
         approver.app = app
         async with app.run_test() as pilot:
             await _say(app, pilot, "/tools")

@@ -163,7 +163,7 @@ class ConsoleApp(App[None]):
         if not text:
             return
         if text.startswith("/"):
-            self.command(text)
+            await self.command(text)
             return
         self.show(f"> {text}", "user")
         event.input.disabled = True
@@ -208,14 +208,14 @@ class ConsoleApp(App[None]):
         )
         return decision
 
-    def command(self, text: str) -> None:
+    async def command(self, text: str) -> None:
         name = text.split()[0].lower()
         if name == "/help":
             self.show(HELP, "info")
         elif name == "/quit":
             self.exit()
         elif name == "/new":
-            self.session = self.agent.new_session()
+            self.session = await self.agent.new_session()
             self.show(f"new session {self.session.id}", "info")
         elif name == "/session":
             self.show(f"session {self.session.id}", "info")

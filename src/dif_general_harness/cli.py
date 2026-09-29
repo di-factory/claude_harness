@@ -115,7 +115,7 @@ async def _console(
         return 2
     instance, agent = started
     async with instance:
-        session = agent.resume(args.session) if args.session else agent.new_session()
+        session = await (agent.resume(args.session) if args.session else agent.new_session())
         app = ConsoleApp(instance, agent, session)
         approver.app = app
         await app.run_async()
@@ -135,7 +135,7 @@ async def _run(
             print(issue, file=sys.stderr)
         if agent.missing_tools:
             print(f"note: tools not available: {', '.join(agent.missing_tools)}", file=sys.stderr)
-        session = agent.resume(args.session) if args.session else agent.new_session()
+        session = await (agent.resume(args.session) if args.session else agent.new_session())
         print(f"session {session.id} (agent {agent.name})", file=sys.stderr)
         messages = [args.message] if args.message else (ln.rstrip("\n") for ln in sys.stdin)
         code = 0

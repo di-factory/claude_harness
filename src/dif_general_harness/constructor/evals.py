@@ -110,7 +110,7 @@ async def run_case(
         result.reasons = [f"needs M2: {w}" for w in why]
         return result
     contact = (case.get("setup") or {}).get("contact") or {}
-    session = agent.new_session(contact_key=contact.get("first_name"))
+    session = await agent.new_session(contact_key=contact.get("first_name"))
     approvals.requests.clear()
     all_calls: list[str] = []
     turn_calls: list[str] = []

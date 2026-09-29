@@ -269,7 +269,7 @@ class AgentRuntime:
             system=self.system, model_role=spec.model_role, max_turns=spec.max_turns or 12
         )
 
-    def new_session(self, contact_key: str | None = None) -> Session:
+    async def new_session(self, contact_key: str | None = None) -> Session:
         inst = self.instance
         session = Session(
             scope=inst.scope,
@@ -277,11 +277,11 @@ class AgentRuntime:
             contact_key=contact_key,
             config_version=inst.resolved.version_hash,
         )
-        inst.store.append(session.started_event())
+        await inst.store.append(session.started_event())
         return session
 
-    def resume(self, session_id: str) -> Session:
-        return self.instance.store.load(self.instance.scope, session_id)
+    async def resume(self, session_id: str) -> Session:
+        return await self.instance.store.load(self.instance.scope, session_id)
 
     def meter(self) -> RunMeter:
         inst = self.instance
@@ -307,7 +307,7 @@ class AgentRuntime:
             gate=self.gate,
             meter=self.meter(),
         ):
-            inst.store.append(event)
+            await inst.store.append(event)
             yield event
 
 

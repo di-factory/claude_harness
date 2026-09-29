@@ -338,14 +338,14 @@ def test_redactor_patterns_and_survivors() -> None:
     assert Redactor(["abc"]).redact("abc") == "abc"  # too short to register
 
 
-def test_store_redacts_but_keeps_ids_and_signatures(tmp_path: Path, scope: Scope) -> None:
+async def test_store_redacts_but_keeps_ids_and_signatures(tmp_path: Path, scope: Scope) -> None:
     signature = "EqQBCkYIBRgCKkBx7Y2mN4pQ8rS1tU5vW9xZ3aB6cD0eF2gH4iJ7kL1mN3oP5qR8sT0uV"
     tool_id = "toolu_01XFDUDYJgAACzvnptvVoYELmQ2b"
     session = Session(scope=scope, agent_id="a")
     store = JsonlSessionStore(tmp_path, redactor=Redactor(["clinic-db-password"]))
-    store.append(session.started_event())
-    store.append(session.add_message(Message.user(f"my key is {ANTHROPIC_KEY}")))
-    store.append(
+    await store.append(session.started_event())
+    await store.append(session.add_message(Message.user(f"my key is {ANTHROPIC_KEY}")))
+    await store.append(
         session.add_message(
             Message(
                 role=Role.ASSISTANT,
@@ -361,7 +361,7 @@ def test_store_redacts_but_keeps_ids_and_signatures(tmp_path: Path, scope: Scope
             )
         )
     )
-    store.append(
+    await store.append(
         session.add_message(
             Message(
                 role=Role.USER,
@@ -376,7 +376,7 @@ def test_store_redacts_but_keeps_ids_and_signatures(tmp_path: Path, scope: Scope
     raw = next(tmp_path.rglob("*.jsonl")).read_text()
     for secret in [ANTHROPIC_KEY, AWS_KEY, "clinic-db-password"]:
         assert secret not in raw
-    resumed = store.load(scope, session.id)
+    resumed = await store.load(scope, session.id)
     assistant = resumed.messages[1].content
     assert isinstance(assistant[0], ThinkingBlock) and assistant[0].signature == signature
     assert isinstance(assistant[2], ToolUseBlock) and assistant[2].id == tool_id

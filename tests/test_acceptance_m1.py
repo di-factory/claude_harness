@@ -54,7 +54,7 @@ async def test_spec_runs_without_code_changes(examples: Path, tmp_path: Path) ->
     options = RuntimeOptions(state_root=tmp_path, secrets=_secrets(), provider=provider)
     async with await Instance.open(_instance(examples, {}), options) as inst:
         agent = inst.agent()
-        session = agent.new_session()
+        session = await agent.new_session()
         events = [e async for e in agent.send(session, "Hola")]
     assert events[-1].type == "turn_ended" and events[-1].reason == "end_turn"
 
@@ -124,7 +124,7 @@ async def test_tool_contract_and_no_secret_in_model_inputs(examples: Path, tmp_p
     async with await Instance.open(_instance(examples, overlay), options) as inst:
         agent = inst.agent()
         assert "crm.get_patient" in agent.tools.names()
-        session = agent.new_session()
+        session = await agent.new_session()
         [e async for e in agent.send(session, "How many visits has Ana had?")]
     result = session.messages[2].content[0]
     assert isinstance(result, ToolResultBlock) and result.status is ToolStatus.OK
@@ -183,7 +183,7 @@ async def test_prompt_injection_asks_never_executes(examples: Path, tmp_path: Pa
     )
     async with await Instance.open(_instance(examples, overlay), options) as inst:
         agent = inst.agent()
-        session = agent.new_session()
+        session = await agent.new_session()
         [e async for e in agent.send(session, injected)]
     assert [r.tool for r in approvals.requests] == ["idp.reset_password"]
     assert posts == []  # the side effect never ran
