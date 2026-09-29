@@ -50,6 +50,7 @@ from ..spec.loader import ResolvedSpec
 from ..spec.schema import Agent, SolutionSpec
 from ..store.db import Database, connect
 from ..store.sql import SqlSessionStore
+from ..teams import LedgerStore, handoff_tool, runs_tools, subagent_tool
 from ..tenancy.secrets import EnvSecrets, SecretBackend, SecretResolver
 from ..tools.http import ConnectorError, http_tools
 from ..tools.mcp import McpToolSource
@@ -64,6 +65,7 @@ from .routing import ProviderFactory, build_router
 LOCAL_TENANT = "local"
 HANDOFF_TOOL = "handoff.human"
 Notify = Callable[[str, str], Awaitable[None]]  # (inbox item id, one-line summary)
+Emit = Callable[[str, dict[str, Any]], Awaitable[Any]]
 
 
 class InstanceError(RuntimeError):
@@ -124,6 +126,9 @@ class Instance:
         self.contacts: ContactStore
         self.verifier = Verifier(self, on_failed_twice=self._verification_failed_twice)
         self.notify: Notify | None = None  # set by the service: tells a person about inbox items
+        self.emit: Emit | None = None  # set by the service: internal events (ledger, workflows)
+        self.ledger: LedgerStore | None = None
+        self.pending_handoffs: dict[str, tuple[str, str, str]] = {}  # source session -> target
 
     # --- lifecycle -----------------------------------------------------------------
 
@@ -172,6 +177,10 @@ class Instance:
         self.spend = SpendStore(self.db)
         self.inbox = Inbox(self.db, self.scope)
         self.contacts = ContactStore(self.db)
+        if self.spec.ledger is not None:
+            self.ledger = LedgerStore(self.db, self.scope, self.spec.ledger, list(self.spec.agents))
+            self.ledger.emit = self._emit
+            self.ledger.on_task = self._ledger_rules
         if policy.tokenize and policy.undetectable:
             self._warn(
                 "pii_undetectable",
@@ -206,6 +215,9 @@ class Instance:
         tools += await self._mcp(data, missing)
         if any("human" in a.handoffs for a in spec.agents.values()):
             tools.append(self._handoff_tool())
+        tools += runs_tools(self)
+        for name in sorted({s for a in spec.agents.values() for s in a.subagents}):
+            tools.append(subagent_tool(self, name))
         self._configure(tools)
 
     def _handoff_tool(self) -> Tool:
@@ -223,6 +235,26 @@ class Instance:
             return f"handed off to a person (escalation {item}); a person will reply here"
 
         return handoff
+
+    async def _emit(self, name: str, data: dict[str, Any]) -> None:
+        if self.emit is not None:
+            await self.emit(name, data)
+
+    async def _ledger_rules(self, task: dict[str, Any]) -> None:
+        escalation = self.spec.policies.escalation or {}
+        rule = first_match(
+            list(escalation.get("rules") or []),
+            {"ledger": {"task": task}, "var": self.spec.values},
+        )
+        if rule is not None and rule.get("to") == "human":
+            item = await self.inbox.create(
+                "escalation",
+                f"Task needs a person: {task.get('title', task['id'])}",
+                {"task": task},
+            )
+            await self.audit.record(self.scope, "ledger", "escalation", f"inbox/{item}", {})
+            if self.notify is not None:
+                await self.notify(item, f"Task needs a person: {task.get('title', '')}")
 
     async def _verification_failed_twice(
         self, session: Session, call: ToolUseBlock, reason: str
@@ -335,8 +367,8 @@ class Instance:
                     t = dataclasses.replace(t, effect=Effect(o.effect))
                 if o.verify:
                     t = dataclasses.replace(t, verify=o.verify)
-            if t.name == HANDOFF_TOOL:
-                allow.append(t.name)  # asking a person is always allowed
+            if t.name == HANDOFF_TOOL or t.source == "team":
+                allow.append(t.name)  # asking a person or a teammate is always allowed
             self.tools.register(t)
         for name in self.tools.names():  # a check that cannot run here: a person reviews
             registered = self.tools.get(name)
@@ -345,6 +377,7 @@ class Instance:
             if why:
                 ask.append(name)
                 self._warn("verification_unavailable", f"tools.{name}", f"{why}; asking instead")
+        allow.append("handoff.agent")  # handing over to a listed teammate is always allowed
         for name, o in overrides.items():
             if o.permission:
                 {"allow": allow, "ask": ask, "deny": deny}[o.permission].append(name)
@@ -372,10 +405,22 @@ class AgentRuntime:
         self.spec = spec
         self.system = render(load_text(spec.prompt), instance.spec)
         registry = instance.tools
-        patterns = [*spec.tools, *([HANDOFF_TOOL] if "human" in spec.handoffs else [])]
+        patterns = [
+            *spec.tools,
+            *([HANDOFF_TOOL] if "human" in spec.handoffs else []),
+            *(f"agent.{s}" for s in spec.subagents),
+        ]
         selected = ToolRegistry(
             [t for n in registry.names() if _matches(n, patterns) and (t := registry.get(n))]
         )
+        ledger = instance.ledger
+        if ledger is not None and name in (ledger.spec.visible_to or list(instance.spec.agents)):
+            for t in ledger.tools(name):
+                if _matches(t.name, spec.tools):
+                    selected.register(t)
+        teammates = [h for h in spec.handoffs if h != "human" and h in instance.spec.agents]
+        if teammates:
+            selected.register(handoff_tool(instance, self, teammates))
         self.tools = GovernedTools(selected, instance.pii)
         self.missing_tools = [
             p for p in spec.tools if not any(_matches(n, [p]) for n in self.tools.names())

@@ -304,6 +304,18 @@ def create_app(
         count = await headless.upsert_items(source, given, replace=bool(body.get("replace")))
         return {"items": count}
 
+    @app.post("/admin/agents/{name}/tasks", dependencies=[Depends(admin)])
+    async def agent_task(name: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Give an agent a task outside any conversation (``{"text": ...}``)."""
+        text = body.get("text")
+        if not isinstance(text, str) or not text.strip():
+            raise HTTPException(400, "a task needs text")
+        try:
+            job = await headless.fire_agent(name, text)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from None
+        return {"queued": job is not None}
+
     @app.get("/admin/runs", dependencies=[Depends(admin)])
     async def runs(workflow: str | None = None, status: str | None = None) -> list[dict[str, Any]]:
         return [

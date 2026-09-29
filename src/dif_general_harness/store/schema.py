@@ -88,6 +88,13 @@ MIGRATIONS: list[list[str]] = [
             updated_at DOUBLE PRECISION NOT NULL,
             PRIMARY KEY (tenant_id, instance_id, source, item_id))""",
     ],
+    [  # M3: the team ledger
+        """CREATE TABLE IF NOT EXISTS ledger_tasks (
+            id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, instance_id TEXT NOT NULL,
+            fields TEXT NOT NULL, created_by TEXT NOT NULL,
+            created_at DOUBLE PRECISION NOT NULL, updated_at DOUBLE PRECISION NOT NULL)""",
+        "CREATE INDEX IF NOT EXISTS ledger_by_instance ON ledger_tasks (tenant_id, instance_id)",
+    ],
 ]
 
 

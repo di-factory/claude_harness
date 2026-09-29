@@ -116,6 +116,7 @@ class Headless:
         self.instance = instance
         self.adapters, self.triggers, self.issues, self._agents = {}, {}, [], {}
         instance.notify = self.notify
+        instance.emit = self.emit
         instance.options.approver = InboxApprover(instance.inbox, self._approval_filed)
         spec, data = instance.spec, instance.resolved.data
         for name, channel in spec.channels.items():
@@ -197,6 +198,7 @@ class Headless:
                 job.payload["run"], job.payload["step"]
             ),
             "relative_scan": self._job_relative_scan,
+            "agent_task": self._job_agent_task,
         }
 
     def worker(self, **kw: Any) -> Worker:
@@ -259,6 +261,9 @@ class Headless:
         window = duration_days(cfg.session_window) * DAY if cfg.session_window else None
         found = await inst.store.current(self.scope, env.channel, env.contact_key, window)
         if found is not None:
+            loaded = await inst.store.load(self.scope, found[0])
+            if loaded.agent_id in inst.spec.agents:  # the conversation may be with a teammate now
+                agent_name, agent = loaded.agent_id, self.agent(loaded.agent_id)
             session = await agent.resume(found[0])
             if found[1] == "escalated":
                 return await self._hold_for_person(session, env)
@@ -275,6 +280,17 @@ class Headless:
             elif isinstance(event, TurnEnded):
                 reason = event.reason
         escalated = await inst.store.state(self.scope, session.id) == "escalated"
+        handoff = inst.pending_handoffs.pop(session.id, None)
+        if handoff is not None and reason == "end_turn":  # the teammate answers in the same turn
+            target_name, target_id, note = handoff
+            target = self.agent(target_name)
+            target_session = await target.resume(target_id)
+            async for event in target.send(target_session, note):
+                message = event.message if isinstance(event, MessageAdded) else None
+                if message is not None and message.role is Role.ASSISTANT and message.text():
+                    texts.append(message.text())
+            session = target_session
+            agent = target
         reply = await agent.reply("\n\n".join(texts)) if texts else None
         if reason in {"error", "budget", "refusal", "max_turns"} and not escalated:
             item = await inst.inbox.create(
@@ -314,7 +330,11 @@ class Headless:
         """Tell the people in ``hitl.notify`` (channels with an address); failures are
         logged, never raised: the item is in the inbox either way."""
         hitl = self.instance.spec.hitl
-        for target in hitl.notify if hitl else []:
+        targets = list(hitl.notify) if hitl else []
+        handoff_to = (self.instance.spec.policies.escalation or {}).get("handoff_to") or {}
+        if handoff_to.get("type") == "channel" and handoff_to.get("channel"):
+            targets.append({"channel": handoff_to["channel"]})
+        for target in targets:
             name = target.get("channel")
             adapter = self.adapters.get(str(name))
             to = target.get("to") or (adapter.config.address if adapter else None)
@@ -493,6 +513,27 @@ class Headless:
         consent = self.instance.spec.governance.consent
         return await self.instance.consent.may_contact(
             self.scope, contact, channel, required=consent.required
+        )
+
+    async def fire_agent(self, agent: str, text: str) -> str | None:
+        """Give an agent a task outside any conversation (staff, schedules, tests)."""
+        if agent not in self.instance.spec.agents:
+            raise KeyError(f"unknown agent {agent!r}")
+        return await self.queue.enqueue(self.scope, "agent_task", {"agent": agent, "text": text})
+
+    async def _job_agent_task(self, job: Job) -> None:
+        agent = self.agent(job.payload["agent"])
+        session = await agent.new_session()
+        reason = "error"
+        async for event in agent.send(session, job.payload["text"]):
+            if isinstance(event, TurnEnded):
+                reason = event.reason
+        await self.instance.audit.record(
+            self.scope,
+            "system",
+            "agent_task",
+            agent.name,
+            {"session": session.id, "reason": reason},
         )
 
     async def emit(self, name: str, data: dict[str, Any]) -> int:

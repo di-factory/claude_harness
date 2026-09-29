@@ -90,7 +90,7 @@ class SqlSessionStore:
         ``(session_id, state)``."""
         row = await self.db.fetchone(
             "SELECT session_id, state, last_active FROM sessions WHERE tenant_id = ?"
-            " AND instance_id = ? AND channel = ? AND contact_key = ?"
+            " AND instance_id = ? AND channel = ? AND contact_key = ? AND state != 'handed_off'"
             " ORDER BY last_active DESC LIMIT 1",
             (scope.tenant_id, scope.instance_id, channel, contact_key),
         )
