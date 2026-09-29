@@ -9,6 +9,7 @@ requires-python = ">=3.12"
 authors = [{ name = "Data Intelligence Factory" }]
 dependencies = [
     "anthropic>=1.9.0",
+    "cryptography>=43",
     "fastapi>=0.115",
     "httpx2>=2.13.1",
     "jsonschema>=4.23",
@@ -20,6 +21,9 @@ dependencies = [
     "pyyaml>=6.0",
     "textual>=8.2.8",
 ]
+
+[project.optional-dependencies]
+aws = ["boto3>=1.35"]
 
 [project.scripts]
 dif-general-harness = "dif_general_harness.cli:main"

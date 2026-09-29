@@ -8,13 +8,16 @@ Backends in M1:
 - ``env``: ``DIF_SECRET_<NAME>`` (upper case, ``-`` and ``.`` become ``_``).
 - ``file``: one file per secret in a directory (``<dir>/<name>``), as mounted by
   Docker/Kubernetes secrets. Trailing newlines are stripped.
-Cloud vaults (AWS Secrets Manager and others) are adapters behind the same protocol (M2).
+- ``aws-secrets-manager``: the client's AWS Secrets Manager, ``<prefix>/<name>``.
+``backend_from_env`` picks one from ``DIF_SECRETS_BACKEND``. GCP Secret Manager and
+1Password follow the same protocol.
 """
 
 from __future__ import annotations
 
 import os
 import re
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Protocol
@@ -86,3 +89,59 @@ class SecretResolver:
     def missing(self, names: list[str]) -> list[str]:
         """Names without a value; for preflight checks before a run starts."""
         return [n for n in names if not self.backend.get(n)]
+
+
+class AwsSecretsManager:
+    """Secrets from the client's AWS Secrets Manager: ``<prefix>/<name>``.
+
+    The instance's IAM role grants read access to that prefix only; Di-Factory never sees
+    the values. Values are cached for ``ttl_s`` so rotations are picked up without a
+    restart. ``boto3`` is an optional dependency (``pip install .[aws]``); tests inject a
+    client.
+    """
+
+    def __init__(
+        self, prefix: str, *, client: Any = None, region: str | None = None, ttl_s: float = 300.0
+    ) -> None:
+        if client is None:
+            import boto3  # type: ignore[import-not-found]
+
+            client = boto3.client("secretsmanager", region_name=region)
+        self.client = client
+        self.prefix = prefix.rstrip("/")
+        self.ttl_s = ttl_s
+        self._cache: dict[str, tuple[float, str | None]] = {}
+
+    def get(self, name: str) -> str | None:
+        now = time.monotonic()
+        hit = self._cache.get(name)
+        if hit and now - hit[0] < self.ttl_s:
+            return hit[1]
+        try:
+            response = self.client.get_secret_value(SecretId=f"{self.prefix}/{_check(name)}")
+        except Exception as exc:
+            if type(exc).__name__ == "ResourceNotFoundException" or "ResourceNotFound" in str(exc):
+                value = None
+            else:
+                raise
+        else:
+            value = response.get("SecretString")
+        self._cache[name] = (now, value)
+        return value
+
+
+def backend_from_env(environ: Mapping[str, str] | None = None) -> SecretBackend:
+    """``DIF_SECRETS_BACKEND``: ``env`` (default), ``file`` (``DIF_SECRETS_DIR``) or
+    ``aws-secrets-manager`` (``DIF_SECRETS_PREFIX``, ``AWS_REGION``)."""
+    env = os.environ if environ is None else environ
+    kind = env.get("DIF_SECRETS_BACKEND", "env")
+    if kind == "env":
+        return EnvSecrets(env)
+    if kind == "file":
+        return FileSecrets(env.get("DIF_SECRETS_DIR", "/run/secrets"))
+    if kind == "aws-secrets-manager":
+        prefix = env.get("DIF_SECRETS_PREFIX")
+        if not prefix:
+            raise ValueError("DIF_SECRETS_PREFIX is required for aws-secrets-manager")
+        return AwsSecretsManager(prefix, region=env.get("AWS_REGION"))
+    raise ValueError(f"unknown secrets backend {kind!r}")

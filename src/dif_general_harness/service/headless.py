@@ -86,6 +86,8 @@ class Headless:
     triggers: dict[str, Trigger] = field(default_factory=dict)
     issues: list[Issue] = field(default_factory=list)
     _agents: dict[str, AgentRuntime] = field(default_factory=dict)
+    _http: httpx2.AsyncClient | None = None
+    _public_url: str | None = None
 
     # --- construction ----------------------------------------------------------------
 
@@ -99,7 +101,15 @@ class Headless:
         clock: Any = None,
     ) -> Headless:
         queue = JobQueue(instance.db, **({"clock": clock} if clock else {}))
-        self = cls(instance, queue)
+        self = cls(instance, queue, _http=http_client, _public_url=public_url)
+        self._wire(instance)
+        return self
+
+    def _wire(self, instance: Instance) -> None:
+        """Adapters, triggers and approvals for an instance (at build and on reload)."""
+        http_client, public_url = self._http, self._public_url
+        self.instance = instance
+        self.adapters, self.triggers, self.issues, self._agents = {}, {}, [], {}
         instance.notify = self.notify
         instance.options.approver = InboxApprover(instance.inbox, self._approval_filed)
         spec, data = instance.spec, instance.resolved.data
@@ -121,7 +131,19 @@ class Headless:
                 self._warn("trigger_unavailable", f"triggers.{name}", why)
             else:
                 self.triggers[name] = trig
-        return self
+
+    async def reload(self, resolved: Any) -> None:
+        """Swap in a new config version without a restart. The database, queue and pending
+        jobs carry over; the old instance's connections close once the new one is live."""
+        import dataclasses
+
+        old = self.instance
+        options = dataclasses.replace(old.options, database=old.db, approver=None)
+        new = await Instance.open(resolved, options)
+        new.owns_db, old.owns_db = old.owns_db, False  # the database outlives the swap
+        self._wire(new)
+        await self.start()
+        await old.close()
 
     def _warn(self, code: str, path: str, message: str) -> None:
         self.issues.append(Issue("warning", code, path, message))

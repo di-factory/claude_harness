@@ -20,13 +20,16 @@ import asyncio
 import contextlib
 import hmac
 import json
-from collections.abc import AsyncIterator
-from typing import Any
+from collections.abc import AsyncIterator, Callable, Coroutine, Sequence
+from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from ..channels import ChannelError, Inbound, Unauthorized
+from ..runtime import Instance
+from ..tenancy.config_versions import ConfigError, ConfigStore
+from .config import apply_active, watch_config
 from .headless import Headless
 
 
@@ -44,7 +47,7 @@ class OperatorReply(BaseModel):
 class ConsentChange(BaseModel):
     contact: str
     channel: str
-    status: str
+    status: Literal["granted", "revoked"]
     source: str = "admin"
 
 
@@ -62,23 +65,29 @@ def create_app(
     admin_token: str | None = None,
     run_worker: bool = True,
     worker_lanes: int = 4,
+    config_poll_s: float | None = 15.0,
+    background: Sequence[Callable[[asyncio.Event], Coroutine[Any, Any, None]]] | None = None,
 ) -> FastAPI:
-    inst = headless.instance
-    scope = inst.scope
+    scope = headless.instance.scope
+
+    def current() -> Instance:  # the running instance changes on a config reload
+        return headless.instance
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         stop = asyncio.Event()
-        task: asyncio.Task[None] | None = None
+        tasks: list[asyncio.Task[None]] = []
         if run_worker:
             await headless.start()
-            task = asyncio.create_task(headless.worker(concurrency=worker_lanes).run(stop))
+            tasks.append(asyncio.create_task(headless.worker(concurrency=worker_lanes).run(stop)))
+        if config_poll_s:
+            tasks.append(asyncio.create_task(watch_config(headless, stop, config_poll_s)))
+        tasks += [asyncio.create_task(job(stop)) for job in background or []]
         try:
             yield
         finally:
             stop.set()
-            if task is not None:
-                await task
+            await asyncio.gather(*tasks)
 
     app = FastAPI(title="dif-general-harness", lifespan=lifespan, docs_url=None, redoc_url=None)
 
@@ -95,13 +104,13 @@ def create_app(
             "status": "ok",
             "tenant": scope.tenant_id,
             "instance": scope.instance_id,
-            "config_version": inst.resolved.version_hash,
+            "config_version": current().resolved.version_hash,
         }
 
     @app.get("/readyz")
     async def readyz() -> dict[str, str]:
         try:
-            await inst.db.fetchone("SELECT 1 AS ok")
+            await current().db.fetchone("SELECT 1 AS ok")
         except Exception as exc:
             raise HTTPException(503, f"database unavailable: {type(exc).__name__}") from None
         return {"status": "ready"}
@@ -152,8 +161,8 @@ def create_app(
 
     @app.get("/admin/inbox", dependencies=[Depends(admin)])
     async def inbox(status: str | None = "open", kind: str | None = None) -> list[dict[str, Any]]:
-        items = await inst.inbox.list(status or None, kind)
-        reveal = inst.pii.policy.classes
+        items = await current().inbox.list(status or None, kind)
+        reveal = current().pii.policy.classes
         return [
             {
                 "id": i.id,
@@ -161,7 +170,7 @@ def create_app(
                 "status": i.status,
                 "title": i.title,
                 "session": i.session_id,
-                "payload": await inst.pii.detokenize_obj(i.payload, reveal),
+                "payload": await current().pii.detokenize_obj(i.payload, reveal),
                 "created_at": i.created_at,
                 "decided_by": i.decided_by,
                 "note": i.note,
@@ -182,18 +191,18 @@ def create_app(
     @app.get("/admin/sessions/{session_id}", dependencies=[Depends(admin)])
     async def session(session_id: str) -> dict[str, Any]:
         try:
-            loaded = await inst.store.load(scope, session_id)
+            loaded = await current().store.load(scope, session_id)
         except FileNotFoundError:
             raise HTTPException(404, "no such session") from None
-        reveal = inst.pii.policy.classes
+        reveal = current().pii.policy.classes
         return {
             "id": loaded.id,
             "agent": loaded.agent_id,
-            "state": await inst.store.state(scope, session_id),
+            "state": await current().store.state(scope, session_id),
             "messages": [
                 {
                     "role": str(m.role),
-                    "text": await inst.pii.detokenize(m.text(), reveal, mask=False),
+                    "text": await current().pii.detokenize(m.text(), reveal, mask=False),
                 }
                 for m in loaded.messages
                 if m.text()
@@ -210,22 +219,58 @@ def create_app(
 
     @app.post("/admin/consent", dependencies=[Depends(admin)])
     async def consent(change: ConsentChange) -> dict[str, str]:
-        if change.status not in {"granted", "revoked"}:
-            raise HTTPException(400, "status must be granted or revoked")
-        await inst.consent.set(scope, change.contact, change.channel, change.status, change.source)  # type: ignore[arg-type]
-        await inst.audit.record(
+        await current().consent.set(
+            scope, change.contact, change.channel, change.status, change.source
+        )
+        await current().audit.record(
             scope, f"admin:{change.source}", f"consent_{change.status}", change.channel, {}
         )
         return {"status": change.status}
 
     @app.get("/admin/audit/verify", dependencies=[Depends(admin)])
     async def audit_verify() -> dict[str, Any]:
-        broken = await inst.audit.verify(scope)
+        broken = await current().audit.verify(scope)
         return {"intact": broken is None, "first_broken_seq": broken}
 
     @app.get("/admin/spend", dependencies=[Depends(admin)])
     async def spend(day: str | None = None) -> dict[str, float]:
-        return await inst.spend.day(scope, day)
+        return await current().spend.day(scope, day)
+
+    @app.get("/admin/config", dependencies=[Depends(admin)])
+    async def config() -> dict[str, Any]:
+        store = ConfigStore(current().db, scope)
+        active = await store.active()
+        return {
+            "running": current().resolved.version_hash,
+            "active": active.version if active else None,
+            "versions": [
+                {"version": v.version, "hash": v.hash, "status": v.status, "by": v.created_by,
+                 "note": v.note, "created_at": v.created_at}
+                for v in await store.history()
+            ],
+        }  # fmt: skip
+
+    @app.post("/admin/config/{version}/activate", dependencies=[Depends(admin)])
+    async def activate(version: int, by: str = "operator") -> dict[str, Any]:
+        store = ConfigStore(current().db, scope)
+        try:
+            await store.activate(version)
+        except ConfigError as exc:
+            raise HTTPException(409, str(exc)) from None
+        await current().audit.record(scope, by, "config_activated", f"config/v{version}", {})
+        await apply_active(headless)
+        return {"active": version, "running": current().resolved.version_hash}
+
+    @app.post("/admin/config/rollback", dependencies=[Depends(admin)])
+    async def rollback(by: str = "operator") -> dict[str, Any]:
+        store = ConfigStore(current().db, scope)
+        try:
+            version = await store.rollback()
+        except ConfigError as exc:
+            raise HTTPException(409, str(exc)) from None
+        await current().audit.record(scope, by, "config_rollback", f"config/v{version.version}", {})
+        await apply_active(headless)
+        return {"active": version.version, "running": current().resolved.version_hash}
 
     @app.get("/admin/jobs", dependencies=[Depends(admin)])
     async def jobs() -> dict[str, int]:

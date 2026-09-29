@@ -533,7 +533,7 @@ async def test_admin_api(tmp_path: Path) -> None:
                 json={"contact": ANA, "channel": "whatsapp", "status": "maybe"},
                 headers=ADMIN_H,
             )
-        ).status_code == 400
+        ).status_code == 422
 
         body, headers = _whatsapp("hola", "SM1")
         await client.post("/channels/whatsapp", content=body, headers=headers)
@@ -552,3 +552,137 @@ async def test_admin_api(tmp_path: Path) -> None:
             transport=httpx2.ASGITransport(app=no_admin), base_url="http://x"
         ) as c:
             assert (await c.get("/admin/inbox", headers=ADMIN_H)).status_code == 403
+
+
+# --- config versions and the instance agent (M2.4) ---------------------------------
+
+
+async def test_hot_reload_and_rollback_through_the_admin_api(tmp_path: Path) -> None:
+    from dif_general_harness.service.config import boot_config
+    from dif_general_harness.tenancy import ConfigStore
+
+    env = Env(tmp_path, [])
+    inst, headless, client = await env.open()
+    async with client:
+        await boot_config(inst.db, inst.scope, inst.resolved)
+        store = ConfigStore(inst.db, inst.scope)
+        data = json.loads(json.dumps(inst.resolved.data))
+        data["values"]["business"] = "ACME Dental Norte"
+        v2 = await store.propose(data, "jag", approved=True)
+        first = headless.instance
+
+        r = await client.post(f"/admin/config/{v2.version}/activate", headers=ADMIN_H)
+        assert r.status_code == 200 and r.json()["active"] == 2
+        assert headless.instance is not first  # swapped without a restart
+        assert "ACME Dental Norte" in headless.agent("front").system
+        health = (await client.get("/healthz")).json()
+        assert health["config_version"] == v2.hash
+
+        r = await client.post("/admin/config/rollback", headers=ADMIN_H)
+        assert r.json()["active"] == 1 and "ACME Dental." in headless.agent("front").system
+        listing = (await client.get("/admin/config", headers=ADMIN_H)).json()
+        assert [v["status"] for v in listing["versions"]] == ["active", "retired"]
+        assert (await client.post("/admin/config/9/activate", headers=ADMIN_H)).status_code == 409
+        actions = [r.action for r in await headless.instance.audit.records(headless.instance.scope)]
+        assert (
+            "config_activated" in actions
+            and "config_rollback" in actions
+            and "config_applied" in actions
+        )
+    await headless.instance.close()
+
+
+async def test_instance_agent(tmp_path: Path) -> None:
+    import base64
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    from dif_general_harness.fleet import InstanceAgent, load_public_key, signed_message
+    from dif_general_harness.service.config import boot_config
+
+    key = Ed25519PrivateKey.generate()
+    public = base64.b64encode(
+        key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    ).decode()
+    env = Env(tmp_path, [Message.assistant("hola")])
+    inst, headless, client = await env.open()
+    offers: list[dict[str, Any] | None] = []
+    beats: list[dict[str, Any]] = []
+
+    def control(request: httpx2.Request) -> httpx2.Response:
+        assert request.headers["authorization"] == "Bearer fleet-token"
+        assert request.url.path.startswith("/v1/instances/acme/acme-desk/")
+        if request.url.path.endswith("/heartbeat"):
+            beats.append(json.loads(request.content))
+            return httpx2.Response(204)
+        offer = offers.pop(0) if offers else None
+        return httpx2.Response(204) if offer is None else httpx2.Response(200, json=offer)
+
+    agent = InstanceAgent(
+        headless,
+        control_url="https://control.di-factory.biz",
+        token="fleet-token",
+        public_key=load_public_key(public),
+        client=httpx2.AsyncClient(transport=httpx2.MockTransport(control)),
+    )
+    async with client:
+        await boot_config(inst.db, inst.scope, inst.resolved)
+        body, headers = _whatsapp("Hola, soy Ana", "SM1")
+        await client.post("/channels/whatsapp", content=body, headers=headers)
+        await headless.worker().drain()
+
+        report = await agent.heartbeat()
+        assert report["tenant"] == "acme" and report["active_version"] == 1
+        assert report["audit_intact"] is True and report["jobs"] == {"done": 1}
+        assert "channel_unavailable" in report["issues"]
+        sent = json.dumps(beats)
+        assert ANA not in sent and "5512345678" not in sent and "Ana" not in sent  # aggregates only
+
+        assert await agent.pull() == "current"
+
+        data = json.loads(json.dumps(headless.instance.resolved.data))
+        data["values"]["business"] = "ACME Dental Sur"
+        good = {
+            "data": data,
+            "approved_by": "jag",
+            "signature": base64.b64encode(key.sign(signed_message(data, "jag"))).decode(),
+        }
+        forged = {**good, "approved_by": "mallory"}  # the signature covers the approver too
+        unsigned = {"data": data, "approved_by": "jag", "signature": ""}
+        nobody = {"data": data, "signature": good["signature"]}
+        offers += [forged, unsigned, nobody]
+        assert await agent.pull() == "rejected: bad signature"
+        assert await agent.pull() == "rejected: bad signature"
+        assert await agent.pull() == "rejected: an offer needs data and approved_by"
+        assert "ACME Dental Sur" not in headless.agent("front").system
+
+        broken = json.loads(json.dumps(data))
+        broken["agents"]["front"]["model_role"] = "nope"
+        offers.append(
+            {
+                "data": broken,
+                "approved_by": "jag",
+                "signature": base64.b64encode(key.sign(signed_message(broken, "jag"))).decode(),
+            }
+        )
+        assert (await agent.pull()).startswith("rejected: invalid spec")
+
+        offers.append(good)
+        assert await agent.pull() == "applied v2"
+        assert "ACME Dental Sur" in headless.agent("front").system
+        await agent.heartbeat()
+        assert beats[-1]["active_version"] == 2 and beats[-1]["last_pull"] == "applied v2"
+        rejected = await headless.instance.audit.records(
+            headless.instance.scope, action="config_rejected"
+        )
+        assert len(rejected) == 3
+
+    with pytest.raises(ValueError, match="https"):
+        InstanceAgent(
+            headless,
+            control_url="http://control.example",
+            token="t",
+            public_key=load_public_key(public),
+        )
+    await headless.instance.close()

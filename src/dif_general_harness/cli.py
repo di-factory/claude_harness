@@ -34,7 +34,7 @@ from .runtime import (
     RuntimeOptions,
 )
 from .spec import PackCatalog, ResolvedSpec, SpecError, load_instance, load_pack
-from .tenancy import EnvSecrets, FileSecrets
+from .tenancy import FileSecrets, backend_from_env
 
 
 def _load(path: Path, packs: list[Path] | None) -> ResolvedSpec:
@@ -99,7 +99,7 @@ def _options(
         workspaces[name] = Path(folder)
     return RuntimeOptions(
         state_root=args.state,
-        secrets=FileSecrets(args.secrets_dir) if args.secrets_dir else EnvSecrets(),
+        secrets=FileSecrets(args.secrets_dir) if args.secrets_dir else backend_from_env(),
         approver=AutoApprover() if getattr(args, "yes", False) else approver,
         workspaces=workspaces,
         provider=provider,
@@ -186,15 +186,24 @@ async def _serve(
 ) -> int:
     import uvicorn
 
+    from .runtime import scope_for
     from .service import Headless, create_app
+    from .service.config import boot_config
+    from .store import connect
+    from .tenancy import ConfigError
 
     options = _options(args, provider, None)
     if options is None:
         return 2
+    url = args.database_url or f"sqlite:///{args.state.resolve() / 'dif.db'}"
+    db = await connect(url)
     try:
-        instance = await Instance.open(resolved, options)
-    except (InstanceError, RoutingError) as exc:
+        running = await boot_config(db, scope_for(resolved.spec), resolved)
+        options.database = db
+        instance = await Instance.open(running, options)
+    except (InstanceError, RoutingError, ConfigError) as exc:
         print(f"cannot start: {exc}", file=sys.stderr)
+        await db.close()
         return 2
     async with instance:
         headless = await Headless.build(instance, public_url=args.public_url)
@@ -203,9 +212,26 @@ async def _serve(
         admin_token = options.secrets.get("admin_token")
         if not admin_token:
             print("note: no admin_token secret; the admin API is off", file=sys.stderr)
-        app = create_app(headless, admin_token=admin_token, worker_lanes=args.lanes)
+        background = []
+        fleet_url = os.environ.get("DIF_FLEET_URL")
+        fleet_token = options.secrets.get("fleet_token")
+        if fleet_url and fleet_token and os.environ.get("DIF_FLEET_PUBLIC_KEY"):
+            from .fleet import InstanceAgent, load_public_key
+
+            agent = InstanceAgent(
+                headless,
+                control_url=fleet_url,
+                token=fleet_token,
+                public_key=load_public_key(os.environ["DIF_FLEET_PUBLIC_KEY"]),
+            )
+            background.append(agent.run)
+            print(f"instance agent reporting to {fleet_url}", file=sys.stderr)
+        app = create_app(
+            headless, admin_token=admin_token, worker_lanes=args.lanes, background=background
+        )
         config = uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
         await uvicorn.Server(config).serve()
+    await db.close()
     return 0
 
 

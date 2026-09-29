@@ -109,6 +109,7 @@ class Instance:
         self.provider: ModelProvider | None = None
         self.workspace: Workspace | None = None  # the coding pack's, for undo
         self._stack = AsyncExitStack()
+        self.owns_db = False  # True when this instance opened the database (closes it too)
         self.db: Database  # set in _open_database
         self.store: SqlSessionStore
         self.pii: Tokenizer
@@ -139,6 +140,9 @@ class Instance:
 
     async def close(self) -> None:
         await self._stack.aclose()
+        if self.owns_db:
+            self.owns_db = False
+            await self.db.close()
 
     async def __aenter__(self) -> Instance:
         return self
@@ -153,7 +157,7 @@ class Instance:
         else:
             url = opts.database_url or f"sqlite:///{opts.state_root.resolve() / 'dif.db'}"
             self.db = await connect(url)
-            self._stack.push_async_callback(self.db.close)
+            self.owns_db = True
         self.store = SqlSessionStore(self.db, redactor=self.redactor)
         policy = PiiPolicy.from_spec(self.spec.governance.pii)
         self.pii = Tokenizer(policy, TokenVault(self.db), self.scope)

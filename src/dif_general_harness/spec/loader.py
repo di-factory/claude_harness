@@ -270,6 +270,12 @@ def interpolate(value: Any, values: dict[str, Any]) -> Any:
 # --- public API --------------------------------------------------------------------
 
 
+def data_hash(data: dict[str, Any]) -> str:
+    """The config version id: a hash of the resolved spec."""
+    blob = json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(blob).hexdigest()[:16]
+
+
 @dataclass
 class ResolvedSpec:
     spec: SolutionSpec
@@ -283,8 +289,7 @@ class ResolvedSpec:
 
     @property
     def version_hash(self) -> str:
-        blob = json.dumps(self.data, sort_keys=True, separators=(",", ":")).encode()
-        return hashlib.sha256(blob).hexdigest()[:16]
+        return data_hash(self.data)
 
 
 def _parse(data: dict[str, Any], where: str) -> tuple[SolutionSpec | None, list[Issue]]:
@@ -364,3 +369,15 @@ def load_instance(path: Path | str, catalog: PackCatalog) -> ResolvedSpec:
     return ResolvedSpec(
         spec=spec, data=resolved, layers=[la.path for la in packs] + [inst.path], issues=issues
     )
+
+
+def resolved_from_data(data: dict[str, Any], source: str = "config") -> ResolvedSpec:
+    """A stored, already-resolved instance spec (a config version) parsed and validated
+    again: stored data is trusted no more than a file."""
+    from .validate import validate
+
+    spec, issues = _parse(data, source)
+    if spec is None:
+        raise SpecError(issues)
+    issues += validate(spec, data, is_instance=spec.kind == "instance")
+    return ResolvedSpec(spec=spec, data=data, layers=[], issues=issues)
