@@ -27,6 +27,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -35,7 +36,7 @@ import httpx2
 
 from ..channels import ChannelAdapter, ChannelError, Envelope, Inbound, Unauthorized, build_adapter
 from ..core import cel
-from ..core.events import MessageAdded, TurnEnded
+from ..core.events import Event, MessageAdded, TurnEnded
 from ..core.messages import Message, Role, ToolUseBlock
 from ..governance import is_opt_out, purge
 from ..hitl import InboxApprover, InboxItem
@@ -55,6 +56,26 @@ log = logging.getLogger(__name__)
 _EVENT_REF = re.compile(r"\{\{\s*event((?:\.[A-Za-z0-9_]+)*)\s*\}\}")
 FALLBACK = "Sorry, I can't answer right now. A person from our team will follow up."
 DAY = 86400.0
+
+
+async def answer(stream: AsyncIterator[Event]) -> tuple[list[str], str]:
+    """The assistant texts of a run and how it ended. When the run goes on after a turn
+    ended (an answer check asked for a rewrite), only the later texts are the answer."""
+    texts: list[str] = []
+    reason, ended = "error", False
+    async for event in stream:
+        if isinstance(event, TurnEnded):
+            reason, ended = event.reason, True
+        elif (
+            isinstance(event, MessageAdded)
+            and event.message.role is Role.ASSISTANT
+            and event.message.text()
+        ):
+            if ended:
+                texts.clear()
+                ended = False
+            texts.append(event.message.text())
+    return texts, reason
 
 
 def render_event(template: Any, event: dict[str, Any]) -> str:
@@ -200,6 +221,7 @@ class Headless:
             "relative_scan": self._job_relative_scan,
             "agent_task": self._job_agent_task,
             "memory_extract": self._job_memory_extract,
+            "knowledge_sync": self._job_knowledge_sync,
         }
 
     def worker(self, **kw: Any) -> Worker:
@@ -213,6 +235,8 @@ class Headless:
                 await self._schedule_next(name, trig, now)
         if any(t.type == "relative" for t in self.triggers.values()):
             await self.scan_relative()
+        for corpus in self.instance.spec.knowledge.corpora:
+            await self._sync_next(corpus, now)
         tomorrow = datetime.fromtimestamp(now, UTC).date().isoformat()
         await self.queue.enqueue(
             self.scope, "retention", {}, delay_s=60, dedupe_key=f"retention:{tomorrow}"
@@ -272,14 +296,7 @@ class Headless:
             session = await agent.new_session(contact_key=env.contact_key)
             await inst.store.bind(self.scope, session.id, env.channel, env.contact_key)
 
-        texts: list[str] = []
-        reason = "error"
-        async for event in agent.send(session, env.text, names=env.names):
-            if isinstance(event, MessageAdded) and event.message.role is Role.ASSISTANT:
-                if event.message.text():
-                    texts.append(event.message.text())
-            elif isinstance(event, TurnEnded):
-                reason = event.reason
+        texts, reason = await answer(agent.send(session, env.text, names=env.names))
         escalated = await inst.store.state(self.scope, session.id) == "escalated"
         if inst.spec.models and "memory_extraction" in inst.spec.models.roles:
             await self.queue.enqueue(
@@ -361,6 +378,31 @@ class Headless:
             run_at=at, dedupe_key=f"trigger:{name}:{int(at)}",
         )  # fmt: skip
 
+    async def _sync_next(self, corpus: str, after: float) -> None:
+        cron = str(
+            (self.instance.spec.knowledge.corpora[corpus].get("sync") or {}).get("schedule") or ""
+        )
+        if not cron:
+            return
+        tz = self.instance.spec.tenant.timezone if self.instance.spec.tenant else "UTC"
+        try:
+            at = next_fire(cron, after, tz)
+        except CronError as exc:
+            log.warning("knowledge corpus %s: bad sync schedule: %s", corpus, exc)
+            return
+        await self.queue.enqueue(
+            self.scope, "knowledge_sync", {"corpus": corpus},
+            run_at=at, dedupe_key=f"knowledge_sync:{corpus}:{int(at)}",
+        )  # fmt: skip
+
+    async def _job_knowledge_sync(self, job: Job) -> None:
+        corpus = job.payload["corpus"]
+        if corpus not in self.instance.spec.knowledge.corpora:
+            return  # the corpus was removed from the spec since this job was queued
+        if not job.payload.get("once"):
+            await self._sync_next(corpus, max(job.run_at, self.queue.clock()))
+        await self.instance.sync_knowledge(corpus)
+
     async def fire(
         self, name: str, event: dict[str, Any], delivery_id: str | None = None
     ) -> str | None:
@@ -434,17 +476,7 @@ class Headless:
         agent = self.agent(agent_name)
         text = render_event(trig.input or f"Trigger {name} fired.", event)
         session = await agent.new_session()
-        reason = "error"
-        texts: list[str] = []
-        async for ev in agent.send(session, text):
-            if isinstance(ev, TurnEnded):
-                reason = ev.reason
-            elif (
-                isinstance(ev, MessageAdded)
-                and ev.message.role is Role.ASSISTANT
-                and ev.message.text()
-            ):
-                texts.append(ev.message.text())
+        texts, reason = await answer(agent.send(session, text))
         await self.instance.audit.record(
             self.scope, f"trigger:{name}", "trigger_run", trig.agent or "",
             {"session": session.id, "reason": reason},
@@ -742,16 +774,9 @@ class Headless:
             note = f"approval {item.id} for {tool_name} was denied" + (
                 f": {item.note}" if item.note else ""
             )
-        texts: list[str] = []
-        async for event in agent.send(
-            session, f"[System note, not from the contact] {note}. Tell the contact."
-        ):
-            if (
-                isinstance(event, MessageAdded)
-                and event.message.role is Role.ASSISTANT
-                and event.message.text()
-            ):
-                texts.append(event.message.text())
+        texts, _ = await answer(
+            agent.send(session, f"[System note, not from the contact] {note}. Tell the contact.")
+        )
         binding = await inst.store.binding(self.scope, session.id)
         if texts and binding is not None:
             await self.send(

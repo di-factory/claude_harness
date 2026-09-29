@@ -15,10 +15,11 @@ de-tokenized with ``reveal_output``, tool calls land in the audit log and spend 
 per tenant, agent and model. The instance's database is SQLite under the state folder
 unless ``database_url`` (Postgres in production) or ``database`` is given.
 
-What the spec asks for but M1 cannot provide yet (knowledge, ledger, calendar connector,
-Python extensions, verification checks) is reported in ``issues`` rather than silently
-dropped. Tools with a ``verify`` check are forced to ``ask`` until the verification engine
-exists, so a missing check never lets a side effect through unreviewed.
+What the spec asks for but this build cannot provide (the calendar connector, Python
+extensions, knowledge sources other than files, checks that cannot run here) is reported in
+``issues`` rather than silently dropped; a tool whose check cannot run is asked about, so a
+missing check never lets a side effect through unreviewed. File knowledge sources are synced
+when the instance opens.
 """
 
 from __future__ import annotations
@@ -35,12 +36,21 @@ import httpx2
 
 from ..core.events import Event, ToolCallFinished, ToolCallStarted, TurnEnded
 from ..core.loop import LoopConfig, run
-from ..core.messages import ToolResultBlock, ToolUseBlock
+from ..core.messages import Message, Role, ToolResultBlock, ToolUseBlock
 from ..core.scope import Scope
 from ..core.session import Session
 from ..governance import AuditLog, ConsentStore, GovernedTools, PiiPolicy, Tokenizer, TokenVault
 from ..governance.contacts import ContactStore
 from ..hitl.inbox import Inbox
+from ..knowledge.store import KnowledgeBase, SyncReport
+from ..knowledge.tools import (
+    check_citations,
+    citation_checks,
+    render_citations,
+    repair_note,
+    search_tool,
+    ungrounded_text,
+)
 from ..memory.agent import memory_block, memory_tools, record_episode
 from ..memory.store import Memory, MemoryStore
 from ..policy import Approver, DailySpend, Limits, PermissionPolicy, PolicyGate, Redactor, RunMeter
@@ -127,6 +137,7 @@ class Instance:
         self.inbox: Inbox
         self.contacts: ContactStore
         self.memory: MemoryStore
+        self.knowledge: KnowledgeBase
         self.verifier = Verifier(self, on_failed_twice=self._verification_failed_twice)
         self.notify: Notify | None = None  # set by the service: tells a person about inbox items
         self.emit: Emit | None = None  # set by the service: internal events (ledger, workflows)
@@ -181,6 +192,7 @@ class Instance:
         self.inbox = Inbox(self.db, self.scope)
         self.contacts = ContactStore(self.db)
         self.memory = MemoryStore(self.db, self.scope)
+        self.knowledge = KnowledgeBase(self.db, self.scope, dict(self.spec.knowledge.corpora))
         if self.spec.ledger is not None:
             self.ledger = LedgerStore(self.db, self.scope, self.spec.ledger, list(self.spec.agents))
             self.ledger.emit = self._emit
@@ -213,6 +225,8 @@ class Instance:
                 spec.models.roles, settings, self.options.provider_factories
             )
 
+        for corpus in self.spec.knowledge.corpora:
+            await self.sync_knowledge(corpus)
         tools: list[Tool] = []
         tools += self._packs(data)
         tools += self._http(data, missing)
@@ -239,6 +253,50 @@ class Instance:
             return f"handed off to a person (escalation {item}); a person will reply here"
 
         return handoff
+
+    async def sync_knowledge(self, corpus: str) -> SyncReport:
+        report = await self.knowledge.sync(corpus)
+        where = f"knowledge.corpora.{corpus}.sources"
+        self.issues[:] = [i for i in self.issues if i.path != where]
+        if report.unavailable:
+            self._warn(
+                "knowledge_source_unavailable",
+                where,
+                f"not synced here: {', '.join(report.unavailable)}; push their documents with"
+                f" PUT /admin/knowledge/{corpus}/documents",
+            )
+        if report.skipped:
+            self._warn(
+                "knowledge_format_unavailable",
+                where,
+                f"{len(report.skipped)} file(s) in formats not read yet (PDF, DOCX, images need"
+                f" the documents pack): {', '.join(report.skipped[:5])}",
+            )
+        if report.added or report.updated or report.removed:
+            await self.audit.record(
+                self.scope, "system", "knowledge_sync", f"knowledge/{corpus}",
+                {"added": report.added, "updated": report.updated, "removed": report.removed},
+            )  # fmt: skip
+        return report
+
+    async def knowledge_not_found(self, session: Session, corpus: str, query: str) -> None:
+        """Nothing in the corpus answers: audit it and apply the escalation rules."""
+        await self.audit.record(
+            self.scope, f"agent:{session.agent_id}", "knowledge_not_found",
+            f"knowledge/{corpus}", {"session": session.id, "query": query[:300]},
+        )  # fmt: skip
+        escalation = self.spec.policies.escalation or {}
+        contact = (
+            await self.contacts.get(self.scope, session.contact_key) if session.contact_key else {}
+        )
+        context = {
+            "knowledge": {"not_found": True, "corpus": corpus, "query": query},
+            "contact": contact,
+            "var": self.spec.values,
+        }
+        rule = first_match(list(escalation.get("rules") or []), context)
+        if rule is not None and rule.get("to") == "human":
+            await self.escalate(session, f"{corpus} has no answer: {query[:120]}", by="knowledge")
 
     async def flag_contradiction(self, previous: Memory, value: str, new_id: str) -> None:
         """A fact changed: keep the new value, and let a person restore the old one."""
@@ -415,6 +473,7 @@ class Instance:
                 self._warn("verification_unavailable", f"tools.{name}", f"{why}; asking instead")
         allow.append("handoff.agent")  # handing over to a listed teammate is always allowed
         allow.append("memory.*")  # remembering is internal, scoped and reviewed (contradictions)
+        allow.append("knowledge.*")  # reading the solution's own documents
         for name, o in overrides.items():
             if o.permission:
                 {"allow": allow, "ask": ask, "deny": deny}[o.permission].append(name)
@@ -460,6 +519,11 @@ class AgentRuntime:
             selected.register(handoff_tool(instance, self, teammates))
         for t in memory_tools(instance, self):
             selected.register(t)
+        for corpus in instance.spec.knowledge.corpora:
+            name_ = f"knowledge.search_{corpus}"
+            if corpus in spec.knowledge or _matches(name_, spec.tools):
+                selected.register(search_tool(instance, corpus))
+        self.citation_checks = citation_checks(instance, name)
         self.tools = GovernedTools(selected, instance.pii)
         self.missing_tools = [
             p for p in spec.tools if not any(_matches(n, [p]) for n in self.tools.names())
@@ -537,6 +601,57 @@ class AgentRuntime:
         started: dict[str, ToolCallStarted],
         full: bool,
     ) -> AsyncIterator[Event]:
+        """A turn, then the answer checks: a ``citations`` failure gets one rewrite, and a
+        second failure replaces the answer with "not found"."""
+        turn_start = len(session.messages)
+        reason = ""
+        async for event in self._turn(session, safe_text, meter, started, full):
+            if isinstance(event, TurnEnded):
+                reason = event.reason
+            yield event
+        if reason != "end_turn" or not self.citation_checks:
+            return
+        for attempt in (1, 2):
+            failure = self._citation_failure(session, turn_start)
+            if failure is None:
+                return
+            inst = self.instance
+            await inst.audit.record(
+                inst.scope, "verifier", "citations_failed", f"agent:{self.name}",
+                {"session": session.id, "reason": failure, "attempt": attempt},
+            )  # fmt: skip
+            if attempt == 2:
+                added = session.add_message(Message.assistant(ungrounded_text(inst)))
+                await inst.store.append(added)
+                yield added
+                return
+            async for event in self._turn(
+                session, repair_note(failure).text(), meter, started, full
+            ):
+                if isinstance(event, TurnEnded) and event.reason != "end_turn":
+                    reason = event.reason
+                yield event
+            if reason != "end_turn":
+                return
+
+    def _citation_failure(self, session: Session, turn_start: int) -> str | None:
+        answer = next(
+            (m.text() for m in reversed(session.messages) if m.role is Role.ASSISTANT), ""
+        )
+        for check in self.citation_checks:
+            passed, why = check_citations(check, answer, session, turn_start)
+            if not passed:
+                return why
+        return None
+
+    async def _turn(
+        self,
+        session: Session,
+        safe_text: str,
+        meter: RunMeter,
+        started: dict[str, ToolCallStarted],
+        full: bool,
+    ) -> AsyncIterator[Event]:
         inst = self.instance
         scope = inst.scope
         assert inst.provider is not None
@@ -573,6 +688,7 @@ class AgentRuntime:
         """What the contact may see: tokens of ``reveal_in_output`` classes resolved, others
         masked."""
         pii = self.instance.pii
+        text = await render_citations(self.instance.knowledge, text)
         return await pii.detokenize(text, pii.policy.reveal_in_output) if pii.active else text
 
 

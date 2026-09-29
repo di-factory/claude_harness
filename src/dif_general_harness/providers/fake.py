@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
 
 from ..core.messages import Message, Role, TextBlock, Usage
 from .base import ModelRequest, ProviderEvent, ProviderMessage, ProviderTextDelta
+
+Step = Message | ProviderMessage | Exception | Callable[[ModelRequest], Message]
 
 
 class ScriptError(RuntimeError):
@@ -16,15 +18,14 @@ class FakeProvider:
     """Each call to ``stream`` plays the next script step.
 
     A step is an assistant ``Message`` (stop reason inferred), a full ``ProviderMessage``
-    (to script stop reasons, usage or the serving model), or an ``Exception`` to raise.
+    (to script stop reasons, usage or the serving model), an ``Exception`` to raise, or a
+    function of the request returning a ``Message`` (to answer from what a tool returned).
     Every request is recorded in ``requests`` so tests can assert on what the model saw.
     """
 
     name = "fake"
 
-    def __init__(
-        self, script: Sequence[Message | ProviderMessage | Exception], *, chunk: int = 16
-    ) -> None:
+    def __init__(self, script: Sequence[Step], *, chunk: int = 16) -> None:
         self._script = list(script)
         self._chunk = chunk
         self.requests: list[ModelRequest] = []
@@ -36,6 +37,8 @@ class FakeProvider:
         step = self._script.pop(0)
         if isinstance(step, Exception):
             raise step
+        if not isinstance(step, Message | ProviderMessage):
+            step = step(request)
         if isinstance(step, Message):
             prompt_size = sum(len(m.model_dump_json()) for m in request.messages)
             step = ProviderMessage(

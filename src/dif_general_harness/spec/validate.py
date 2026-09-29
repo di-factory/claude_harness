@@ -14,6 +14,7 @@ from typing import Any
 
 from ..core import cel
 from ..policy.permissions import Rule
+from ..triggers.cron import Cron, CronError
 from .errors import Issue
 from .schema import SolutionSpec, Step
 
@@ -202,6 +203,18 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
     for cname, ch in channels.items():
         if ch.entry_agent and ch.entry_agent not in agents:
             err("unknown_agent", f"channels.{cname}", f"entry agent {ch.entry_agent!r} not defined")
+    for cname, corpus_cfg in corpora.items():
+        where = f"knowledge.corpora.{cname}"
+        cron = (corpus_cfg.get("sync") or {}).get("schedule")
+        if isinstance(cron, str) and "{{" not in cron:
+            try:
+                Cron.parse(cron)
+            except CronError as exc:
+                err("invalid_sync_schedule", f"{where}.sync.schedule", str(exc))
+        not_found = (corpus_cfg.get("retrieval") or {}).get("not_found")
+        if not_found is not None and not_found not in ("say_so", "handoff"):
+            err("invalid_not_found", f"{where}.retrieval", "not_found must be say_so or handoff")
+
     for tname, trig in triggers.items():
         where = f"triggers.{tname}"
         if trig.agent is not None:

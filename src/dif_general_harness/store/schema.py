@@ -106,6 +106,20 @@ MIGRATIONS: list[list[str]] = [
         """CREATE INDEX IF NOT EXISTS memories_by_scope
             ON memories (tenant_id, instance_id, scope_kind, scope_key, layer, status)""",
     ],
+    [  # M3: knowledge corpora (documents and their chunks)
+        """CREATE TABLE IF NOT EXISTS knowledge_docs (
+            id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, instance_id TEXT NOT NULL,
+            corpus TEXT NOT NULL, uri TEXT NOT NULL, origin TEXT NOT NULL, title TEXT NOT NULL,
+            hash TEXT NOT NULL, version INTEGER NOT NULL, updated_at DOUBLE PRECISION NOT NULL,
+            UNIQUE (tenant_id, instance_id, corpus, uri))""",
+        """CREATE TABLE IF NOT EXISTS knowledge_chunks (
+            id TEXT PRIMARY KEY, doc_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+            instance_id TEXT NOT NULL, corpus TEXT NOT NULL, ord INTEGER NOT NULL,
+            section TEXT NOT NULL, text TEXT NOT NULL)""",
+        """CREATE INDEX IF NOT EXISTS knowledge_chunks_by_corpus
+            ON knowledge_chunks (tenant_id, instance_id, corpus)""",
+        """CREATE INDEX IF NOT EXISTS knowledge_chunks_by_doc ON knowledge_chunks (doc_id)""",
+    ],
 ]
 
 

@@ -252,6 +252,20 @@ evals decide whether it passes.
 
 Agents reach a corpus through the generated `knowledge.search_<corpus>` tool.
 
+- An agent gets the search tool of each corpus in its `knowledge` list (or matching its
+  `tools` globs).
+- `min_score` (0 to 1) is the share of the query's information a passage must cover;
+  nothing above it means "not found", and `not_found` says what the agent does then
+  (`say_so` or `handoff`). Escalation rules see `knowledge.not_found`, `knowledge.corpus`
+  and `knowledge.query`.
+- With `cite: true`, passages carry `kb:<id>` markers; a `citations` check
+  (`min_citations`, `claims_must_cite`) runs on answers that used them. A failing answer
+  gets one rewrite, then "not found". Contacts see `[1]` and a Sources list.
+- `file` sources (a file or a folder) are synced when the instance opens and on
+  `sync.schedule`; `on_delete: propagate` (the default) removes files that disappeared.
+  Markdown, text, HTML and CSV are read; other formats are reported. Other sources push
+  documents with `PUT /admin/knowledge/{corpus}/documents`.
+
 ### 5.7 `memory`
 
 ```json

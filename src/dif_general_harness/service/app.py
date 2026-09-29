@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import hmac
 import json
 from collections.abc import AsyncIterator, Callable, Coroutine, Sequence
@@ -326,6 +327,63 @@ def create_app(
             raise HTTPException(400, "items need an id and a start")
         count = await headless.upsert_items(source, given, replace=bool(body.get("replace")))
         return {"items": count}
+
+    # --- knowledge ----------------------------------------------------------------------
+
+    def corpus_of(name: str) -> Any:
+        kb = current().knowledge
+        if name not in kb.corpora:
+            raise HTTPException(404, f"unknown corpus {name!r}")
+        return kb
+
+    @app.get("/admin/knowledge/{corpus}/documents", dependencies=[Depends(admin)])
+    async def knowledge_documents(corpus: str) -> list[dict[str, Any]]:
+        return list(await corpus_of(corpus).documents(corpus))
+
+    @app.put("/admin/knowledge/{corpus}/documents", dependencies=[Depends(admin)])
+    async def knowledge_put(corpus: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Add or replace a document (``{"uri", "text", "title"?, "format"?}``): how sources
+        synced elsewhere (Drive, S3, a CMS) reach the index. Formats: markdown, text, html."""
+        kb = corpus_of(corpus)
+        uri, text, fmt = body.get("uri"), body.get("text"), body.get("format", "markdown")
+        if not isinstance(uri, str) or not uri or not isinstance(text, str):
+            raise HTTPException(400, "a document needs a uri and text")
+        if fmt not in ("markdown", "text", "html"):
+            raise HTTPException(400, "format must be markdown, text or html")
+        title = body.get("title") if isinstance(body.get("title"), str) else None
+        doc_id, outcome = await kb.put(corpus, uri, text, fmt=fmt, title=title)
+        await current().audit.record(
+            scope, "admin", f"knowledge_{outcome}", f"knowledge/{corpus}", {"uri": uri}
+        )
+        return {"id": doc_id, "result": outcome}
+
+    @app.delete("/admin/knowledge/{corpus}/documents", dependencies=[Depends(admin)])
+    async def knowledge_delete(corpus: str, uri: str) -> dict[str, bool]:
+        removed = await corpus_of(corpus).delete(corpus, uri)
+        if removed:
+            await current().audit.record(
+                scope, "admin", "knowledge_deleted", f"knowledge/{corpus}", {"uri": uri}
+            )
+        return {"removed": removed}
+
+    @app.post("/admin/knowledge/{corpus}/sync", dependencies=[Depends(admin)])
+    async def knowledge_sync(corpus: str) -> dict[str, Any]:
+        corpus_of(corpus)
+        report = await current().sync_knowledge(corpus)
+        return dataclasses.asdict(report)
+
+    @app.get("/admin/knowledge/{corpus}/search", dependencies=[Depends(admin)])
+    async def knowledge_search(corpus: str, q: str) -> list[dict[str, Any]]:
+        """What an agent would get for ``q`` (for tuning ``min_score``); scores below the
+        threshold are included, marked ``below_min_score``."""
+        kb = corpus_of(corpus)
+        floor = float(kb.retrieval(corpus).get("min_score") or 0.0)
+        hits = await kb.search(corpus, q, min_score=0.0)
+        return [
+            {"id": h.id, "document": h.title, "section": h.section, "score": h.score,
+             "below_min_score": h.score < floor, "text": h.text}
+            for h in hits
+        ]  # fmt: skip
 
     @app.post("/admin/agents/{name}/tasks", dependencies=[Depends(admin)])
     async def agent_task(name: str, body: dict[str, Any]) -> dict[str, Any]:
