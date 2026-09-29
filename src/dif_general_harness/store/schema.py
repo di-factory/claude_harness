@@ -149,6 +149,25 @@ MIGRATIONS: list[list[str]] = [
             usd DOUBLE PRECISION NOT NULL,
             PRIMARY KEY (tenant_id, instance_id, day, agent, role, vendor, model))""",
     ],
+    [  # M4: the control plane (Di-Factory side): instances, signed offers, rollouts
+        """CREATE TABLE IF NOT EXISTS fleet_instances (
+            tenant_id TEXT NOT NULL, instance_id TEXT NOT NULL, token_hash TEXT NOT NULL,
+            registered_at DOUBLE PRECISION NOT NULL, last_seen DOUBLE PRECISION,
+            report TEXT, PRIMARY KEY (tenant_id, instance_id))""",
+        """CREATE TABLE IF NOT EXISTS fleet_offers (
+            id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, instance_id TEXT NOT NULL,
+            kind TEXT NOT NULL, body TEXT NOT NULL, hash TEXT NOT NULL, approved_by TEXT NOT NULL,
+            signature TEXT NOT NULL, gate TEXT NOT NULL, status TEXT NOT NULL, note TEXT,
+            rollout_id TEXT, previous_hash TEXT, result TEXT,
+            created_at DOUBLE PRECISION NOT NULL, decided_at DOUBLE PRECISION)""",
+        """CREATE INDEX IF NOT EXISTS fleet_offers_by_instance
+            ON fleet_offers (tenant_id, instance_id, status, created_at)""",
+        """CREATE TABLE IF NOT EXISTS fleet_rollouts (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL, approved_by TEXT NOT NULL,
+            status TEXT NOT NULL, gate TEXT NOT NULL, steps TEXT NOT NULL,
+            position INTEGER NOT NULL, error TEXT, created_at DOUBLE PRECISION NOT NULL,
+            finished_at DOUBLE PRECISION)""",
+    ],
 ]
 
 

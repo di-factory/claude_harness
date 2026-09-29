@@ -253,13 +253,14 @@ async def _serve(
         fleet_url = os.environ.get("DIF_FLEET_URL")
         fleet_token = options.secrets.get("fleet_token")
         if fleet_url and fleet_token and os.environ.get("DIF_FLEET_PUBLIC_KEY"):
-            from .fleet import InstanceAgent, load_public_key
+            from .fleet import InstanceAgent, evaluator, load_public_key
 
             agent = InstanceAgent(
                 headless,
                 control_url=fleet_url,
                 token=fleet_token,
                 public_key=load_public_key(os.environ["DIF_FLEET_PUBLIC_KEY"]),
+                evaluate=evaluator(options),  # eval-gated offers run the pack's evals here first
             )
             background.append(agent.run)
             print(f"instance agent reporting to {fleet_url}", file=sys.stderr)
@@ -449,6 +450,39 @@ async def _eval(
     return 0 if report.ok else 1
 
 
+async def _control_serve(args: argparse.Namespace) -> int:
+    """The control plane: its admin token comes from DIF_CONTROL_ADMIN_TOKEN, never argv."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from .control import ControlPlane, create_control_app
+
+    admin_token = os.environ.get("DIF_CONTROL_ADMIN_TOKEN", "")
+    if len(admin_token) < 16:
+        print("set DIF_CONTROL_ADMIN_TOKEN (at least 16 characters)", file=sys.stderr)
+        return 2
+    key = serialization.load_pem_private_key(args.key.read_bytes(), password=None)
+    if not isinstance(key, Ed25519PrivateKey):
+        print(
+            "the control plane signs with an Ed25519 key (dif-general-harness keys new)",
+            file=sys.stderr,
+        )
+        return 2
+    if args.database_url.startswith("sqlite:///"):
+        Path(args.database_url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
+    db = await connect(args.database_url)
+    plane = ControlPlane(db, key)
+    print(f"control plane public key (DIF_FLEET_PUBLIC_KEY): {plane.public_key()}", file=sys.stderr)
+    import uvicorn
+
+    app = create_control_app(plane, admin_token=admin_token)
+    try:
+        await uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port)).serve()
+    finally:
+        await db.close()
+    return 0
+
+
 async def _costs(args: argparse.Namespace, resolved: ResolvedSpec) -> int:
     url = args.database_url or f"sqlite:///{args.state.resolve() / 'dif.db'}"
     if url.startswith("sqlite") and not (args.state / "dif.db").exists():
@@ -511,6 +545,16 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
     _add_run(sub, "console")
     _add_run(sub, "eval")
     _add_run(sub, "serve")
+    control = sub.add_parser("control", help="the Di-Factory control plane (fleet operations)")
+    control_sub = control.add_subparsers(dest="command", required=True)
+    control_serve = control_sub.add_parser("serve", help="run the control plane API")
+    control_serve.add_argument("--key", type=Path, required=True, help="Ed25519 signing key (PEM)")
+    control_serve.add_argument(
+        "--database-url",
+        default=os.environ.get("DIF_CONTROL_DATABASE_URL", "sqlite:///.dif/control.db"),
+    )
+    control_serve.add_argument("--host", default="0.0.0.0")
+    control_serve.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8090")))
     costs_cmd = sub.add_parser("costs", help="model spend and quality metrics of an instance")
     costs_cmd.add_argument("path", type=Path, help="instance JSON")
     costs_cmd.add_argument("--packs", type=Path, action="append", help="folder containing packs")
@@ -562,6 +606,8 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
         print(f"private key: {path} (keep it secret; only {args.name} uses it)")
         print(f'add to approvers.json: "{args.name}": "{public}"')
         return 0
+    if args.group == "control":
+        return asyncio.run(_control_serve(args))
     if args.group in {"approve", "deploy"}:
         return _approve_or_deploy(args)
 

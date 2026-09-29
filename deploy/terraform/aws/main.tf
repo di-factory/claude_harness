@@ -39,7 +39,10 @@ locals {
   https   = var.certificate_arn != ""
   private = coalesce(var.private_tasks, local.size.private)
   optional_env = concat(
-    var.fleet_url != "" ? [{ name = "DIF_FLEET_URL", value = var.fleet_url }] : [],
+    var.fleet_url != "" ? [
+      { name = "DIF_FLEET_URL", value = var.fleet_url },
+      { name = "DIF_FLEET_PUBLIC_KEY", value = var.fleet_public_key },
+    ] : [],
     var.otel_endpoint != "" ? [{ name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = var.otel_endpoint }] : [],
   )
 }

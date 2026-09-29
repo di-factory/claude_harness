@@ -67,7 +67,7 @@ run "large_is_redundant_and_private" {
     error_message = "large: 30-day backups and Performance Insights"
   }
   assert {
-    condition     = length(local.optional_env) == 1 && local.optional_env[0].name == "DIF_FLEET_URL"
+    condition     = length(local.optional_env) == 2 && local.optional_env[0].name == "DIF_FLEET_URL"
     error_message = "the instance agent is configured when fleet_url is set"
   }
   assert {

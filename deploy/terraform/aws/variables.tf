@@ -68,6 +68,12 @@ variable "fleet_url" {
   default     = ""
 }
 
+variable "fleet_public_key" {
+  description = "The control plane's Ed25519 public key (base64); offers it did not sign are refused."
+  type        = string
+  default     = ""
+}
+
 variable "otel_endpoint" {
   description = "OTLP/HTTP endpoint for traces (empty: no telemetry leaves the instance)."
   type        = string
