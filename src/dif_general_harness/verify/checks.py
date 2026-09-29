@@ -193,7 +193,7 @@ class Verifier:
         ws = self.instance.workspace
         if ws is None:
             return Verdict(False, "command checks need a workspace", name)
-        runner = self.instance.options.executor or SubprocessExecutor()
+        runner = self.instance.executor or self.instance.options.executor or SubprocessExecutor()
         result = await runner.run(
             str(extra.get("run", "")), ws.root, float(extra.get("timeout_s", 600))
         )

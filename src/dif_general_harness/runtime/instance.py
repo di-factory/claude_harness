@@ -75,7 +75,12 @@ from ..tools import python as python_tools
 from ..tools.http import ConnectorError, http_tools
 from ..tools.mcp import McpToolSource
 from ..tools.packs import NoteStore, Workspace, coding_tools, general_tools
-from ..tools.packs.coding import Executor
+from ..tools.packs.coding import (
+    ContainerExecutor,
+    Executor,
+    ExecutorError,
+    executor_from_spec,
+)
 from ..tools.packs.google_calendar import PACK as GOOGLE_CALENDAR
 from ..tools.packs.google_calendar import CalendarError, Source, calendar_tools
 from ..tools.registry import Effect, Tool, ToolRegistry
@@ -137,6 +142,7 @@ class Instance:
         self.policy = PermissionPolicy()
         self.provider: ModelProvider | None = None
         self.workspace: Workspace | None = None  # the coding pack's, for undo
+        self.executor: Executor | None = None  # where shell commands and command checks run
         self._stack = AsyncExitStack()
         self.owns_db = False  # True when this instance opened the database (closes it too)
         self.db: Database  # set in _open_database
@@ -495,7 +501,24 @@ class Instance:
                     )
                     continue
                 self.workspace = Workspace(root)
-                out += coding_tools(self.workspace, self.options.executor)
+                ws_spec = self.spec.workspaces.get(name or "") or {}
+                try:
+                    executor, timeout = executor_from_spec(ws_spec.get("executor"))
+                except ExecutorError as exc:
+                    self._warn("executor_error", f"workspaces.{name}.executor", str(exc))
+                    continue  # no shell rather than an unconfined one
+                unenforced = isinstance(executor, ContainerExecutor) and (
+                    executor.allow_hosts and not executor.egress_proxy
+                )
+                if unenforced:
+                    self._warn(
+                        "egress_proxy_missing",
+                        f"workspaces.{name}.executor",
+                        "allow_hosts needs an egress_proxy that enforces it; the container"
+                        " gets no network",
+                    )
+                self.executor = self.options.executor or executor
+                out += coding_tools(self.workspace, self.executor, bash_timeout_s=timeout or 120.0)
             else:
                 self._warn(
                     "unavailable_pack", "tools.packs", f"tool pack {pack!r} is not built yet"

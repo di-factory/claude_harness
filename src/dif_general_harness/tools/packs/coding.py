@@ -6,10 +6,13 @@ Guardrails:
   listed, even inside the workspace.
 - Every write and edit is checkpointed, so ``Workspace.undo`` can roll it back.
   Shell commands are not checkpointed; run them in a disposable workspace.
-- ``coding.bash`` runs through an ``Executor``. M1 ships ``SubprocessExecutor`` (a clean
-  environment, the workspace as cwd, a timeout that kills the process group); the container
-  executor (network deny-by-default, resource limits) is M4. Its default effect is
-  ``external``; a spec can lower it with ``tools.overrides``.
+- ``coding.bash`` runs through an ``Executor``: ``SubprocessExecutor`` (a clean environment,
+  the workspace as cwd, a timeout that kills the process group) for local work, and
+  ``ContainerExecutor`` (``workspaces.<name>.executor.type: container``) in production: a
+  throwaway container per command with only the workspace mounted, no network unless an
+  egress proxy enforces ``allow_hosts``, no capabilities, a read-only root and CPU, memory
+  and process limits. Its default effect is ``external``; a spec can lower it with
+  ``tools.overrides``.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ import fnmatch
 import os
 import re
 import signal
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -169,6 +173,123 @@ class SubprocessExecutor:
             await proc.wait()
             return CommandResult(None, "", timed_out=True)
         return CommandResult(proc.returncode, out.decode("utf-8", errors="replace"))
+
+
+class ExecutorError(ValueError):
+    pass
+
+
+Spawn = Callable[[list[str], float, list[str]], Awaitable[CommandResult]]
+
+
+def _memory(value: str) -> str:
+    if not re.fullmatch(r"\d+(\.\d+)?[kmgKMG]?", value):
+        raise ExecutorError(f"memory must look like 512m or 4g, not {value!r}")
+    return value.lower()
+
+
+def _owner(path: Path) -> str:
+    info = path.stat()
+    return f"{info.st_uid}:{info.st_gid}"
+
+
+async def _spawn(argv: list[str], timeout_s: float, on_timeout: list[str]) -> CommandResult:
+    proc = await asyncio.create_subprocess_exec(
+        *argv,
+        stdin=asyncio.subprocess.DEVNULL,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+    except TimeoutError:
+        killer = await asyncio.create_subprocess_exec(
+            *on_timeout, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+        )
+        await killer.wait()
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        await proc.wait()
+        return CommandResult(None, "", timed_out=True)
+    return CommandResult(proc.returncode, out.decode("utf-8", errors="replace"))
+
+
+@dataclass
+class ContainerExecutor:
+    """One throwaway container per command (docker or podman).
+
+    The workspace is the only mount (``/workspace``, read-write); the root filesystem is
+    read-only with a small ``/tmp``; all capabilities are dropped and privileges cannot be
+    raised; CPU, memory and process count are capped; the container is killed on timeout.
+    Network is off (``--network none``) unless ``egress_proxy`` is set: then the container
+    joins ``proxy_network`` and all traffic goes through the proxy, which must enforce
+    ``allow_hosts``. The harness never passes its own environment or secrets in.
+    """
+
+    image: str
+    runtime: str = "docker"
+    cpu: float = 1.0
+    memory: str = "1g"
+    pids: int = 256
+    user: str | None = None  # default: the workspace owner, so files stay theirs
+    allow_hosts: list[str] = field(default_factory=list)
+    egress_proxy: str | None = None
+    proxy_network: str = "dif-egress"
+    spawn: Spawn | None = None  # tests: replaces running the container runtime
+
+    def argv(self, command: str, cwd: Path, name: str) -> list[str]:
+        args = [
+            self.runtime, "run", "--rm", "--name", name, "--init",
+            "--cpus", f"{self.cpu:g}", "--memory", _memory(self.memory),
+            "--pids-limit", str(self.pids), "--user", self.user or _owner(cwd),
+            "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+            "--read-only", "--tmpfs", "/tmp:rw,size=256m",
+            "--mount", f"type=bind,source={cwd},target=/workspace",
+            "--workdir", "/workspace",
+            "--env", "HOME=/workspace", "--env", "LANG=C.UTF-8",
+        ]  # fmt: skip
+        if self.egress_proxy:
+            args += ["--network", self.proxy_network]
+            for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+                args += ["--env", f"{var}={self.egress_proxy}"]
+            args += ["--env", "DIF_ALLOW_HOSTS=" + ",".join(self.allow_hosts)]
+        else:
+            args += ["--network", "none"]
+        # the image's own entrypoint never runs: the command is exactly what the tool asked
+        return [*args, "--entrypoint", "bash", self.image, "-c", command]
+
+    async def run(self, command: str, cwd: Path, timeout_s: float) -> CommandResult:
+        name = f"dif-exec-{os.urandom(6).hex()}"
+        argv = self.argv(command, cwd, name)
+        kill = [self.runtime, "kill", name]
+        return await (self.spawn or _spawn)(argv, timeout_s, kill)
+
+
+def executor_from_spec(config: dict[str, object] | None) -> tuple[Executor | None, float | None]:
+    """The executor a workspace's spec asks for, and its command timeout (seconds)."""
+    if not config or config.get("type", "subprocess") == "subprocess":
+        return None, None
+    if config.get("type") != "container":
+        raise ExecutorError(f"unknown executor type {config.get('type')!r}")
+    image = config.get("image")
+    if not isinstance(image, str) or not image or "{{" in image:
+        raise ExecutorError("a container executor needs an image")
+    network = str(config.get("network") or "deny-by-default")
+    if network not in ("deny-by-default", "none"):
+        raise ExecutorError("container network must be deny-by-default (or none)")
+    from ...spec.loader import duration_days
+
+    timeout = config.get("timeout")
+    hosts = config.get("allow_hosts") or []
+    executor = ContainerExecutor(
+        image=image,
+        runtime=str(config.get("runtime") or os.environ.get("DIF_CONTAINER_RUNTIME", "docker")),
+        cpu=float(config.get("cpu") or 1),  # type: ignore[arg-type]
+        memory=_memory(str(config.get("memory") or "1g")),
+        allow_hosts=[str(h) for h in hosts] if isinstance(hosts, list) else [],
+        egress_proxy=str(config["egress_proxy"]) if config.get("egress_proxy") else None,
+    )
+    return executor, round(duration_days(str(timeout)) * 86400, 3) if timeout else None
 
 
 def _clip(text: str) -> str:
