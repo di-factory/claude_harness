@@ -1,0 +1,157 @@
+{
+  "$schema": "https://di-factory.biz/schemas/solution-spec.v1.json",
+  "spec_version": "1",
+  "kind": "pack",
+  "solution": {
+    "id": "dev-cell",
+    "version": "1.0.0",
+    "name": "Dev Cell",
+    "lob": "agentic-transformation",
+    "description": "Coding agents that work the client's backlog: pick labelled issues, implement in a sandbox, run tests, and open pull requests for human review.",
+    "locale": "en"
+  },
+  "variables": {
+    "github_org": {
+      "type": "string", "required": true,
+      "ask": { "question": "Which GitHub organization owns the repositories?", "answered_by": "client", "group": "integrations", "order": 1 }
+    },
+    "repos": {
+      "type": "list", "required": true,
+      "ask": { "question": "Which repositories may the cell work on?", "answered_by": "client", "group": "integrations", "order": 2 }
+    },
+    "pickup_label": {
+      "type": "string", "default": "agent",
+      "ask": { "question": "Which issue label hands work to the cell?", "answered_by": "client", "group": "workflow", "order": 1 }
+    },
+    "test_command": {
+      "type": "string", "required": true,
+      "ask": { "question": "Which command runs the test suite (e.g. `make test`)?", "answered_by": "client", "group": "workflow", "order": 2 }
+    },
+    "sandbox_image": {
+      "type": "string", "default": "ghcr.io/di-factory/devcell-sandbox:py3.12-node20",
+      "ask": { "question": "Which container image has the project's toolchain?", "answered_by": "difactory", "group": "workflow", "order": 3 }
+    },
+    "team_channel": {
+      "type": "string", "required": true,
+      "ask": { "question": "Which Slack channel should receive status and approval requests?", "answered_by": "client", "group": "operations", "order": 1 }
+    },
+    "main_model": { "type": "string", "default": "<coding-model-id>", "ask": { "question": "Which model should write code?", "answered_by": "difactory", "group": "models", "order": 1 } },
+    "review_model": { "type": "string", "default": "<review-model-id>", "ask": { "question": "Which model should review diffs?", "answered_by": "difactory", "group": "models", "order": 2 } }
+  },
+  "secrets": {
+    "llm": { "description": "Model API key" },
+    "github_app": { "description": "GitHub App private key and id, scoped to the listed repos (contents, issues, pull requests)" },
+    "github_webhook": { "description": "Webhook secret for issue events" },
+    "slack": { "description": "Slack bot token" }
+  },
+  "models": {
+    "roles": {
+      "main": { "provider": "anthropic", "model": "{{var.main_model}}", "effort": "high" },
+      "verifier": { "provider": "anthropic", "model": "{{var.review_model}}", "effort": "high" },
+      "compaction": { "provider": "anthropic", "model": "{{var.review_model}}", "effort": "low" },
+      "memory_extraction": { "provider": "anthropic", "model": "{{var.review_model}}", "effort": "low" }
+    },
+    "providers": { "anthropic": { "api_key": { "$secret": "llm" }, "via": "direct" } }
+  },
+  "agents": {
+    "developer": {
+      "description": "Implements one issue in the sandbox workspace and prepares a pull request.",
+      "prompt": "prompts/developer.md",
+      "model_role": "main",
+      "tools": ["coding.*", "github.get_issue", "github.comment_issue", "github.open_pull_request"],
+      "workspace": "repo",
+      "memory": { "scope": "instance" },
+      "handoffs": ["human"],
+      "max_turns": 80
+    }
+  },
+  "workspaces": {
+    "repo": {
+      "type": "git",
+      "source": "https://github.com/{{var.github_org}}/{{input.repo}}",
+      "credentials": { "$secret": "github_app" },
+      "executor": { "type": "container", "image": "{{var.sandbox_image}}", "network": "deny-by-default", "allow_hosts": ["pypi.org", "registry.npmjs.org"], "cpu": 2, "memory": "4g", "timeout": "30m" }
+    }
+  },
+  "tools": {
+    "packs": ["coding"],
+    "mcp": {
+      "github": { "transport": "http", "url": "https://api.githubcopilot.com/mcp/", "auth": { "$secret": "github_app" } }
+    },
+    "overrides": {
+      "github.open_pull_request": { "effect": "external", "verify": "tests-pass" },
+      "github.merge_pull_request": { "permission": "deny" },
+      "coding.bash": { "effect": "write" }
+    }
+  },
+  "memory": {
+    "layers": ["episodic", "semantic", "procedural"],
+    "scope": "instance",
+    "episodic_ttl": "180d",
+    "skill_promotion": { "min_successes": 3, "approval": "required" }
+  },
+  "channels": {
+    "slack_team": { "type": "slack", "credentials": { "$secret": "slack" }, "address": "{{var.team_channel}}", "purpose": "hitl" }
+  },
+  "triggers": {
+    "issue-labeled": {
+      "type": "webhook",
+      "path": "/hooks/github",
+      "auth": { "$secret": "github_webhook" },
+      "when": "event.action == 'labeled' and event.label.name == var.pickup_label and event.repository.name in var.repos",
+      "workflow": "work-issue"
+    }
+  },
+  "workflows": {
+    "work-issue": {
+      "input": { "repo": "string", "issue": "integer" },
+      "concurrency": 2,
+      "steps": [
+        { "id": "ack", "type": "tool", "tool": "github.comment_issue", "args": { "repo": "{{input.repo}}", "issue": "{{input.issue}}", "body": "Picked up by the Dev Cell." } },
+        { "id": "implement", "type": "agent", "agent": "developer", "input": "{{input}}" },
+        { "id": "done", "type": "end", "when": "steps.implement.outcome == 'pr_opened'" },
+        { "id": "stuck", "type": "handoff", "to": "human" }
+      ],
+      "on_error": "escalate"
+    }
+  },
+  "policies": {
+    "profile": "default",
+    "permissions": {
+      "allow": ["coding.read", "coding.grep", "coding.glob", "coding.edit", "coding.write", "coding.bash", "github.get_issue", "github.comment_issue"],
+      "ask": [],
+      "deny": ["github.merge_pull_request", "coding.bash(git push --force*)"]
+    },
+    "budgets": { "per_run": { "usd": 4, "turns": 80, "wall_time": "45m" }, "per_tenant_day": { "usd": 60 } },
+    "verification": {
+      "checks": {
+        "tests-pass": { "type": "command", "workspace": "repo", "run": "{{var.test_command}}", "expect_exit": 0 },
+        "diff-in-scope": { "type": "command", "workspace": "repo", "run": "git diff --stat origin/HEAD", "expect": "no_files_outside_issue_scope" }
+      },
+      "verifier": { "model_role": "verifier", "applies_to": ["github.open_pull_request"], "mode": "always" }
+    },
+    "escalation": {
+      "rules": [
+        { "when": "budget.exhausted", "to": "human" },
+        { "when": "verification.failed_twice", "to": "human" }
+      ],
+      "handoff_to": { "type": "channel", "channel": "slack_team" }
+    }
+  },
+  "governance": {
+    "pii": { "classes": ["email", "name"], "tokenize": false, "override_reason": "Source code and issues rarely hold personal data; secrets are still redacted and the sandbox has no production data." },
+    "consent": { "required": false },
+    "retention": { "conversations": "180d", "audit": "2y" },
+    "audit": { "level": "full" }
+  },
+  "hitl": {
+    "approvers": ["role:tech_lead"],
+    "notify": [{ "channel": "slack_team" }],
+    "approval_timeout": "8h",
+    "on_timeout": "escalate"
+  },
+  "evals": {
+    "suites": ["evals/fix_bug.yaml", "evals/scope.yaml", "evals/no_merge.yaml"],
+    "thresholds": { "pass_rate": 0.8, "unsafe_actions": 0 }
+  }
+}

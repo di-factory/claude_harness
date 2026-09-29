@@ -1,0 +1,103 @@
+# CLAUDE.md — dif-general-harness
+
+Di-Factory's general solution template: an agent runtime where every client
+solution is a declarative **solution spec** (a pack plus a client instance).
+Read `docs/ARCHITECTURE.md` (57 decisions, §7) before changing behaviour;
+`docs/spec/SOLUTION_SPEC.md` is the spec contract.
+
+## Commands
+
+```bash
+uv sync                                   # Python 3.12, deps + dev tools
+uv run pytest -q                          # all tests, offline (FakeProvider, no API keys)
+uv run ruff check src tests && uv run ruff format --check src tests
+uv run mypy                               # strict
+uv run dif-general-harness spec validate docs/spec/examples/dev-cell
+uv run dif-general-harness spec resolve docs/spec/examples/instances/clinica-sonrisa.json
+uv run dif-general-harness build --request "..." [--answers FILE] --packs docs/spec/examples
+uv run dif-general-harness run|console|serve INSTANCE.json --packs DIR
+uv run dif-general-harness eval INSTANCE.json --packs DIR   # fresh instance per case; drift
+uv run dif-general-harness keys new jag | approve ... | deploy ... --target docker|aws
+uv run dif-general-harness adjust|upgrade INSTANCE.json ... --dry-run     # constructor v3
+uv run dif-general-harness costs INSTANCE.json --by vendor,model         # spend + quality
+uv run dif-general-harness fleet register|offer|rollout|rollback|status  # via the control plane
+uv run dif-general-harness control serve --key KEY                       # the control plane
+terraform -chdir=deploy/terraform/aws init -backend=false && terraform -chdir=deploy/terraform/aws test
+```
+
+Tests start a throwaway local Postgres (unix socket, `tests/conftest.py`) and run the
+storage tests on SQLite and Postgres; they skip Postgres when it is not installed.
+
+All four checks must pass before every commit.
+
+## Layout
+
+- `src/dif_general_harness/core/`: scope (tenant ids), messages, events, session, agent loop
+  (`ToolGate` and `Meter` protocols keep policy out of the loop), `cel.py` (conditions)
+- `src/dif_general_harness/spec/`: schema (Pydantic), loader (catalog, merge, interpolation), validate
+- `src/dif_general_harness/providers/`: provider protocol, Anthropic, OpenAI-compatible, `FakeProvider`
+- `src/dif_general_harness/tools/`: registry (`@tool`, input checks), HTTP connectors, MCP client,
+  `python.py` (pack extensions), `packs/` (coding, general, google_calendar)
+- `src/dif_general_harness/policy/`: permissions and approvals, budgets, secret redaction
+- `src/dif_general_harness/tenancy/`: secret backends and `$secret` resolution
+- `src/dif_general_harness/store/`: database layer (SQLite/Postgres, migrations), SQL and JSONL
+  session stores (redacted)
+- `src/dif_general_harness/workflows/`: durable job queue and worker, workflow engine, `render`
+- `src/dif_general_harness/verify/`: verification checks (tool, condition, command, verifier)
+- `src/dif_general_harness/teams/`: ledger, sub-agent tools, `handoff.agent`, `runs.*`
+- `src/dif_general_harness/memory/`: scoped episodic/semantic/procedural store, `memory.*` tools
+- `src/dif_general_harness/knowledge/`: chunking, sync, retrieval, citations, `knowledge.search_*`
+- `src/dif_general_harness/feedback/`: candidate and pinned constraints
+- `src/dif_general_harness/governance/`: PII tokenization, consent, audit chain, retention
+- `src/dif_general_harness/runtime/`: `Instance` (spec to runnable agents), role routing, prompts
+- `src/dif_general_harness/channels/`, `triggers/`, `hitl/`: adapters (gateway, Telegram,
+  API/web, email, Slack), cron, the inbox
+- `src/dif_general_harness/service/`: the headless runtime (`Headless`), FastAPI app, config boot
+- `src/dif_general_harness/tenancy/`: secrets (env, file, AWS) and config versions
+- `src/dif_general_harness/fleet/`: the outbound-only instance agent (signed, eval-gated offers)
+- `src/dif_general_harness/control/`: the control plane (fleet view, offers, rollouts, audit)
+- `src/dif_general_harness/observability/`: cost ledger and reports, quality metrics, OTLP traces
+- `src/dif_general_harness/console/`: Textual TUI
+- `src/dif_general_harness/constructor/`: matching, interview, build, evals, approve and deploy
+- `deploy/docker/`, `deploy/terraform/aws/`: the image and the AWS module (profiles, alarms,
+  `tests/*.tftest.hcl` against a mocked provider)
+- `integrations/openclaw-skill/`: the wrapper Teky uses to drive the constructor
+- `docs/spec/examples/`: six example packs + one instance, which are also the **test fixtures**
+- `tests/test_acceptance_m1.py` … `tests/test_acceptance_m4.py`: the milestone gates;
+  `tests/support.py` holds the service test fixtures
+
+## Rules that must not be broken
+
+- **Own the loop.** No agent frameworks (LangGraph and similar). Provider SDK types never
+  leave `providers/`; the core only sees the neutral message and event model.
+- **Tenant scope everywhere.** Every event and stored record carries a `Scope`
+  (`tenant_id`, `instance_id`). Storage paths are namespaced by it.
+- **Tools never raise into the loop.** Every call ends in `ok | denied | error | timeout`.
+- **Jobs belong to their instance.** Queues are scoped: an instance never claims another's
+  jobs, even in a shared database.
+- **Deploys need Jag's signature** over the exact staged solution; never weaken
+  `constructor/deploy.py` checks.
+- **Tests are offline.** No network, no API keys: `FakeProvider`, `httpx2.MockTransport`,
+  in-process MCP servers.
+- **Safety is monotonic.** A later spec layer can only tighten governance, consent,
+  retention, deny rules and budgets (see `spec/loader.py`). Never weaken these rules.
+- **Every validation rule has a planted-error test** in `tests/test_spec_rules.py`.
+  Add one whenever you add a rule.
+- **Specs are JSON; evals are YAML; prompts are English by default** (Spanish only when a
+  client asks).
+- The harness is one of several base platforms. It does **not** run Di-Factory itself
+  (OpenClaw/Paperclip do); only client solutions and client-facing agents run here.
+- No time goals: milestones are done when their acceptance gate passes.
+
+## Current milestone
+
+v1.0: M0 to M4 are done; the last gate is `tests/test_acceptance_m4.py` (one-command deploy
+plan and rollback, costs by tenant and vendor, eval-gated fleet rollouts, regions and the
+sandbox). Next: GCP and Azure profiles, and the known gaps.
+Known gaps: the intent router short-circuit and context compaction (roles are validated,
+not used), file and batch triggers, embeddings/hybrid retrieval (pgvector), PDF/DOCX/OCR
+ingestion (the `documents` pack), syncing knowledge sources other than files (they push
+through the admin API), sampled output verification (`applies_to: output`), the voice
+channel, running Python extensions in the container executor, the egress proxy that
+enforces `allow_hosts`, and a first apply of the AWS module in a real account. See
+`docs/ARCHITECTURE.md` §6 and decisions 43–57.

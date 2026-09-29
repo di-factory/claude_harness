@@ -1,0 +1,67 @@
+{
+  "$schema": "https://di-factory.biz/schemas/solution-spec.v1.json",
+  "spec_version": "1",
+  "kind": "instance",
+  "solution": {
+    "id": "clinica-sonrisa-appointments",
+    "version": "1.0.0",
+    "name": "Clínica Sonrisa — citas",
+    "lob": "pyme",
+    "locale": "es-MX"
+  },
+  "extends": [
+    "pyme-appointment-agent@^1.0"
+  ],
+  "tenant": {
+    "id": "clinica-sonrisa",
+    "name": "Clínica Sonrisa",
+    "timezone": "America/Mexico_City"
+  },
+  "values": {
+    "business_name": "Clínica Sonrisa",
+    "business_hours": {
+      "mon-fri": "09:00-19:00",
+      "sat": "09:00-14:00"
+    },
+    "whatsapp_number": "+52XXXXXXXXXX",
+    "calendar_ids": [
+      "dra-lopez@example.com",
+      "dr-ramirez@example.com"
+    ],
+    "reminder_hours": 24,
+    "tpl_reminder_id": "HXXXXXXXXXXXXXXXX1",
+    "tpl_nudge_id": "HXXXXXXXXXXXXXXXX2",
+    "ops_email": "recepcion@example.com"
+  },
+  "channels": {
+    "whatsapp": {
+      "templates": {
+        "reminder": {
+          "file": "clinica-sonrisa/tpl_reminder.es-MX.md"
+        },
+        "reminder_nudge": {
+          "file": "clinica-sonrisa/tpl_nudge.es-MX.md"
+        }
+      }
+    }
+  },
+  "policies": {
+    "budgets": {
+      "per_tenant_day": {
+        "usd": 3
+      }
+    }
+  },
+  "governance": {
+    "retention": {
+      "conversations": "90d"
+    }
+  },
+  "deploy": {
+    "target": "aws",
+    "profile": "small",
+    "region": "mx-central-1",
+    "secrets_backend": "aws-secrets-manager",
+    "database": "postgres"
+  }
+}

@@ -1,0 +1,282 @@
+{
+  "$schema": "https://di-factory.biz/schemas/solution-spec.v1.json",
+  "spec_version": "1",
+  "kind": "pack",
+  "solution": {
+    "id": "conversational-rag",
+    "version": "1.0.0",
+    "name": "Conversational RAG Assistant",
+    "lob": "agentic-transformation",
+    "description": "Answers questions from the client's documents with citations over Telegram, web and email; says so when the answer is not in the corpus.",
+    "locale": "en"
+  },
+  "variables": {
+    "assistant_name": {
+      "type": "string",
+      "required": true
+    },
+    "corpus_sources": {
+      "type": "list",
+      "required": true,
+      "description": "Knowledge sources (files, Drive folders, S3 prefixes)"
+    },
+    "telegram_enabled": {
+      "type": "boolean",
+      "default": true
+    },
+    "support_email": {
+      "type": "string",
+      "required": true,
+      "description": "Where unanswered questions are escalated"
+    },
+    "llm_base_url": {
+      "type": "string",
+      "default": "https://api.openai.com/v1",
+      "description": "Any OpenAI-compatible endpoint (OpenAI, vLLM, Ollama, gateway)"
+    },
+    "main_model": {
+      "type": "string",
+      "default": "<main-model-id>"
+    },
+    "fast_model": {
+      "type": "string",
+      "default": "<fast-model-id>"
+    }
+  },
+  "secrets": {
+    "llm": {
+      "description": "Key for the OpenAI-compatible endpoint"
+    },
+    "telegram": {
+      "description": "Telegram bot token"
+    },
+    "email": {
+      "description": "SMTP/IMAP credentials"
+    },
+    "sources": {
+      "description": "Read access to the knowledge sources"
+    }
+  },
+  "models": {
+    "roles": {
+      "main": {
+        "provider": "openai-compatible",
+        "model": "{{var.main_model}}",
+        "effort": "medium"
+      },
+      "router": {
+        "provider": "openai-compatible",
+        "model": "{{var.fast_model}}",
+        "effort": "low"
+      },
+      "verifier": {
+        "provider": "openai-compatible",
+        "model": "{{var.fast_model}}",
+        "effort": "medium"
+      },
+      "compaction": {
+        "provider": "openai-compatible",
+        "model": "{{var.fast_model}}",
+        "effort": "low"
+      }
+    },
+    "providers": {
+      "openai-compatible": {
+        "base_url": "{{var.llm_base_url}}",
+        "api_key": {
+          "$secret": "llm"
+        }
+      }
+    }
+  },
+  "agents": {
+    "assistant": {
+      "description": "Answers only from the corpus, with citations.",
+      "prompt": "prompts/assistant.md",
+      "model_role": "main",
+      "tools": [
+        "knowledge.search_docs"
+      ],
+      "knowledge": [
+        "docs"
+      ],
+      "memory": {
+        "scope": "contact"
+      },
+      "handoffs": [
+        "human"
+      ],
+      "max_turns": 6
+    }
+  },
+  "tools": {
+    "packs": [],
+    "overrides": {}
+  },
+  "knowledge": {
+    "corpora": {
+      "docs": {
+        "sources": "{{var.corpus_sources}}",
+        "auth": {
+          "$secret": "sources"
+        },
+        "chunking": "layout",
+        "retrieval": {
+          "mode": "hybrid",
+          "top_k": 8,
+          "min_score": 0.45,
+          "rerank": true,
+          "cite": true,
+          "not_found": "say_so"
+        },
+        "sync": {
+          "schedule": "0 */4 * * *",
+          "on_delete": "propagate"
+        }
+      }
+    }
+  },
+  "memory": {
+    "layers": [
+      "episodic"
+    ],
+    "scope": "contact",
+    "episodic_ttl": "30d"
+  },
+  "channels": {
+    "telegram": {
+      "type": "telegram",
+      "credentials": {
+        "$secret": "telegram"
+      },
+      "entry_agent": "assistant",
+      "contact_key": "telegram_user_id",
+      "enabled": "{{var.telegram_enabled}}"
+    },
+    "web": {
+      "type": "web",
+      "entry_agent": "assistant",
+      "contact_key": "session_cookie"
+    },
+    "email": {
+      "type": "email",
+      "credentials": {
+        "$secret": "email"
+      },
+      "entry_agent": "assistant",
+      "contact_key": "email"
+    }
+  },
+  "triggers": {},
+  "workflows": {},
+  "policies": {
+    "profile": "default",
+    "permissions": {
+      "allow": [
+        "knowledge.*"
+      ],
+      "ask": [],
+      "deny": [
+        "effect:external"
+      ]
+    },
+    "budgets": {
+      "per_run": {
+        "usd": 0.05,
+        "turns": 6
+      },
+      "per_tenant_day": {
+        "usd": 10
+      }
+    },
+    "verification": {
+      "checks": {
+        "grounded": {
+          "type": "citations",
+          "min_citations": 1,
+          "claims_must_cite": true
+        }
+      },
+      "verifier": {
+        "model_role": "verifier",
+        "applies_to": [
+          "output"
+        ],
+        "mode": "sampled",
+        "sample_rate": 0.2
+      }
+    },
+    "escalation": {
+      "rules": [
+        {
+          "when": "knowledge.not_found and contact.insists",
+          "to": "human"
+        },
+        {
+          "when": "intent in ['legal_advice', 'medical_advice', 'financial_advice']",
+          "to": "human"
+        }
+      ],
+      "handoff_to": {
+        "type": "email",
+        "to": "{{var.support_email}}"
+      }
+    },
+    "router": {
+      "short_circuit": [
+        "greeting",
+        "thanks",
+        "who_are_you"
+      ],
+      "model_role": "router"
+    }
+  },
+  "governance": {
+    "pii": {
+      "classes": [
+        "name",
+        "email",
+        "phone",
+        "rfc",
+        "curp"
+      ],
+      "tokenize": true,
+      "reveal_in_output": []
+    },
+    "consent": {
+      "required": false
+    },
+    "retention": {
+      "conversations": "90d",
+      "episodic": "30d",
+      "audit": "2y"
+    },
+    "audit": {
+      "level": "standard"
+    },
+    "compliance": [
+      "lfpdppp"
+    ]
+  },
+  "hitl": {
+    "notify": [
+      {
+        "channel": "email",
+        "to": "{{var.support_email}}"
+      }
+    ]
+  },
+  "evals": {
+    "suites": [
+      "evals/answerable.yaml",
+      "evals/not_found.yaml",
+      "evals/citations.yaml",
+      "evals/pii.yaml"
+    ],
+    "thresholds": {
+      "pass_rate": 0.9,
+      "unsafe_actions": 0,
+      "citation_rate": 0.95
+    }
+  }
+}

@@ -1,0 +1,485 @@
+{
+  "$schema": "https://di-factory.biz/schemas/solution-spec.v1.json",
+  "spec_version": "1",
+  "kind": "pack",
+  "solution": {
+    "id": "service-desk-cell",
+    "version": "1.0.0",
+    "name": "Service Desk Cell",
+    "lob": "agentic-transformation",
+    "description": "Agent team that resolves Tier-1 IT tickets 24/7: triage, knowledge lookup, password resets and escalation.",
+    "locale": "en"
+  },
+  "variables": {
+    "company_name": {
+      "type": "string",
+      "required": true
+    },
+    "helpdesk_mcp_url": {
+      "type": "string",
+      "required": true,
+      "description": "MCP endpoint for the client's helpdesk (Zendesk, Freshdesk, ServiceNow)"
+    },
+    "idp_url": {
+      "type": "string",
+      "required": true,
+      "description": "Identity provider admin API base URL"
+    },
+    "kb_folder_id": {
+      "type": "string",
+      "required": true,
+      "description": "Drive/SharePoint folder with IT runbooks"
+    },
+    "sla_first_response": {
+      "type": "duration",
+      "default": "4h"
+    },
+    "escalation_group": {
+      "type": "string",
+      "required": true,
+      "description": "Helpdesk group that receives escalations"
+    },
+    "ops_channel": {
+      "type": "string",
+      "required": true,
+      "description": "Slack channel for approvals"
+    },
+    "main_model": {
+      "type": "string",
+      "default": "<main-model-id>"
+    },
+    "fast_model": {
+      "type": "string",
+      "default": "<fast-model-id>"
+    }
+  },
+  "secrets": {
+    "llm": {
+      "description": "Model API key"
+    },
+    "helpdesk": {
+      "description": "Helpdesk MCP credentials"
+    },
+    "helpdesk_webhook": {
+      "description": "Shared secret for inbound helpdesk webhooks"
+    },
+    "idp": {
+      "description": "Identity provider admin token (scoped to password reset)"
+    },
+    "kb_drive": {
+      "description": "Read access to the runbook folder"
+    },
+    "slack": {
+      "description": "Slack bot token for approvals"
+    }
+  },
+  "models": {
+    "roles": {
+      "main": {
+        "provider": "anthropic",
+        "model": "{{var.main_model}}",
+        "effort": "medium"
+      },
+      "subagent": {
+        "provider": "anthropic",
+        "model": "{{var.fast_model}}",
+        "effort": "low"
+      },
+      "verifier": {
+        "provider": "anthropic",
+        "model": "{{var.main_model}}",
+        "effort": "high"
+      },
+      "router": {
+        "provider": "anthropic",
+        "model": "{{var.fast_model}}",
+        "effort": "low"
+      },
+      "compaction": {
+        "provider": "anthropic",
+        "model": "{{var.fast_model}}",
+        "effort": "low"
+      },
+      "memory_extraction": {
+        "provider": "anthropic",
+        "model": "{{var.fast_model}}",
+        "effort": "low"
+      }
+    },
+    "providers": {
+      "anthropic": {
+        "api_key": {
+          "$secret": "llm"
+        },
+        "via": "direct"
+      }
+    }
+  },
+  "agents": {
+    "triage": {
+      "description": "Classifies incoming tickets, sets priority, routes to the resolver or a human.",
+      "prompt": "prompts/triage.md",
+      "model_role": "main",
+      "tools": [
+        "helpdesk.get_ticket",
+        "helpdesk.update_ticket",
+        "helpdesk.add_comment"
+      ],
+      "handoffs": [
+        "resolver",
+        "human"
+      ],
+      "max_turns": 6
+    },
+    "resolver": {
+      "description": "Resolves Tier-1 requests using runbooks and allowed actions.",
+      "prompt": "prompts/resolver.md",
+      "model_role": "main",
+      "tools": [
+        "helpdesk.get_ticket",
+        "helpdesk.add_comment",
+        "helpdesk.solve_ticket",
+        "identity.lookup_user",
+        "identity.reset_password"
+      ],
+      "subagents": [
+        "kb_researcher"
+      ],
+      "memory": {
+        "scope": "contact"
+      },
+      "handoffs": [
+        "human"
+      ],
+      "max_turns": 15
+    },
+    "kb_researcher": {
+      "description": "Finds the relevant runbook steps and returns them with citations.",
+      "prompt": "prompts/kb_researcher.md",
+      "model_role": "subagent",
+      "tools": [
+        "knowledge.search_it_runbooks"
+      ],
+      "knowledge": [
+        "it_runbooks"
+      ],
+      "max_turns": 5
+    }
+  },
+  "tools": {
+    "mcp": {
+      "helpdesk": {
+        "transport": "http",
+        "url": "{{var.helpdesk_mcp_url}}",
+        "auth": {
+          "$secret": "helpdesk"
+        }
+      }
+    },
+    "http": {
+      "identity": {
+        "base_url": "{{var.idp_url}}",
+        "auth": {
+          "type": "bearer",
+          "token": {
+            "$secret": "idp"
+          }
+        },
+        "operations": {
+          "lookup_user": {
+            "method": "GET",
+            "path": "/users?email={email}",
+            "effect": "read",
+            "input": {
+              "email": "string"
+            }
+          },
+          "reset_password": {
+            "method": "POST",
+            "path": "/users/{user_id}/password/reset",
+            "effect": "external",
+            "input": {
+              "user_id": "string"
+            },
+            "verify": "identity-verified"
+          }
+        }
+      }
+    },
+    "overrides": {
+      "helpdesk.delete_ticket": {
+        "permission": "deny"
+      },
+      "helpdesk.solve_ticket": {
+        "effect": "external",
+        "verify": "resolution-verified"
+      }
+    }
+  },
+  "knowledge": {
+    "corpora": {
+      "it_runbooks": {
+        "sources": [
+          {
+            "type": "gdrive",
+            "folder_id": "{{var.kb_folder_id}}",
+            "auth": {
+              "$secret": "kb_drive"
+            }
+          }
+        ],
+        "chunking": "layout",
+        "retrieval": {
+          "mode": "hybrid",
+          "top_k": 6,
+          "min_score": 0.4,
+          "cite": true,
+          "not_found": "say_so"
+        },
+        "sync": {
+          "schedule": "0 */6 * * *"
+        }
+      }
+    }
+  },
+  "memory": {
+    "layers": [
+      "episodic",
+      "semantic",
+      "procedural"
+    ],
+    "scope": "contact",
+    "episodic_ttl": "90d",
+    "skill_promotion": {
+      "min_successes": 3,
+      "approval": "required"
+    },
+    "shared_ledger": true
+  },
+  "channels": {
+    "helpdesk": {
+      "type": "api",
+      "entry_agent": "triage",
+      "contact_key": "requester_email",
+      "reply_via": "helpdesk.add_comment"
+    },
+    "slack_ops": {
+      "type": "slack",
+      "credentials": {
+        "$secret": "slack"
+      },
+      "address": "{{var.ops_channel}}",
+      "purpose": "hitl"
+    }
+  },
+  "triggers": {
+    "ticket-created": {
+      "type": "webhook",
+      "path": "/hooks/helpdesk/ticket-created",
+      "auth": {
+        "$secret": "helpdesk_webhook"
+      },
+      "workflow": "resolve-ticket"
+    },
+    "sla-watch": {
+      "type": "delay",
+      "after": "{{var.sla_first_response}}",
+      "started_by": "resolve-ticket",
+      "unless": "ticket.status in ['solved', 'pending_customer']",
+      "workflow": "escalate-ticket"
+    }
+  },
+  "workflows": {
+    "resolve-ticket": {
+      "input": {
+        "ticket_id": "string"
+      },
+      "steps": [
+        {
+          "id": "start_sla",
+          "type": "timer",
+          "trigger": "sla-watch"
+        },
+        {
+          "id": "triage",
+          "type": "agent",
+          "agent": "triage",
+          "input": "{{input.ticket_id}}"
+        },
+        {
+          "id": "route",
+          "type": "branch",
+          "cases": [
+            {
+              "when": "steps.triage.route == 'resolver'",
+              "goto": "resolve"
+            },
+            {
+              "when": "true",
+              "goto": "escalate"
+            }
+          ]
+        },
+        {
+          "id": "resolve",
+          "type": "agent",
+          "agent": "resolver",
+          "input": "{{input.ticket_id}}"
+        },
+        {
+          "id": "done",
+          "type": "end",
+          "when": "steps.resolve.outcome == 'solved'"
+        },
+        {
+          "id": "escalate",
+          "type": "handoff",
+          "to": "human"
+        }
+      ],
+      "on_error": "escalate"
+    },
+    "escalate-ticket": {
+      "input": {
+        "ticket_id": "string"
+      },
+      "steps": [
+        {
+          "id": "assign",
+          "type": "tool",
+          "tool": "helpdesk.update_ticket",
+          "args": {
+            "id": "{{input.ticket_id}}",
+            "group": "{{var.escalation_group}}"
+          }
+        },
+        {
+          "id": "notify",
+          "type": "handoff",
+          "to": "human"
+        }
+      ]
+    }
+  },
+  "policies": {
+    "profile": "default",
+    "permissions": {
+      "allow": [
+        "helpdesk.get_ticket",
+        "helpdesk.add_comment",
+        "helpdesk.update_ticket",
+        "identity.lookup_user",
+        "knowledge.*",
+        "helpdesk.solve_ticket"
+      ],
+      "ask": [
+        "identity.reset_password(user_id=admin*)"
+      ],
+      "deny": [
+        "helpdesk.delete_ticket"
+      ]
+    },
+    "budgets": {
+      "per_run": {
+        "usd": 0.5,
+        "turns": 20
+      },
+      "per_tenant_day": {
+        "usd": 40
+      }
+    },
+    "verification": {
+      "checks": {
+        "identity-verified": {
+          "type": "condition",
+          "expr": "contact.verified == true and contact.email == ticket.requester_email"
+        },
+        "resolution-verified": {
+          "type": "verifier",
+          "criteria": [
+            "the requester's problem is solved per the runbook",
+            "every action taken is documented on the ticket"
+          ]
+        }
+      },
+      "verifier": {
+        "model_role": "verifier",
+        "applies_to": [
+          "helpdesk.solve_ticket",
+          "identity.reset_password"
+        ],
+        "mode": "always"
+      }
+    },
+    "escalation": {
+      "rules": [
+        {
+          "when": "ticket.priority in ['p1', 'p2']",
+          "to": "human"
+        },
+        {
+          "when": "verification.failed_twice",
+          "to": "human"
+        },
+        {
+          "when": "contact.requested_human",
+          "to": "human"
+        }
+      ],
+      "handoff_to": {
+        "type": "helpdesk",
+        "group": "{{var.escalation_group}}"
+      }
+    }
+  },
+  "governance": {
+    "pii": {
+      "classes": [
+        "name",
+        "email",
+        "phone"
+      ],
+      "tokenize": true,
+      "reveal_in_output": [
+        "name"
+      ]
+    },
+    "consent": {
+      "required": false
+    },
+    "retention": {
+      "conversations": "365d",
+      "episodic": "180d",
+      "audit": "5y"
+    },
+    "audit": {
+      "level": "full"
+    },
+    "compliance": [
+      "lfpdppp"
+    ]
+  },
+  "hitl": {
+    "approvers": [
+      "role:it_admin"
+    ],
+    "notify": [
+      {
+        "channel": "slack_ops"
+      }
+    ],
+    "approval_timeout": "1h",
+    "on_timeout": "escalate"
+  },
+  "evals": {
+    "suites": [
+      "evals/triage.yaml",
+      "evals/password_reset.yaml",
+      "evals/escalation.yaml"
+    ],
+    "thresholds": {
+      "pass_rate": 0.9,
+      "unsafe_actions": 0
+    }
+  }
+}

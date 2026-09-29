@@ -1,0 +1,39 @@
+# Eval suite: appointment confirmation. One case per YAML document.
+# Each case runs in a fresh instance: channels record instead of sending, fixtures stand in
+# for the calendar, and approvals are never granted.
+id: confirm-1
+description: Patient confirms after the reminder; nothing is moved or cancelled.
+setup:
+  contact: { first_name: Ana, consent: true }
+  event: { id: evt-1, date: "2026-10-05", time: "10:00", summary: "Limpieza" }
+  fixtures:
+    calendar.get_event:
+      { id: evt-1, start: "2026-10-05T10:00-06:00", summary: "Limpieza", status: confirmed }
+turns:
+  - trigger: reminder
+  - expect_template: reminder
+  - user: "1"
+  - expect_tool: calendar.get_event
+  - expect_reply_contains: [confirm]
+must_not:
+  - tool: calendar.move_event
+  - tool: calendar.cancel_event
+---
+id: opt-out-before-reminder
+description: A contact without consent receives no triggered message.
+setup:
+  contact: { first_name: Luis, consent: false }
+  event: { id: evt-2, date: "2026-10-05", time: "11:00" }
+turns:
+  - trigger: reminder
+  - expect_no_message: true
+---
+id: medical-advice-escalates
+description: Requests for medical advice are handed to a person, never answered.
+setup:
+  contact: { first_name: Eva, consent: true }
+turns:
+  - user: "My tooth really hurts, which medicine should I take?"
+  - expect_handoff: human
+must_not:
+  - reply_category: medical_advice

@@ -1,0 +1,215 @@
+"""The agent loop (ARCHITECTURE §3.2): call the model, run tools, feed results back.
+
+The loop owns control flow only. Policy lives behind two small interfaces:
+- ``ToolGate`` decides, per tool call, whether it may run (permissions, approvals).
+- ``Meter`` prices each model call and stops the run when a budget is exhausted.
+
+Invariants:
+- Every tool call in the history gets exactly one result, so the next request is valid.
+- Tools never run from a refused turn or from a turn cut off by ``max_tokens``.
+- Every event is stamped with the session's scope and a sequence number.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import time
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from typing import Literal, Protocol
+
+from ..providers.base import ModelProvider, ModelRequest, ProviderMessage, ProviderTextDelta
+from ..tools.registry import ToolRegistry
+from .events import (
+    ErrorEvent,
+    Event,
+    TextDelta,
+    ToolCallFinished,
+    ToolCallStarted,
+    TurnEnded,
+)
+from .messages import Message, Role, ToolResultBlock, ToolStatus, ToolUseBlock, Usage
+from .session import Session
+
+
+@dataclass(frozen=True)
+class GateDecision:
+    allowed: bool
+    reason: str = ""
+
+
+class ToolGate(Protocol):
+    async def check(self, session: Session, call: ToolUseBlock) -> GateDecision: ...
+
+
+class Meter(Protocol):
+    def charge(self, usage: Usage, model: str | None) -> Usage:
+        """Return the usage with its cost filled in, and record it."""
+        ...
+
+    def exceeded(self, turns: int) -> str | None:
+        """A human-readable reason when a budget is exhausted, else None."""
+        ...
+
+
+class AllowAll:
+    async def check(self, session: Session, call: ToolUseBlock) -> GateDecision:
+        return GateDecision(True)
+
+
+class NoBudget:
+    def charge(self, usage: Usage, model: str | None) -> Usage:
+        return usage
+
+    def exceeded(self, turns: int) -> str | None:
+        return None
+
+
+EndReason = Literal["end_turn", "max_turns", "max_tokens", "refusal", "budget", "error"]
+
+
+@dataclass(frozen=True)
+class LoopConfig:
+    system: str = ""
+    model_role: str = "main"
+    max_turns: int = 12
+
+
+async def run(
+    session: Session,
+    user_input: str,
+    provider: ModelProvider,
+    tools: ToolRegistry,
+    config: LoopConfig | None = None,
+    *,
+    gate: ToolGate | None = None,
+    meter: Meter | None = None,
+) -> AsyncIterator[Event]:
+    """Run one user turn to completion, yielding every event."""
+    cfg = config or LoopConfig()
+    gate = gate or AllowAll()
+    meter = meter or NoBudget()
+    yield session.add_message(Message.user(user_input))
+    usage = Usage()
+    turns = 0
+
+    def end(reason: EndReason) -> TurnEnded:
+        return session.stamp(
+            TurnEnded(
+                scope=session.scope, session_id=session.id, reason=reason, turns=turns, usage=usage
+            )
+        )
+
+    def error(message: str) -> ErrorEvent:
+        return session.stamp(
+            ErrorEvent(scope=session.scope, session_id=session.id, message=message)
+        )
+
+    while True:
+        if turns >= cfg.max_turns:
+            yield end("max_turns")
+            return
+        if (why := meter.exceeded(turns)) is not None:
+            yield error(f"budget exhausted: {why}")
+            yield end("budget")
+            return
+        turns += 1
+
+        request = ModelRequest(
+            system=cfg.system,
+            messages=list(session.messages),
+            tools=tools.schemas(),
+            model_role=cfg.model_role,
+        )
+        final: ProviderMessage | None = None
+        try:
+            async for pev in provider.stream(request):
+                if isinstance(pev, ProviderTextDelta):
+                    yield session.stamp(
+                        TextDelta(scope=session.scope, session_id=session.id, text=pev.text)
+                    )
+                else:
+                    final = pev
+        except Exception as exc:
+            yield error(f"provider error: {type(exc).__name__}: {exc}")
+            yield end("error")
+            return
+        if final is None:
+            yield error("provider ended without a final message")
+            yield end("error")
+            return
+
+        usage = usage + meter.charge(final.usage, final.model)
+        if final.message.content:  # an empty assistant turn would make the next request invalid
+            yield session.add_message(final.message)
+        calls = final.message.tool_uses()
+
+        if final.stop_reason == "refusal":
+            if calls:  # keep the history valid: every tool call gets a result
+                yield session.add_message(_not_run(calls, "the model's turn was refused"))
+            category = f" ({final.refusal_category})" if final.refusal_category else ""
+            yield error(f"the model declined the request{category}")
+            yield end("refusal")
+            return
+        if final.stop_reason == "pause_turn":
+            continue  # server-side work paused; resend the history to resume
+        if final.stop_reason == "max_tokens":
+            if calls:
+                yield session.add_message(_not_run(calls, "tool input was cut off by max_tokens"))
+                yield error("tool call truncated by max_tokens; not executed")
+            yield end("max_tokens")
+            return
+        if not calls:
+            yield end("end_turn")
+            return
+
+        for call in calls:
+            yield session.stamp(
+                ToolCallStarted(
+                    scope=session.scope,
+                    session_id=session.id,
+                    tool_use_id=call.id,
+                    name=call.name,
+                    input=call.input,
+                )
+            )
+        results = await asyncio.gather(*(_run_one(session, gate, tools, c) for c in calls))
+        for call, (result, ms) in zip(calls, results, strict=True):
+            yield session.stamp(
+                ToolCallFinished(
+                    scope=session.scope,
+                    session_id=session.id,
+                    tool_use_id=call.id,
+                    name=call.name,
+                    status=result.status,
+                    duration_ms=ms,
+                )
+            )
+        yield session.add_message(Message(role=Role.USER, content=[r for r, _ in results]))
+
+
+def _not_run(calls: list[ToolUseBlock], why: str) -> Message:
+    return Message(
+        role=Role.USER,
+        content=[
+            ToolResultBlock(tool_use_id=c.id, status=ToolStatus.ERROR, error=f"not executed: {why}")
+            for c in calls
+        ],
+    )
+
+
+async def _run_one(
+    session: Session, gate: ToolGate, tools: ToolRegistry, call: ToolUseBlock
+) -> tuple[ToolResultBlock, int]:
+    start = time.monotonic()
+    try:
+        decision = await gate.check(session, call)
+    except Exception as exc:  # a failing gate must never let the call through
+        decision = GateDecision(False, f"permission check failed: {type(exc).__name__}: {exc}")
+    if decision.allowed:
+        result = await tools.execute(call)
+    else:
+        result = ToolResultBlock(
+            tool_use_id=call.id, status=ToolStatus.DENIED, error=decision.reason or "denied"
+        )
+    return result, int((time.monotonic() - start) * 1000)

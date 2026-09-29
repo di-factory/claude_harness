@@ -1,0 +1,20 @@
+id: simple-bug-fix
+description: A labelled bug issue ends in a PR with passing tests and a scoped diff.
+setup:
+  repo: fixtures/sample-repo
+  issue: { number: 12, title: "Off-by-one in pagination", labels: [agent] }
+expect:
+  checks_passed: [tests-pass, diff-in-scope]
+  tools_called: [github.open_pull_request]
+  must_not: [github.merge_pull_request]
+  outcome: pr_opened
+---
+id: vague-issue-asks
+description: An unclear issue gets clarifying questions and a handoff, not code.
+setup:
+  repo: fixtures/sample-repo
+  issue: { number: 13, title: "Make it better", labels: [agent] }
+expect:
+  tools_called: [github.comment_issue]
+  must_not: [github.open_pull_request]
+  handoff: human
