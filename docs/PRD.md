@@ -196,7 +196,7 @@ The template succeeds when new client solutions are mostly configuration and run
 | --- | --- | --- |
 | Reuse ratio | Share of an instance's code and config that comes from the template and packs | ≥ 80% |
 | Time to onboard a client on an existing pack | Kickoff to running instance in the client's cloud | ≤ 2 weeks |
-| Time to build a new pack | Pack spec, connectors and evals ready | ≤ 4 weeks (one sprint) |
+| Time to build a new pack | Pack spec, connectors and evals ready | ≤ 4 weeks |
 | Unsafe actions without approval | Side effects taken without an allow rule or approval | 0 |
 | PII or secret leaks | Planted PII or secrets found in model inputs, logs, traces or memory | 0 |
 | Eval pass rate per pack | Pack eval set against the configured models | ≥ 90% before release |
@@ -221,15 +221,15 @@ The template succeeds when new client solutions are mostly configuration and run
 
 ## Milestones and release plan
 
-The template ships in five milestones, one 4-week sprint each, owned by Jag Pascoe with agent builders. Each closes with a gate of acceptance tests. Client instances start once the modules they need have shipped.
+The template ships in five milestones, owned by Jag Pascoe with agent builders. There are no time goals: each milestone closes when its gate of acceptance tests passes. Client instances start once the modules they need have shipped.
 
-| Milestone | Due | Scope | Gate |
-| --- | --- | --- | --- |
-| M0 Core | 2026-10-23 | data model, event stream, agent loop, solution spec, tenant ids, offline tests | spec tests |
-| M1 Agent core | 2026-11-20 | two providers, tool registry, MCP and HTTP, permissions, budgets and secrets, TUI console, constructor v1 | conformance |
-| M2 Runtime | 2026-12-18 | headless service, channels and triggers, durable queue, approvals inbox, PII and consent, audit and Postgres, instance agent, basic AWS deploy, constructor v2 | governance |
-| M3 Intelligence | 2027-01-15 | 5-layer memory, knowledge (RAG), verification, agent teams, feedback loop, pack evals | eval suite |
-| M4 Operations | 2027-02-12 | Terraform (AWS), OpenTelemetry, cost reports, region policy, containers, control plane MVP, constructor v3; GCP and Azure later | v1.0 release |
+| Milestone | Scope | Gate |
+| --- | --- | --- |
+| M0 Core | data model, event stream, agent loop, solution spec, tenant ids, offline tests | spec tests |
+| M1 Agent core | two providers, tool registry, MCP and HTTP, permissions, budgets and secrets, TUI console, constructor v1 | conformance |
+| M2 Runtime | headless service, channels and triggers, durable queue, approvals inbox, PII and consent, audit and Postgres, instance agent, basic AWS deploy, constructor v2 | governance |
+| M3 Intelligence | 5-layer memory, knowledge (RAG), verification, agent teams, feedback loop, pack evals | eval suite |
+| M4 Operations | Terraform (AWS), OpenTelemetry, cost reports, region policy, containers, control plane MVP, constructor v3; GCP and Azure later | v1.0 release |
 
 Each milestone is published to PyPI as a pre-release (0.x) once its gate passes; M4 ends with v1.0.
 
@@ -272,7 +272,7 @@ The largest risk is building a general platform before any instance proves it; t
 | Messaging gateway account | Held by the client (zero markup, client owns numbers and templates); Di-Factory sets it up |
 | Success targets | Accepted as listed under Success metrics |
 | Naming and state | PyPI name `di-factory-general-harness` is free (to be registered on first release); state in `.dif/` and `~/.dif/`, project memory file `DIF.md` |
-| Timeline | One 4-week sprint per milestone, M0 to M4 (dates above) |
+| Timeline | No time goals; milestones are ordered and gated by acceptance tests |
 | Fleet operations | Control plane plus an outbound-only instance agent in each deployment; the client can revoke it (FR-27, FR-28) |
 | Spec portability | Harness-native, kept clean so exporters to other platforms can come later |
 | Delivery agents | Internal ones on OpenClaw/Paperclip; client-facing ones on the harness |

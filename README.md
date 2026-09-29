@@ -6,9 +6,9 @@ across its lines of business.
 One open-source agent runtime, many client solutions: each one is a
 declarative *solution spec* on top of a shared core.
 
-> **Status: design phase.** The architecture and PRD are approved; no code has
-> been written yet. Implementation starts with milestone M0 (due 2026-10-23).
-> Commands and APIs described below are the planned interface.
+> **Status: building M0.** The architecture, PRD and solution spec are approved;
+> implementation has started with milestone M0 (core skeleton). Commands and APIs
+> described below are the planned interface unless marked available.
 
 ---
 
@@ -113,15 +113,15 @@ cell, Conversational RAG, Receipt Processing, Dev cell, OPC C-suite) are in [`do
 
 ## Roadmap
 
-| Milestone | Due | Scope |
-|---|---|---|
-| **M0 Core** | 2026-10-23 | Data model, event stream, agent loop, solution-spec schema, tenant ids, offline tests |
-| **M1 Agent core** | 2026-11-20 | Anthropic + OpenAI-compatible providers, tool registry, MCP/HTTP tools, permissions, budgets, TUI console, constructor v1 |
-| **M2 Runtime** | 2026-12-18 | Headless service, channels, triggers, durable queue, approvals inbox, PII/consent/audit, Postgres, instance agent, basic AWS deploy, constructor v2 |
-| **M3 Intelligence** | 2027-01-15 | 5-layer memory, knowledge/RAG, verification, agent teams, feedback loop, pack evals |
-| **M4 Operations** | 2027-02-12 | Terraform (AWS), OpenTelemetry, cost reports, region policy, fleet control plane, constructor v3 → **v1.0** |
+| Milestone | Scope |
+|---|---|
+| **M0 Core** | Data model, event stream, agent loop, solution-spec schema, tenant ids, offline tests |
+| **M1 Agent core** | Anthropic + OpenAI-compatible providers, tool registry, MCP/HTTP tools, permissions, budgets, TUI console, constructor v1 |
+| **M2 Runtime** | Headless service, channels, triggers, durable queue, approvals inbox, PII/consent/audit, Postgres, instance agent, basic AWS deploy, constructor v2 |
+| **M3 Intelligence** | 5-layer memory, knowledge/RAG, verification, agent teams, feedback loop, pack evals |
+| **M4 Operations** | Terraform (AWS), OpenTelemetry, cost reports, region policy, fleet control plane, constructor v3 → **v1.0** |
 
-Each milestone ships as a PyPI pre-release once its acceptance gate passes.
+No time goals: each milestone is done when its acceptance gate passes, and ships as a PyPI pre-release.
 
 ## Getting started (planned)
 
