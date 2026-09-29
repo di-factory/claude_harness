@@ -199,6 +199,7 @@ class Headless:
             ),
             "relative_scan": self._job_relative_scan,
             "agent_task": self._job_agent_task,
+            "memory_extract": self._job_memory_extract,
         }
 
     def worker(self, **kw: Any) -> Worker:
@@ -280,6 +281,11 @@ class Headless:
             elif isinstance(event, TurnEnded):
                 reason = event.reason
         escalated = await inst.store.state(self.scope, session.id) == "escalated"
+        if inst.spec.models and "memory_extraction" in inst.spec.models.roles:
+            await self.queue.enqueue(
+                self.scope, "memory_extract", {"agent": agent_name, "session": session.id},
+                delay_s=60, dedupe_key=f"memx:{session.id}:{len(session.messages)}",
+            )  # fmt: skip
         handoff = inst.pending_handoffs.pop(session.id, None)
         if handoff is not None and reason == "end_turn":  # the teammate answers in the same turn
             target_name, target_id, note = handoff
@@ -521,6 +527,12 @@ class Headless:
             raise KeyError(f"unknown agent {agent!r}")
         return await self.queue.enqueue(self.scope, "agent_task", {"agent": agent, "text": text})
 
+    async def _job_memory_extract(self, job: Job) -> None:
+        from ..memory.agent import extract_facts
+
+        session = await self.instance.store.load(self.scope, job.payload["session"])
+        await extract_facts(self.instance, job.payload["agent"], session)
+
     async def _job_agent_task(self, job: Job) -> None:
         agent = self.agent(job.payload["agent"])
         session = await agent.new_session()
@@ -654,9 +666,8 @@ class Headless:
         item = await inst.inbox.get(item_id)
         if item is None:
             raise KeyError(f"no inbox item {item_id!r}")
-        status: InboxStatus = (
-            ("approved" if approved else "denied") if item.kind == "approval" else "resolved"
-        )
+        yes_no = item.kind in ("approval", "memory", "skill", "constraint")
+        status: InboxStatus = ("approved" if approved else "denied") if yes_no else "resolved"
         if not await inst.inbox.decide(item_id, status, by, note):
             raise ValueError(f"inbox item {item_id} was already decided")
         await inst.audit.record(
@@ -670,6 +681,11 @@ class Headless:
             )
         elif item.kind == "escalation" and item.session_id:
             await inst.store.set_state(self.scope, item.session_id, "active")
+        elif item.kind == "memory" and not approved:  # the person keeps the earlier fact
+            await inst.memory.restore(str(item.payload["previous_id"]))
+        elif item.kind == "skill":
+            skill_status = "active" if approved else "rejected"
+            await inst.memory.set_status(str(item.payload["memory_id"]), skill_status)
         decided = await inst.inbox.get(item_id)
         assert decided is not None
         return decided
@@ -759,6 +775,7 @@ class Headless:
     async def _job_retention(self, job: Job) -> None:
         inst = self.instance
         removed = await purge(inst.db, self.scope, inst.spec.governance.retention)
+        removed["memories"] = await inst.memory.purge_expired()
         await inst.audit.record(self.scope, "system", "retention", "purge", removed)
         tomorrow = datetime.fromtimestamp(self.queue.clock() + DAY, UTC).date().isoformat()
         await self.queue.enqueue(

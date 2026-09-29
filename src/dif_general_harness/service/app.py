@@ -237,6 +237,29 @@ def create_app(
         )
         return merged
 
+    @app.get("/admin/contacts/{contact_key}/memory", dependencies=[Depends(admin)])
+    async def contact_memory(contact_key: str) -> list[dict[str, Any]]:
+        from ..memory.store import MemoryScope
+
+        found = await current().memory.active(MemoryScope("contact", contact_key))
+        reveal = current().pii.policy.classes
+        return [
+            {"id": m.id, "layer": m.layer, "key": m.key, "version": m.version,
+             "content": await current().pii.detokenize(m.content, reveal, mask=False)}
+            for m in found
+        ]  # fmt: skip
+
+    @app.delete("/admin/contacts/{contact_key}/memory", dependencies=[Depends(admin)])
+    async def forget_contact(contact_key: str) -> dict[str, int]:
+        """The contact's right to be forgotten: everything remembered about them goes."""
+        from ..memory.store import MemoryScope
+
+        removed = await current().memory.forget(MemoryScope("contact", contact_key))
+        await current().audit.record(
+            scope, "admin", "memory_forgotten", "contact", {"removed": removed}
+        )
+        return {"removed": removed}
+
     @app.get("/admin/audit/verify", dependencies=[Depends(admin)])
     async def audit_verify() -> dict[str, Any]:
         broken = await current().audit.verify(scope)

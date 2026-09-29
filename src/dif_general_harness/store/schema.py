@@ -95,6 +95,17 @@ MIGRATIONS: list[list[str]] = [
             created_at DOUBLE PRECISION NOT NULL, updated_at DOUBLE PRECISION NOT NULL)""",
         "CREATE INDEX IF NOT EXISTS ledger_by_instance ON ledger_tasks (tenant_id, instance_id)",
     ],
+    [  # M3: memory (episodic, semantic, procedural)
+        """CREATE TABLE IF NOT EXISTS memories (
+            id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, instance_id TEXT NOT NULL,
+            scope_kind TEXT NOT NULL, scope_key TEXT NOT NULL, layer TEXT NOT NULL,
+            key TEXT NOT NULL, content TEXT NOT NULL, status TEXT NOT NULL,
+            version INTEGER NOT NULL, successes INTEGER NOT NULL, source TEXT,
+            created_at DOUBLE PRECISION NOT NULL, updated_at DOUBLE PRECISION NOT NULL,
+            expires_at DOUBLE PRECISION)""",
+        """CREATE INDEX IF NOT EXISTS memories_by_scope
+            ON memories (tenant_id, instance_id, scope_kind, scope_key, layer, status)""",
+    ],
 ]
 
 

@@ -41,6 +41,8 @@ from ..core.session import Session
 from ..governance import AuditLog, ConsentStore, GovernedTools, PiiPolicy, Tokenizer, TokenVault
 from ..governance.contacts import ContactStore
 from ..hitl.inbox import Inbox
+from ..memory.agent import memory_block, memory_tools, record_episode
+from ..memory.store import Memory, MemoryStore
 from ..policy import Approver, DailySpend, Limits, PermissionPolicy, PolicyGate, Redactor, RunMeter
 from ..policy.escalation import first_match
 from ..policy.spend import SpendStore
@@ -124,6 +126,7 @@ class Instance:
         self.spend: SpendStore
         self.inbox: Inbox
         self.contacts: ContactStore
+        self.memory: MemoryStore
         self.verifier = Verifier(self, on_failed_twice=self._verification_failed_twice)
         self.notify: Notify | None = None  # set by the service: tells a person about inbox items
         self.emit: Emit | None = None  # set by the service: internal events (ledger, workflows)
@@ -177,6 +180,7 @@ class Instance:
         self.spend = SpendStore(self.db)
         self.inbox = Inbox(self.db, self.scope)
         self.contacts = ContactStore(self.db)
+        self.memory = MemoryStore(self.db, self.scope)
         if self.spec.ledger is not None:
             self.ledger = LedgerStore(self.db, self.scope, self.spec.ledger, list(self.spec.agents))
             self.ledger.emit = self._emit
@@ -235,6 +239,38 @@ class Instance:
             return f"handed off to a person (escalation {item}); a person will reply here"
 
         return handoff
+
+    async def flag_contradiction(self, previous: Memory, value: str, new_id: str) -> None:
+        """A fact changed: keep the new value, and let a person restore the old one."""
+        item = await self.inbox.create(
+            "memory",
+            f"Changed fact: {previous.key}",
+            {"key": previous.key, "previous": previous.content, "new": value,
+             "previous_id": previous.id, "new_id": new_id},
+        )  # fmt: skip
+        if self.notify is not None:
+            await self.notify(item, f"A remembered fact changed: {previous.key}")
+
+    async def consider_skill(self, skill: Memory) -> str:
+        """Count a proposed skill; after min_successes it goes to a person (or activates)."""
+        promotion = (self.spec.memory.skill_promotion if self.spec.memory else None) or {}
+        needed = int(promotion.get("min_successes", 3))
+        if skill.status == "active":
+            return f"skill '{skill.key}' is already approved"
+        if skill.status == "pending":
+            return f"skill '{skill.key}' is waiting for a person's approval"
+        if skill.successes < needed:
+            return f"noted skill '{skill.key}' ({skill.successes}/{needed} before review)"
+        if promotion.get("approval", "required") != "required":
+            await self.memory.set_status(skill.id, "active")
+            return f"skill '{skill.key}' is now active"
+        await self.memory.set_status(skill.id, "pending")
+        item = await self.inbox.create(
+            "skill", f"Approve skill: {skill.key}", {"memory_id": skill.id, "steps": skill.content}
+        )
+        if self.notify is not None:
+            await self.notify(item, f"A skill is ready for review: {skill.key}")
+        return f"skill '{skill.key}' was sent to a person for approval"
 
     async def _emit(self, name: str, data: dict[str, Any]) -> None:
         if self.emit is not None:
@@ -378,6 +414,7 @@ class Instance:
                 ask.append(name)
                 self._warn("verification_unavailable", f"tools.{name}", f"{why}; asking instead")
         allow.append("handoff.agent")  # handing over to a listed teammate is always allowed
+        allow.append("memory.*")  # remembering is internal, scoped and reviewed (contradictions)
         for name, o in overrides.items():
             if o.permission:
                 {"allow": allow, "ask": ask, "deny": deny}[o.permission].append(name)
@@ -421,6 +458,8 @@ class AgentRuntime:
         teammates = [h for h in spec.handoffs if h != "human" and h in instance.spec.agents]
         if teammates:
             selected.register(handoff_tool(instance, self, teammates))
+        for t in memory_tools(instance, self):
+            selected.register(t)
         self.tools = GovernedTools(selected, instance.pii)
         self.missing_tools = [
             p for p in spec.tools if not any(_matches(n, [p]) for n in self.tools.names())
@@ -501,8 +540,10 @@ class AgentRuntime:
         inst = self.instance
         scope = inst.scope
         assert inst.provider is not None
+        remembered = await memory_block(inst, self.name, session)
+        config = dataclasses.replace(self.config, system=self.system + remembered)
         async for event in run(
-            session, safe_text, inst.provider, self.tools, self.config, gate=self.gate, meter=meter
+            session, safe_text, inst.provider, self.tools, config, gate=self.gate, meter=meter
         ):
             await inst.store.append(event)
             if isinstance(event, ToolCallStarted):
@@ -521,6 +562,7 @@ class AgentRuntime:
                          "input": inst.redactor.redact_obj(call.input if call else {})},
                     )  # fmt: skip
             elif isinstance(event, TurnEnded):
+                await record_episode(inst, self.name, session)
                 await inst.spend.add(scope, "tenant", meter.total.cost_usd)
                 await inst.spend.add(scope, f"agent:{self.name}", meter.total.cost_usd)
                 for model, usd in meter.by_model.items():

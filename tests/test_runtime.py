@@ -242,6 +242,9 @@ async def test_service_desk_tools_policy_and_redaction(examples: Path, tmp_path:
             "helpdesk.solve_ticket",
             "identity.lookup_user",
             "identity.reset_password",
+            "memory.propose_skill",  # the pack declares memory layers
+            "memory.search",
+            "memory.write",
         ]
         assert resolver.missing_tools == ["helpdesk.add_comment"]
 
