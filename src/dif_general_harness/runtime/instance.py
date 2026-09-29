@@ -34,7 +34,7 @@ from typing import Any
 
 import httpx2
 
-from ..core.events import Event, ToolCallFinished, ToolCallStarted, TurnEnded
+from ..core.events import Event, MessageAdded, ToolCallFinished, ToolCallStarted, TurnEnded
 from ..core.loop import LoopConfig, run
 from ..core.messages import Message, Role, ToolResultBlock, ToolUseBlock
 from ..core.scope import Scope
@@ -776,3 +776,23 @@ def _secret_refs(obj: Any) -> set[str]:
     if isinstance(obj, list):
         return set().union(*(_secret_refs(v) for v in obj)) if obj else set()
     return set()
+
+
+async def answer(stream: AsyncIterator[Event]) -> tuple[list[str], str]:
+    """The assistant texts of a run and how it ended. When the run goes on after a turn
+    ended (an answer check asked for a rewrite), only the later texts are the answer."""
+    texts: list[str] = []
+    reason, ended = "error", False
+    async for event in stream:
+        if isinstance(event, TurnEnded):
+            reason, ended = event.reason, True
+        elif (
+            isinstance(event, MessageAdded)
+            and event.message.role is Role.ASSISTANT
+            and event.message.text()
+        ):
+            if ended:
+                texts.clear()
+                ended = False
+            texts.append(event.message.text())
+    return texts, reason

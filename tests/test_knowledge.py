@@ -7,9 +7,10 @@ from typing import Any
 
 from dif_general_harness.core.messages import Message, ToolResultBlock
 from dif_general_harness.core.scope import Scope
+from dif_general_harness.governance.pii import find
 from dif_general_harness.knowledge import KnowledgeBase, chunk
 from dif_general_harness.knowledge.chunk import MAX_CHARS
-from dif_general_harness.knowledge.store import terms
+from dif_general_harness.knowledge.store import chunk_id, terms
 from dif_general_harness.providers.base import ModelRequest
 from tests.support import ADMIN_H, API_TOKEN, Env, calls
 
@@ -105,6 +106,13 @@ def test_layout_chunking() -> None:
     assert all(c.text.endswith(".") for c in pieces)  # cut at sentence ends
 
 
+def test_citation_markers_never_look_like_pii() -> None:
+    every = {"email", "phone", "curp", "rfc", "account"}
+    for _ in range(500):
+        text = f"We accept cards [kb:{chunk_id()}] and cash [kb:{chunk_id()}]."
+        assert find(text, every) == []  # a tokenized marker would break the citation
+
+
 async def test_store_sync_search_and_scope(db: Any, scope: Scope, tmp_path: Path) -> None:
     docs = _docs(tmp_path)
     corpora = {"faq": {"sources": [{"type": "file", "path": str(docs)}, {"type": "gdrive"}]}}
@@ -188,7 +196,7 @@ async def test_uncited_answer_is_rewritten_once(tmp_path: Path) -> None:
 
 
 async def test_invented_citations_become_not_found(tmp_path: Path) -> None:
-    invented = Message.assistant("We accept bitcoin and gold bars [kb:0123456789].")
+    invented = Message.assistant("We accept bitcoin and gold bars [kb:zzzzzzzzzz].")
     script = [
         calls(("k1", "knowledge.search_faq", {"query": "payment methods"})),
         invented,
@@ -199,7 +207,7 @@ async def test_invented_citations_become_not_found(tmp_path: Path) -> None:
     async with inst, client:
         reply = await _ask(client, "¿Aceptan bitcoin?")
         assert reply == "I could not find a sourced answer to that in our documents."
-        assert "not retrieved: 0123456789" in env.provider.requests[2].messages[-1].text()
+        assert "not retrieved: zzzzzzzzzz" in env.provider.requests[2].messages[-1].text()
 
 
 async def test_not_found_says_so_and_escalates_by_rule(tmp_path: Path) -> None:

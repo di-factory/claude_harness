@@ -431,8 +431,11 @@ learned instruction is approved by a person.
   deletion that propagates to the index.
 - Layout-aware chunking; hybrid retrieval (BM25 plus embeddings); cited
   answers; and "not found" when no chunk scores above the threshold.
-- It is exposed to agents as tools (`search_knowledge`), so RAG is a module,
-  not a separate product.
+- It is exposed to agents as tools (`knowledge.search_<corpus>`), so RAG is a
+  module, not a separate product.
+- As built in M3: file sources sync on open and on schedule; other sources push
+  documents through the admin API. Retrieval is keyword scoring until embeddings
+  arrive with pgvector (decision 46). PDF, DOCX and OCR need the `documents` pack.
 
 ### 3.20 Storage, deployment and operations
 
@@ -453,6 +456,13 @@ Every pack ships an eval set in **YAML**: scripted conversations and tasks,
 one case per document, with expected outcomes and tool calls. Evals run offline against `FakeProvider` and against
 real models before any model swap, pack upgrade or config release. Results are
 stored so behavioural drift is visible over time.
+
+As built in M3 (decision 48), `dif-general-harness eval INSTANCE` runs every case in a fresh
+instance under the headless service. A case can start triggers, advance the clock, and check
+templates, messages, handoffs, approvals and tool calls; `must_not` rules count unsafe
+actions, and replies can be judged by category with the `verifier` role. Each run is
+recorded in the instance's database, and cases that passed in the previous run and fail now
+are reported as regressions.
 
 ### 3.22 Fleet operations: control plane and instance agent
 
@@ -638,6 +648,14 @@ instance can start once the modules it needs have shipped.
 | 40 | Paper test 2 result | The spec covers batch, coding and agent-team shapes after the additions in SOLUTION_SPEC §5.14–5.16. The Dev cell needs the container executor, which **stays in M4**; the Dev cell pack ships after v1. |
 | 41 | Deploy approval (M2) | Jag's approval is an **Ed25519 signature over the content hash of the staged solution** (instance, overrides, every pack file) for one target. Any change after approval, even one prompt line, invalidates it; the deploy refuses keys not in the trusted approvers list. The control plane signs pushed config the same way (data + approver). |
 | 42 | Headless approvals (M2) | **Deferred, not blocking:** a tool call that needs approval files an inbox item and returns "waiting for approval"; on approval the stored call runs (deny rules re-checked) and a follow-up turn tells the contact. No model call is held open; `hitl.on_timeout` applies when nobody decides. |
+| 43 | Conditions (M3) | Spec conditions (`when`, `unless`, `expr`, escalation rules) are a **small CEL subset**: no function calls, bounded length and depth. A missing field is falsy, so a condition never passes by accident. |
+| 44 | Verification (M3) | Checks run **before** the approval step. A second failure on the same call refuses it unchecked from then on, applies the escalation rules and proposes a constraint. A check that cannot run here turns the tool to `ask`; it never lets the call through. |
+| 45 | Memory storage (M3) | Episodic, semantic and procedural records live in the instance database, scoped by tenant, instance and **memory scope** (contact, instance or agent). The working layer is the context window; forgetting is TTLs, retention and a per-contact delete. A changed fact supersedes the old one and goes to the inbox; a denial restores it. |
+| 46 | Retrieval (M3) | Keyword scoring whose score is the **share of the query's information a passage covers (0–1)**, so `min_score` means the same in every corpus; BM25 breaks ties. Embeddings (hybrid, pgvector) come with production Postgres in M4. Citations are enforced by a check with **one rewrite, then "not found"**. |
+| 47 | Feedback (M3) | Signals (a check failing twice, a denial or escalation resolved with a reason, a budget stop, a thumbs-down with a comment) only **propose** constraints. A person approves them, optionally reworded; approved ones are pinned in the prompt until retired. |
+| 48 | Evals (M3) | Each case runs in a **fresh instance under the headless service**: channels record, fixtures replace connectors, approvals are never granted, and a case controls the clock. Results are stored per config version; a case that passed before and fails now is a **regression**. |
+| 49 | Python extensions (M3) | `tools.python` loads in-process from the **staged solution**, so Jag's deploy signature covers the code. The tool's namespace is the module's name. Extensions run behind the same permissions, verification, budgets and audit; isolating them in a container waits for the M4 executor. |
+| 50 | Email and Slack (M3) | Email arrives through the provider's **inbound-parse webhook** (no IMAP polling) and leaves through SMTP; Slack uses the Events API with one session per thread. |
 
 ## 8. First instantiation candidates (parked)
 

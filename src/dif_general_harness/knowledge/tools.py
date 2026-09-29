@@ -27,7 +27,7 @@ if TYPE_CHECKING:
     from ..runtime.instance import Instance
     from ..spec.schema import Check
 
-MARKER = re.compile(r"\[kb:([0-9a-f]{10})\]")
+MARKER = re.compile(r"\[kb:([a-z]{10})\]")
 MIN_CLAIM_WORDS = 8
 NOT_FOUND = {
     "say_so": "Say plainly that the documents do not cover this. Do not guess or answer from"
@@ -106,7 +106,7 @@ def _retrieved(messages: list[Message]) -> set[str]:
     for m in messages:
         for b in m.content:
             if isinstance(b, ToolResultBlock) and b.tool_use_id in searches:
-                found.update(re.findall(r"kb:([0-9a-f]{10})", str(b.content)))
+                found.update(re.findall(r"kb:([a-z]{10})", str(b.content)))
     return found
 
 

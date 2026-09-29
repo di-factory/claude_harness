@@ -2,7 +2,7 @@
 
 Di-Factory's general solution template: an agent runtime where every client
 solution is a declarative **solution spec** (a pack plus a client instance).
-Read `docs/ARCHITECTURE.md` (42 decisions, §7) before changing behaviour;
+Read `docs/ARCHITECTURE.md` (50 decisions, §7) before changing behaviour;
 `docs/spec/SOLUTION_SPEC.md` is the spec contract.
 
 ## Commands
@@ -15,7 +15,8 @@ uv run mypy                               # strict
 uv run dif-general-harness spec validate docs/spec/examples/dev-cell
 uv run dif-general-harness spec resolve docs/spec/examples/instances/clinica-sonrisa.json
 uv run dif-general-harness build --request "..." [--answers FILE] --packs docs/spec/examples
-uv run dif-general-harness run|console|eval|serve INSTANCE.json --packs DIR
+uv run dif-general-harness run|console|serve INSTANCE.json --packs DIR
+uv run dif-general-harness eval INSTANCE.json --packs DIR   # fresh instance per case; drift
 uv run dif-general-harness keys new jag | approve ... | deploy ... --target docker|aws
 ```
 
@@ -27,19 +28,25 @@ All four checks must pass before every commit.
 ## Layout
 
 - `src/dif_general_harness/core/`: scope (tenant ids), messages, events, session, agent loop
-  (`ToolGate` and `Meter` protocols keep policy out of the loop)
+  (`ToolGate` and `Meter` protocols keep policy out of the loop), `cel.py` (conditions)
 - `src/dif_general_harness/spec/`: schema (Pydantic), loader (catalog, merge, interpolation), validate
 - `src/dif_general_harness/providers/`: provider protocol, Anthropic, OpenAI-compatible, `FakeProvider`
 - `src/dif_general_harness/tools/`: registry (`@tool`, input checks), HTTP connectors, MCP client,
-  `packs/` (coding, general)
+  `python.py` (pack extensions), `packs/` (coding, general, google_calendar)
 - `src/dif_general_harness/policy/`: permissions and approvals, budgets, secret redaction
 - `src/dif_general_harness/tenancy/`: secret backends and `$secret` resolution
 - `src/dif_general_harness/store/`: database layer (SQLite/Postgres, migrations), SQL and JSONL
   session stores (redacted)
-- `src/dif_general_harness/workflows/`: durable job queue and worker (the engine is M3)
+- `src/dif_general_harness/workflows/`: durable job queue and worker, workflow engine, `render`
+- `src/dif_general_harness/verify/`: verification checks (tool, condition, command, verifier)
+- `src/dif_general_harness/teams/`: ledger, sub-agent tools, `handoff.agent`, `runs.*`
+- `src/dif_general_harness/memory/`: scoped episodic/semantic/procedural store, `memory.*` tools
+- `src/dif_general_harness/knowledge/`: chunking, sync, retrieval, citations, `knowledge.search_*`
+- `src/dif_general_harness/feedback/`: candidate and pinned constraints
 - `src/dif_general_harness/governance/`: PII tokenization, consent, audit chain, retention
 - `src/dif_general_harness/runtime/`: `Instance` (spec to runnable agents), role routing, prompts
-- `src/dif_general_harness/channels/`, `triggers/`, `hitl/`: adapters, cron, the inbox
+- `src/dif_general_harness/channels/`, `triggers/`, `hitl/`: adapters (gateway, Telegram,
+  API/web, email, Slack), cron, the inbox
 - `src/dif_general_harness/service/`: the headless runtime (`Headless`), FastAPI app, config boot
 - `src/dif_general_harness/tenancy/`: secrets (env, file, AWS) and config versions
 - `src/dif_general_harness/fleet/`: the outbound-only instance agent
@@ -48,7 +55,7 @@ All four checks must pass before every commit.
 - `deploy/docker/`, `deploy/terraform/aws/`: the image and the basic AWS module
 - `integrations/openclaw-skill/`: the wrapper Teky uses to drive the constructor
 - `docs/spec/examples/`: six example packs + one instance, which are also the **test fixtures**
-- `tests/test_acceptance_m1.py`, `tests/test_acceptance_m2.py`: the milestone gates;
+- `tests/test_acceptance_m1.py` … `tests/test_acceptance_m3.py`: the milestone gates;
   `tests/support.py` holds the service test fixtures
 
 ## Rules that must not be broken
@@ -76,11 +83,12 @@ All four checks must pass before every commit.
 
 ## Current milestone
 
-M2 (headless runtime and governance minimum) is done: its gate is
-`tests/test_acceptance_m2.py`. Next: M3 intelligence modules (5-layer memory, knowledge/RAG,
-verification, workflows and agent teams, feedback loop, evals per solution).
-Known gaps M3 closes: verification checks (tools with `verify` are forced to `ask`), the
-workflow engine and CEL conditions (workflow and conditional triggers are reported, not
-run), knowledge and ledger tools, the calendar connector, Python tool loading, email and
-Slack channels, and eval steps that need triggers, templates or handoffs. See
-`docs/ARCHITECTURE.md` §6.
+M3 (intelligence modules) is done: its gate is `tests/test_acceptance_m3.py` (the Clínica
+Sonrisa eval suite end to end, memory and knowledge acceptance). Next: M4 operations
+hardening (Terraform hardening, OpenTelemetry, cost reports, region policy, container
+executor, control plane MVP, constructor v3).
+Known gaps: the intent router short-circuit and context compaction (roles are validated,
+not used), file and batch triggers, embeddings/hybrid retrieval (pgvector), PDF/DOCX/OCR
+ingestion (the `documents` pack), syncing knowledge sources other than files (they push
+through the admin API), sampled output verification (`applies_to: output`), the voice
+channel, and extension isolation. See `docs/ARCHITECTURE.md` §6 and decisions 43–50.

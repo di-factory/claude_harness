@@ -27,7 +27,6 @@ import json
 import logging
 import re
 import time
-from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -36,14 +35,14 @@ import httpx2
 
 from ..channels import ChannelAdapter, ChannelError, Envelope, Inbound, Unauthorized, build_adapter
 from ..core import cel
-from ..core.events import Event, MessageAdded, TurnEnded
+from ..core.events import MessageAdded, TurnEnded
 from ..core.messages import Message, Role, ToolUseBlock
 from ..feedback import ALL_AGENTS
 from ..governance import is_opt_out, purge
 from ..hitl import InboxApprover, InboxItem
 from ..hitl.inbox import Status as InboxStatus
 from ..policy import Verdict
-from ..runtime import AgentRuntime, Instance
+from ..runtime import AgentRuntime, Instance, answer
 from ..spec.errors import Issue
 from ..spec.loader import duration_days
 from ..spec.schema import Trigger
@@ -57,26 +56,6 @@ log = logging.getLogger(__name__)
 _EVENT_REF = re.compile(r"\{\{\s*event((?:\.[A-Za-z0-9_]+)*)\s*\}\}")
 FALLBACK = "Sorry, I can't answer right now. A person from our team will follow up."
 DAY = 86400.0
-
-
-async def answer(stream: AsyncIterator[Event]) -> tuple[list[str], str]:
-    """The assistant texts of a run and how it ended. When the run goes on after a turn
-    ended (an answer check asked for a rewrite), only the later texts are the answer."""
-    texts: list[str] = []
-    reason, ended = "error", False
-    async for event in stream:
-        if isinstance(event, TurnEnded):
-            reason, ended = event.reason, True
-        elif (
-            isinstance(event, MessageAdded)
-            and event.message.role is Role.ASSISTANT
-            and event.message.text()
-        ):
-            if ended:
-                texts.clear()
-                ended = False
-            texts.append(event.message.text())
-    return texts, reason
 
 
 def render_event(template: Any, event: dict[str, Any]) -> str:

@@ -18,12 +18,14 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
-from .constructor import RecordingApprover, build, load_answers, match, run_suites
+from .constructor import EvalStore, RecordingApprover, build, load_answers, match, run_suites
 from .constructor.deploy import (
     DeployError,
     approve,
@@ -44,8 +46,10 @@ from .runtime import (
     PromptError,
     RoutingError,
     RuntimeOptions,
+    scope_for,
 )
 from .spec import PackCatalog, ResolvedSpec, SpecError, load_instance, load_pack
+from .store.db import connect
 from .tenancy import FileSecrets, backend_from_env
 
 
@@ -396,23 +400,47 @@ def _build(args: argparse.Namespace) -> int:
 async def _eval(
     args: argparse.Namespace, resolved: ResolvedSpec, provider: ModelProvider | None
 ) -> int:
-    approvals = RecordingApprover()
-    options = _options(args, provider, approvals)
-    if options is not None:
-        options.approver = approvals  # evals never approve, even with --yes
-    started = await _start(args, resolved, options) if options else None
-    if started is None:
+    """Each case runs in its own throwaway instance (never the production database); the
+    results are recorded in the instance's own database, to report drift between runs."""
+    template = _options(args, provider, RecordingApprover())
+    if template is None:
         return 2
-    instance, agent = started
-    suites = args.suite or [Path(s) for s in instance.spec.evals.suites]
-    async with instance:
-        report = await run_suites(agent, suites, approvals, instance.spec.evals.thresholds)
+
+    async def open_instance(state: Path) -> Instance:
+        options = dataclasses.replace(
+            template, state_root=state, database_url=None, approver=RecordingApprover()
+        )
+        return await Instance.open(resolved, options)
+
+    suites = args.suite or [Path(s) for s in resolved.spec.evals.suites]
+    with tempfile.TemporaryDirectory(prefix="dif-eval-") as work:
+        try:
+            report = await run_suites(
+                open_instance, suites, resolved.spec.evals.thresholds, work=Path(work)
+            )
+        except (InstanceError, RoutingError) as exc:
+            print(f"cannot start: {exc}", file=sys.stderr)
+            return 2
+    args.state.mkdir(parents=True, exist_ok=True)
+    url = getattr(args, "database_url", None) or f"sqlite:///{args.state.resolve() / 'dif.db'}"
+    db = await connect(url)
+    try:
+        store = EvalStore(db, scope_for(resolved.spec))
+        run_id = await store.record(report, resolved.version_hash)
+        report.regressions = await store.regressions(report, run_id)
+    finally:
+        await db.close()
     for r in report.results:
         print(f"{r.status.upper():8} {r.suite} / {r.case}  ${r.cost_usd:.4f}")
         for reason in r.reasons:
             print(f"         - {reason}")
     rate = "n/a" if report.pass_rate is None else f"{report.pass_rate:.0%}"
     skipped = len(report.results) - len(report.ran)
+    for name in report.regressions:
+        print(f"REGRESSION {name} (passed in the previous run)")
+    unmeasured = sorted(set(report.thresholds) - {"pass_rate", "unsafe_actions"})
+    if unmeasured:
+        print(f"not measured yet: {', '.join(unmeasured)}")
     print(
         f"pass rate {rate} over {len(report.ran)} case(s), {skipped} skipped, "
         f"unsafe actions {report.unsafe_actions}: {'OK' if report.ok else 'FAILED'}"

@@ -6,12 +6,14 @@ across its lines of business.
 One open-source agent runtime, many client solutions: each one is a
 declarative *solution spec* on top of a shared core.
 
-> **Status: M2 (headless runtime) done; M3 next.** An instance runs as a service from its
-> spec: WhatsApp/SMS, Telegram and REST channels, schedule and webhook triggers, a durable
-> queue on Postgres, an approvals inbox, PII tokenization, consent, a tamper-evident audit
-> log, versioned config with hot reload, an outbound-only instance agent, a Docker image and
-> a basic AWS module. Deploys need Jag's signed approval. Workflows, memory, knowledge and
-> verification arrive with M3.
+> **Status: M3 (intelligence) done; M4 next.** An instance runs as a service from its spec:
+> WhatsApp/SMS, Telegram, REST, email and Slack channels; schedule, webhook, event, delay and
+> relative triggers; durable workflows and agent teams; scoped memory; knowledge with
+> citations; verification before side effects; a feedback loop whose rules a person
+> approves; Google Calendar and Python tools; and pack evals that run the whole solution and
+> report drift. Governance (PII, consent, audit), Postgres, versioned config, the instance
+> agent, a Docker image and a basic AWS module came with M2. Deploys need Jag's signed
+> approval.
 
 ---
 
@@ -121,7 +123,7 @@ cell, Conversational RAG, Receipt Processing, Dev cell, OPC C-suite) are in [`do
 | **M0 Core** ✓ | Data model, event stream, agent loop, solution-spec schema, tenant ids, offline tests |
 | **M1 Agent core** ✓ | Anthropic + OpenAI-compatible providers, tool registry, MCP/HTTP tools, permissions, budgets, TUI console, constructor v1 |
 | **M2 Runtime** ✓ | Headless service, channels, triggers, durable queue, approvals inbox, PII/consent/audit, Postgres, instance agent, basic AWS deploy, constructor v2 |
-| **M3 Intelligence** | 5-layer memory, knowledge/RAG, verification, agent teams, feedback loop, pack evals |
+| **M3 Intelligence** ✓ | 5-layer memory, knowledge/RAG, verification, agent teams, feedback loop, pack evals |
 | **M4 Operations** | Terraform (AWS), OpenTelemetry, cost reports, region policy, fleet control plane, constructor v3 → **v1.0** |
 
 No time goals: each milestone is done when its acceptance gate passes, and ships as a tagged pre-release in this repository (not on PyPI).
@@ -171,7 +173,7 @@ uv run dif-general-harness deploy instances/<id>.json --packs docs/spec/examples
 Install a tagged release (no PyPI):
 
 ```bash
-uv tool install git+https://github.com/di-factory/claude_harness@v0.2.0
+uv tool install git+https://github.com/di-factory/claude_harness@v0.3.0
 ```
 
 ## Documentation

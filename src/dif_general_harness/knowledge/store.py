@@ -23,6 +23,7 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+import secrets
 import time
 import unicodedata
 import uuid
@@ -45,6 +46,14 @@ _STOP = """a about after all also am an and any are as at be been but by can cou
     quiero necesito saber"""
 STOP_WORDS = frozenset(_STOP.split())
 _TERM = re.compile(r"[a-z0-9]+")
+ID_LETTERS = "abcdefghjkmnpqrstuvwxyz"  # chunk ids: letters only, so no PII detector (phone,
+# CURP, RFC, account) ever mistakes a citation marker for personal data and tokenizes it
+
+
+def chunk_id() -> str:
+    return "".join(secrets.choice(ID_LETTERS) for _ in range(10))
+
+
 K1, B = 1.2, 0.75
 
 
@@ -148,7 +157,7 @@ class KnowledgeBase:
                 await conn.execute(
                     "INSERT INTO knowledge_chunks (id, doc_id, tenant_id, instance_id, corpus, ord,"
                     " section, text) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    (uuid.uuid4().hex[:10], doc_id, *scope, n, c.section, c.text),
+                    (chunk_id(), doc_id, *scope, n, c.section, c.text),
                 )
         self._indexes.pop(corpus, None)
         return doc_id, "added" if row is None else "updated"

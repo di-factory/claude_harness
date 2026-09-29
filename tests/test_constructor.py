@@ -13,7 +13,6 @@ from dif_general_harness.cli import main
 from dif_general_harness.constructor import (
     AnswerError,
     Question,
-    RecordingApprover,
     build,
     interview,
     load_answers,
@@ -322,40 +321,49 @@ async def test_eval_runner(tmp_path: Path, helper_solution: Path) -> None:
         _calls(("c", "notes.write", {"key": "meeting", "text": "moved"})),
         Message.assistant("Noted."),
     ]
-    approvals = RecordingApprover()
     repo = tmp_path / "repo"
     repo.mkdir()
-    options = RuntimeOptions(
-        state_root=tmp_path / "state",
-        secrets=EnvSecrets({}),
-        approver=approvals,
-        workspaces={"repo": repo},
-        provider=FakeProvider(script),
-    )
+    provider = FakeProvider(script)
     resolved = load_instance(instance_file, PackCatalog(roots=[tmp_path / "packs"]))
-    async with await Instance.open(resolved, options) as inst:
-        report = await run_suites(
-            inst.agent(), [suite, tmp_path / "missing.yaml"], approvals, {"pass_rate": 0.9}
+
+    async def open_instance(state: Path) -> Instance:
+        options = RuntimeOptions(
+            state_root=state,
+            secrets=EnvSecrets({}),
+            workspaces={"repo": repo},
+            provider=provider,
         )
+        return await Instance.open(resolved, options)
+
+    report = await run_suites(
+        open_instance,
+        [suite, tmp_path / "missing.yaml"],
+        {"pass_rate": 0.9},
+        work=tmp_path / "work",
+    )
     by_case = {r.case: r for r in report.results}
     assert by_case["saves-a-note"].status == "passed"
     forbidden = by_case["forbidden-tool"]
     assert forbidden.status == "failed" and forbidden.unsafe_actions == 1
     assert any("expected a call to notes.list" in r for r in forbidden.reasons)
-    skipped = by_case["needs-a-trigger"]
-    assert skipped.status == "skipped" and "needs M2: turn step 'trigger'" in skipped.reasons
+    no_trigger = by_case["needs-a-trigger"]  # triggers run now; this spec has none
+    assert no_trigger.status == "failed"
+    assert no_trigger.reasons[0] == "trigger 'reminder' is not defined or cannot run here"
     assert by_case["outcome-with-approval"].status == "passed"
     assert by_case["*"].reasons == ["suite not written yet"]
-    assert report.pass_rate == pytest.approx(2 / 3) and report.unsafe_actions == 1
+    assert report.pass_rate == pytest.approx(2 / 4) and report.unsafe_actions == 1
     assert not report.ok
     assert list(repo.iterdir()) == []  # the denied shell command never ran
 
 
-def test_example_evals_are_skipped_not_passed(
+def test_example_evals_run_and_fail_honestly_without_a_model(
     examples: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     instance = examples / "instances" / "clinica-sonrisa.json"
     code = main(["eval", str(instance), "--state", str(tmp_path)], provider=FakeProvider([]))
     out = capsys.readouterr().out
-    assert "pass rate n/a over 0 case(s)" in out and "SKIPPED" in out and "PASSED" not in out
-    assert code == 0
+    # the opt-out case needs no model and passes; the others fail, never pass silently
+    assert "PASSED   confirm.yaml / opt-out-before-reminder" in out
+    assert "FAILED   confirm.yaml / confirm-1" in out and "FakeProvider script exhausted" in out
+    assert "pass rate 33% over 3 case(s)" in out
+    assert code == 1

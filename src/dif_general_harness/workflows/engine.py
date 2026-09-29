@@ -31,8 +31,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ..core import cel
-from ..core.events import MessageAdded, TurnEnded
-from ..core.messages import Role, ToolStatus, ToolUseBlock
+from ..core.messages import ToolStatus, ToolUseBlock
 from ..policy import Verdict
 from ..spec.loader import duration_days
 from ..spec.schema import Step, Workflow
@@ -434,17 +433,9 @@ class WorkflowEngine:
                     host.scope, session.id, target["channel"], target["key"]
                 )
             run.state["sessions"][name] = session.id
-        texts: list[str] = []
-        reason = "error"
-        async for event in agent.send(session, text):
-            if (
-                isinstance(event, MessageAdded)
-                and event.message.role is Role.ASSISTANT
-                and event.message.text()
-            ):
-                texts.append(event.message.text())
-            elif isinstance(event, TurnEnded):
-                reason = event.reason
+        from ..runtime import answer  # the runtime imports the workflow engine's host
+
+        texts, reason = await answer(agent.send(session, text))
         final = texts[-1] if texts else ""
         output: dict[str, Any] = {"text": final, "reason": reason, "session": session.id}
         parsed = _json_in(final)

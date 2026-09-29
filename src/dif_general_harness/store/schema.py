@@ -130,6 +130,16 @@ MIGRATIONS: list[list[str]] = [
         """CREATE INDEX IF NOT EXISTS constraints_by_agent
             ON constraints (tenant_id, instance_id, agent, status)""",
     ],
+    [  # M3: eval results per config version (drift between runs)
+        """CREATE TABLE IF NOT EXISTS eval_results (
+            run_id TEXT NOT NULL, tenant_id TEXT NOT NULL, instance_id TEXT NOT NULL,
+            config_version TEXT NOT NULL, suite TEXT NOT NULL, case_id TEXT NOT NULL,
+            status TEXT NOT NULL, reasons TEXT NOT NULL, unsafe_actions INTEGER NOT NULL,
+            cost_usd DOUBLE PRECISION NOT NULL, created_at DOUBLE PRECISION NOT NULL,
+            PRIMARY KEY (run_id, suite, case_id))""",
+        """CREATE INDEX IF NOT EXISTS eval_results_by_instance
+            ON eval_results (tenant_id, instance_id, created_at)""",
+    ],
 ]
 
 

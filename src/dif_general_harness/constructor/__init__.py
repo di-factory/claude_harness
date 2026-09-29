@@ -7,13 +7,14 @@ build on these same functions.
 
 from .build import BuildResult, build, pack_questions
 from .catalog import PackMatch, match
-from .evals import EvalReport, RecordingApprover, run_suites
+from .evals import EvalReport, EvalStore, RecordingApprover, run_suites
 from .interview import AnswerError, Question, interview, load_answers, parse, questions
 
 __all__ = [
     "AnswerError",
     "BuildResult",
     "EvalReport",
+    "EvalStore",
     "PackMatch",
     "Question",
     "RecordingApprover",

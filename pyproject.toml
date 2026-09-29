@@ -1,6 +1,6 @@
 [project]
 name = "di-factory-general-harness"
-version = "0.2.0"
+version = "0.3.0"
 description = "Di-Factory's general solution template: an agent runtime where each client solution is a declarative spec."
 readme = "README.md"
 license = "MIT"

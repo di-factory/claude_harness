@@ -345,18 +345,29 @@ brief. Delivery to a `contact` channel goes through consent; operator channels (
 }
 ```
 
-Step types:
-- `agent`: run an agent turn;
-- `tool`: call one tool directly;
-- `template`: send a channel template;
-- `approval`: wait in the inbox;
-- `wait`: for a reply, an event or a time;
-- `branch`: by condition;
-- `parallel`;
-- `handoff`: to an agent or `human`;
-- `end`.
+Step fields (every step has `id` and `type`, and may have `when`: a condition; when it
+does not hold, the step is skipped):
 
-Every step is persisted, so a restart resumes at the last completed step.
+| Type | Fields | Output (`steps.<id>`) |
+|---|---|---|
+| `agent` | `agent`, `input` (text or object) | `text`, `reason`, `session`, and the fields of a JSON answer |
+| `tool` | `tool`, `args` | the tool's result; an `ask` tool waits for approval first |
+| `template` | `channel`, `template`, `to` (default: the channel's `address`), `vars` | `sent`, `to`, `channel` |
+| `message` | `channel`, `text` (or `body`), `to` | `sent`, `to`, `channel` |
+| `approval` | `summary`, `on_reject` (a step id, `end` or `escalate`) | `approved`, `by`, `note` |
+| `wait` | `for`: `reply`, `event` (`event`, `match`) or `time` (`duration`); `timeout` | `replied`, `reply`, the event, or `timed_out` |
+| `branch` | `cases`: `[{when, goto}]` (the first that holds) | `goto` |
+| `parallel` | `branches`: agent and tool steps, run together | one output per branch |
+| `handoff` | `to` (`human` or an agent), `reason`, `input`, `outcome` | `escalation`, or the agent's output |
+| `timer` | `trigger` (a `delay` trigger to arm) | the armed job |
+| `end` | `outcome` | `outcome` |
+
+Workflow fields: `input`, `steps`, `concurrency` (runs at once), `on_error` (`escalate`
+files an inbox item). Templates in step fields read `input`, `steps`, `var`, `event` and
+`contact`; a field that is exactly one `{{ }}` keeps the value's type.
+
+Every step is persisted, so a restart resumes at the last completed step. A step that
+crashed half way runs again on resume, so side-effecting tools should be idempotent.
 
 ### 5.11 `policies`
 
@@ -467,6 +478,33 @@ come later as adapters.
 | `governance.pii` | `reveal_to_tools`: which PII classes are de-tokenized for which tools (for example, the RFC must reach the ERP) |
 | `governance.consent` | applies to messages sent **to contacts**; channels with purpose `hitl`, `founder` or `outbound` (operators) are exempt |
 
+Eval suites are YAML, one case per document; every case runs in a fresh instance under
+the headless service (channels record, fixtures replace connectors, approvals are never
+granted):
+
+```yaml
+id: confirm-1
+setup:
+  contact: { first_name: Ana, consent: true }      # key: optional
+  event: { id: evt-1, date: "2026-10-05", time: "10:00" }   # for relative triggers
+  fixtures: { calendar.get_event: { id: evt-1, status: confirmed } }
+turns:
+  - trigger: reminder                  # or user: "text", or advance: 12h
+  - expect_template: reminder          # also expect_message, expect_no_message
+  - user: "1"
+  - expect_tool: calendar.get_event
+  - expect_reply_contains: [confirm]   # also expect_handoff (human | agent), expect_approval
+must_not:
+  - tool: calendar.move_event          # never even attempted
+  - reply_category: medical_advice     # judged by the verifier role
+```
+
+An outcome case uses `setup.message` and `expect` (`tools_called`, `must_not`,
+`approval_requested`, `handoff`, `template`). A case that asks for something the runner
+cannot check is skipped with the reason, never passed. Results are stored per config
+version, and cases that passed in the previous run and fail now are reported as
+regressions.
+
 ## 6. Validation (what the loader enforces)
 
 1. JSON Schema and Pydantic types for every section.
@@ -497,8 +535,11 @@ come later as adapters.
 ## 8. Escape hatch: `extensions`
 
 Some client logic will not fit the spec, for example a clinic-specific slot
-ranking. `extensions` registers Python tools or hooks, versioned with the
-instance. They run under the same permissions, budgets and audit as
+ranking. `tools.python` registers Python tools (`"extensions.slots:best_slot"` is
+`extensions/slots.py` next to the declaring spec, and the tool is `slots.best_slot`),
+versioned with the pack or instance and covered by the deploy signature. A plain typed
+function becomes a `read` tool; `@tool(..., effect=...)` declares another effect. The list
+accumulates across layers. They run under the same permissions, budgets and audit as
 everything else. Extension lines count against the **reuse ratio** metric
 (target ≥ 80%). A pack that repeatedly needs the same extension should absorb
 it as a variable or tool.
