@@ -619,7 +619,7 @@ instance can start once the modules it needs have shipped.
 | 21 | Evals | Every pack ships an eval set; run before model swaps and releases. |
 | 22 | Packaging | Python 3.12+, MIT, PyPI `di-factory-general-harness`, import `dif_general_harness`, CLI `dif-general-harness`. |
 | 23 | Pack licensing | **Open core**: core + reference packs MIT; production packs are Di-Factory proprietary; each client fully owns its instance. |
-| 24 | Pack sequence | Appointment Agent first, then **Service Desk cell**, **Conversational RAG assistant** and the **other PyME agents**. |
+| 24 | Pack sequence | Appointment Agent first, then **Service Desk cell**, **Conversational RAG assistant** and the **other PyME agents**; **Dev cell after v1** (needs the M4 container executor). |
 | 25 | Messaging gateway | **Client holds the account** (zero markup, client owns numbers and templates); Di-Factory sets it up. |
 | 26 | Success targets | ≥80% reuse · ≤2 weeks onboarding on an existing pack · ≤4 weeks per new pack · ≥90% eval pass · 0 unsafe actions · 0 leaks · 100% cost attribution. |
 | 27 | State directory | Project state in **`.dif/`**, user state in **`~/.dif/`**, project memory file **`DIF.md`**. |
@@ -635,7 +635,7 @@ instance can start once the modules it needs have shipped.
 | 37 | Deploy approval | **Jag approves every deployment** into a client cloud; client sign-off happens outside the tool. |
 | 38 | Constructor timing | **Incremental:** v1 in M1 (interview, build, validate, evals), v2 in M2 (approval gate, deploy to Docker or basic AWS, Teky skill), v3 in M4 (full lifecycle). |
 | 39 | First-client deploy | **Basic AWS deploy moves to M2** (minimal Terraform); M4 hardens it. |
-| 40 | Paper test 2 result | The spec covers batch, coding and agent-team shapes after the additions in SOLUTION_SPEC §5.14–5.16. **Pending:** the Dev cell needs the container executor (M4) — move it earlier, or ship the Dev cell after M4. |
+| 40 | Paper test 2 result | The spec covers batch, coding and agent-team shapes after the additions in SOLUTION_SPEC §5.14–5.16. The Dev cell needs the container executor, which **stays in M4**; the Dev cell pack ships after v1. |
 
 ## 8. First instantiation candidates (parked)
 

@@ -268,7 +268,7 @@ The largest risk is building a general platform before any instance proves it; t
 | Question | Decision |
 | --- | --- |
 | Pack licensing | Open core: core and reference packs MIT; production packs are Di-Factory proprietary; each client fully owns its instance |
-| Pack sequence | Appointment Agent first, then Service Desk cell, Conversational RAG assistant and the other PyME agents |
+| Pack sequence | Appointment Agent first, then Service Desk cell, Conversational RAG assistant and the other PyME agents; Dev cell after v1 (needs the M4 container executor) |
 | Messaging gateway account | Held by the client (zero markup, client owns numbers and templates); Di-Factory sets it up |
 | Success targets | Accepted as listed under Success metrics |
 | Naming and state | PyPI name `di-factory-general-harness` is free (to be registered on first release); state in `.dif/` and `~/.dif/`, project memory file `DIF.md` |
@@ -276,7 +276,7 @@ The largest risk is building a general platform before any instance proves it; t
 | Fleet operations | Control plane plus an outbound-only instance agent in each deployment; the client can revoke it (FR-27, FR-28) |
 | Spec portability | Harness-native, kept clean so exporters to other platforms can come later |
 | Delivery agents | Internal ones on OpenClaw/Paperclip; client-facing ones on the harness |
-| Spec coverage | Paper test 2 before M0: batch document job, Dev cell, OPC-style agent team |
+| Spec coverage | Paper tests passed on six shapes (three chat, batch, Dev cell, agent team) |
 | Condition language | CEL subset |
 | Language | English by default; Spanish only when a client asks |
 | Eval format | YAML, one case per document |

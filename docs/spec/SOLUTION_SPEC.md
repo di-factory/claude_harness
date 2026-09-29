@@ -551,9 +551,8 @@ format; the rest are listed but not written yet.
 | I first modelled "drafts" as a fake HTTP call | OPC (self-review) | removed; drafts are ledger items |
 
 **Roadmap consequences:**
-- The **Dev cell needs the container executor**, which is planned for M4. The
-  Dev cell pack therefore can't ship before M4 unless that executor moves
-  earlier (decision pending).
+- The **Dev cell needs the container executor**, which stays in M4 (decision
+  40). The Dev cell pack ships after v1.
 - The **`documents` tool pack** (OCR, parsing) and the **built-in ledger** are
   new modules. The ledger fits M3 (agent teams); `documents` is needed when
   Receipt Processing is first sold.
