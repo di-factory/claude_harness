@@ -282,6 +282,45 @@ def create_app(
         await apply_active(headless)
         return {"active": version.version, "running": current().resolved.version_hash}
 
+    @app.post("/admin/events", dependencies=[Depends(admin)])
+    async def event(body: dict[str, Any]) -> dict[str, Any]:
+        """An event from the client's systems (``{"name": ..., "data": {...}}``): resumes
+        workflow runs waiting for it and fires event triggers."""
+        name = body.get("name")
+        if not isinstance(name, str) or not name:
+            raise HTTPException(400, "an event needs a name")
+        woken = await headless.emit(name, dict(body.get("data") or {}))
+        return {"woken": woken}
+
+    @app.post("/admin/sources/{source}/items", dependencies=[Depends(admin)])
+    async def items(source: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Items a relative trigger watches (``{"items": [{"id", "start", ...}],
+        "replace": bool}``), e.g. appointments pushed by the client's calendar."""
+        given = body.get("items")
+        if not isinstance(given, list) or not all(
+            isinstance(i, dict) and "id" in i and "start" in i for i in given
+        ):
+            raise HTTPException(400, "items need an id and a start")
+        count = await headless.upsert_items(source, given, replace=bool(body.get("replace")))
+        return {"items": count}
+
+    @app.get("/admin/runs", dependencies=[Depends(admin)])
+    async def runs(workflow: str | None = None, status: str | None = None) -> list[dict[str, Any]]:
+        return [
+            {"id": r.id, "workflow": r.workflow, "status": r.status, "outcome": r.outcome,
+             "error": r.error, "step": r.state.get("waiting_step")}
+            for r in await headless.engine.runs(workflow, status)
+        ]  # fmt: skip
+
+    @app.get("/admin/runs/{run_id}", dependencies=[Depends(admin)])
+    async def run(run_id: str) -> dict[str, Any]:
+        found = await headless.engine.get(run_id)
+        if found is None:
+            raise HTTPException(404, "no such run")
+        return {"id": found.id, "workflow": found.workflow, "status": found.status,
+                "outcome": found.outcome, "error": found.error, "input": found.input,
+                "steps": found.steps}  # fmt: skip
+
     @app.get("/admin/jobs", dependencies=[Depends(admin)])
     async def jobs() -> dict[str, int]:
         return await headless.queue.counts(scope)

@@ -34,6 +34,7 @@ from typing import Any
 import httpx2
 
 from ..channels import ChannelAdapter, ChannelError, Envelope, Inbound, Unauthorized, build_adapter
+from ..core import cel
 from ..core.events import MessageAdded, TurnEnded
 from ..core.messages import Message, Role, ToolUseBlock
 from ..governance import is_opt_out, purge
@@ -47,6 +48,8 @@ from ..spec.schema import Trigger
 from ..tools.registry import Effect
 from ..triggers import CronError, next_fire
 from ..workflows import Job, JobQueue, Worker
+from ..workflows.engine import WorkflowEngine
+from ..workflows.render import render as render_value
 
 log = logging.getLogger(__name__)
 _EVENT_REF = re.compile(r"\{\{\s*event((?:\.[A-Za-z0-9_]+)*)\s*\}\}")
@@ -87,6 +90,7 @@ class Headless:
     issues: list[Issue] = field(default_factory=list)
     _agents: dict[str, AgentRuntime] = field(default_factory=dict)
     _http: httpx2.AsyncClient | None = None
+    engine: WorkflowEngine = field(init=False)
     _public_url: str | None = None
 
     # --- construction ----------------------------------------------------------------
@@ -102,6 +106,7 @@ class Headless:
     ) -> Headless:
         queue = JobQueue(instance.db, scope=instance.scope, **({"clock": clock} if clock else {}))
         self = cls(instance, queue, _http=http_client, _public_url=public_url)
+        self.engine = WorkflowEngine(self)
         self._wire(instance)
         return self
 
@@ -149,16 +154,25 @@ class Headless:
         self.issues.append(Issue("warning", code, path, message))
 
     def _unsupported(self, trig: Trigger) -> str | None:
-        if trig.workflow:
-            return "workflows run with the M3 workflow engine"
-        if trig.when or trig.unless:
-            return "trigger conditions (CEL) arrive with M3; not firing unconditionally"
-        if trig.type not in {"schedule", "webhook"}:
-            return f"{trig.type} triggers arrive with M3"
-        if not trig.agent or "{{" in trig.agent:
-            return "the trigger needs a fixed agent"
-        if trig.agent not in self.instance.spec.agents:
-            return f"unknown agent {trig.agent!r}"
+        spec = self.instance.spec
+        if trig.type in {"file", "batch"}:
+            return f"{trig.type} triggers need a storage connector (not available yet)"
+        if trig.workflow and trig.workflow not in spec.workflows:
+            return f"unknown workflow {trig.workflow!r}"
+        if not trig.workflow:
+            if not trig.agent:
+                return "the trigger needs an agent or a workflow"
+            if "{{" not in trig.agent and trig.agent not in spec.agents:
+                return f"unknown agent {trig.agent!r}"
+        for condition in (trig.when, trig.unless):
+            if condition and cel.check(condition):
+                return f"invalid condition: {cel.check(condition)}"
+        if trig.type == "relative" and (not trig.source or not trig.offset):
+            return "relative triggers need a source and an offset"
+        if trig.type == "delay" and not trig.after:
+            return "delay triggers need 'after'"
+        if trig.type == "event" and not trig.event:
+            return "event triggers need an event name"
         if trig.type == "schedule":
             try:
                 next_fire(trig.cron or "", time.time())
@@ -178,6 +192,11 @@ class Headless:
             "approved": self._job_approved,
             "approval_timeout": self._job_approval_timeout,
             "retention": self._job_retention,
+            "workflow": lambda job: self.engine.advance(job.payload["run"]),
+            "workflow_timeout": lambda job: self.engine.timed_out(
+                job.payload["run"], job.payload["step"]
+            ),
+            "relative_scan": self._job_relative_scan,
         }
 
     def worker(self, **kw: Any) -> Worker:
@@ -189,6 +208,8 @@ class Headless:
         for name, trig in self.triggers.items():
             if trig.type == "schedule":
                 await self._schedule_next(name, trig, now)
+        if any(t.type == "relative" for t in self.triggers.values()):
+            await self.scan_relative()
         tomorrow = datetime.fromtimestamp(now, UTC).date().isoformat()
         await self.queue.enqueue(
             self.scope, "retention", {}, delay_s=60, dedupe_key=f"retention:{tomorrow}"
@@ -231,6 +252,8 @@ class Headless:
             await inst.audit.record(
                 self.scope, f"contact:{env.channel}", "consent_revoked", env.channel, {}
             )
+        if await self.engine.reply(env.channel, env.contact_key, env.text):
+            return TurnResult(None, "workflow", "")  # a workflow run was waiting for this
         agent_name = cfg.entry_agent or next(iter(inst.spec.agents))
         agent = self.agent(agent_name)
         window = duration_days(cfg.session_window) * DAY if cfg.session_window else None
@@ -355,8 +378,34 @@ class Headless:
             return  # the trigger was removed from the spec since this job was queued
         if trig.type == "schedule":
             await self._schedule_next(name, trig, max(job.run_at, self.queue.clock()))
-        agent = self.agent(trig.agent or "")
         event = job.payload.get("event") or {}
+        if trig.type == "relative" and not await self._still_due(trig, event):
+            return  # the item moved or was removed since this firing was planned
+        ctx = {"event": event, "var": self.instance.spec.values, "input": event}
+        skip = (trig.when and not cel.holds(trig.when, ctx)) or (
+            trig.unless and cel.holds(trig.unless, ctx)
+        )
+        if skip:
+            await self.instance.audit.record(
+                self.scope, f"trigger:{name}", "trigger_skipped", "condition", {}
+            )
+            return
+        if trig.requires_consent and not await self._consented(event):
+            await self.instance.audit.record(
+                self.scope, f"trigger:{name}", "trigger_skipped", "consent", {}
+            )
+            return
+        if trig.workflow:
+            given = render_value(trig.input, ctx) if trig.input is not None else event
+            contact = event.get("contact") if isinstance(event.get("contact"), str) else None
+            payload = given if isinstance(given, dict) else {"input": given, "event": event}
+            channel = self._contact_channel() if contact else None
+            await self.engine.start(trig.workflow, payload, contact=contact, channel=channel)
+            return
+        agent_name = str(render_value(trig.agent or "", ctx))
+        if agent_name not in self.instance.spec.agents:
+            raise ValueError(f"trigger {name} routed to unknown agent {agent_name!r}")
+        agent = self.agent(agent_name)
         text = render_event(trig.input or f"Trigger {name} fired.", event)
         session = await agent.new_session()
         reason = "error"
@@ -382,23 +431,169 @@ class Headless:
                 await self.message(trig.channel, to, reply, session_id=session.id)
 
     async def message(
-        self, channel: str, to: str, text: str, *, session_id: str | None = None
+        self,
+        channel: str,
+        to: str,
+        text: str | None,
+        *,
+        session_id: str | None = None,
+        template: str | None = None,
+        variables: dict[str, str] | None = None,
+        reply: bool = False,
     ) -> bool:
-        """A message the harness starts (not a reply). Contacts get it only with consent;
-        operator channels (hitl, founder, outbound) are exempt. Returns whether it was sent."""
+        """A message the harness starts. Contacts get it only with consent (a ``reply`` to
+        something they just wrote is not a new contact); operator channels (hitl, founder,
+        outbound) are exempt. Returns whether it was sent."""
         inst = self.instance
         cfg = inst.spec.channels[channel]
         consent = inst.spec.governance.consent
         required = consent.required and (not consent.channels or channel in consent.channels)
-        if cfg.purpose == "contact" and not await inst.consent.may_contact(
-            self.scope, to, channel, required=required
+        if (
+            not reply
+            and cfg.purpose == "contact"
+            and not await inst.consent.may_contact(self.scope, to, channel, required=required)
         ):
             await inst.audit.record(
                 self.scope, "system", "message_suppressed", channel, {"reason": "no consent"}
             )
             return False
-        await self.send(channel, to, text, session_id)
+        if template is None:
+            await self.send(channel, to, text or "", session_id)
+            return True
+        adapter = self.adapters.get(channel)
+        if adapter is None:
+            raise ChannelError(f"channel {channel!r} is not available")
+        provider_id = await adapter.send_template(to, template, variables or {})
+        await inst.audit.record(
+            self.scope, "system", "message_out", channel,
+            {"session": session_id, "provider_id": provider_id, "template": template},
+        )  # fmt: skip
         return True
+
+    # --- workflows, events, relative and delay triggers ----------------------------------
+
+    def _contact_channel(self) -> str | None:
+        consent = self.instance.spec.governance.consent
+        contact_channels = [
+            n
+            for n, c in self.instance.spec.channels.items()
+            if c.purpose == "contact" and n in self.adapters
+        ]
+        preferred = [c for c in consent.channels if c in contact_channels]
+        choices = preferred or contact_channels
+        return choices[0] if choices else None
+
+    async def _consented(self, event: dict[str, Any]) -> bool:
+        contact = event.get("contact")
+        if not isinstance(contact, str):
+            return True  # nobody to contact: the messages themselves are checked when sent
+        channel = self._contact_channel()
+        if channel is None:
+            return False
+        consent = self.instance.spec.governance.consent
+        return await self.instance.consent.may_contact(
+            self.scope, contact, channel, required=consent.required
+        )
+
+    async def emit(self, name: str, data: dict[str, Any]) -> int:
+        """An internal event (``ledger.task_assigned``, ``escalation.resolved``...): resumes
+        runs waiting for it and fires ``event`` triggers. Returns how many things it woke."""
+        woken = await self.engine.emit(name, data)
+        for trig_name, trig in self.triggers.items():
+            if trig.type == "event" and trig.event == name:
+                await self.fire(trig_name, data)
+                woken += 1
+        return woken
+
+    async def arm_delay(self, trigger: str, event: dict[str, Any]) -> dict[str, Any]:
+        """A workflow ``timer`` step: fire a ``delay`` trigger after its ``after``."""
+        trig = self.triggers.get(trigger)
+        if trig is None or trig.type != "delay" or not trig.after:
+            raise ValueError(f"{trigger!r} is not an available delay trigger")
+        at = self.queue.clock() + duration_days(trig.after) * DAY
+        await self.queue.enqueue(
+            self.scope, "trigger", {"trigger": trigger, "event": event}, run_at=at,
+            dedupe_key=f"delay:{trigger}:{event.get('run', '')}",
+        )  # fmt: skip
+        return {"armed": trigger, "at": at}
+
+    async def upsert_items(
+        self, source: str, items: list[dict[str, Any]], *, replace: bool = False
+    ) -> int:
+        """Items a relative trigger watches (calendar events...): ``{id, start (epoch or
+        ISO), ...}``. With ``replace``, items missing from the list are removed."""
+        now = time.time()
+        db = self.instance.db
+        ids = []
+        for item in items:
+            start = _epoch(item.get("start"))
+            item_id = str(item["id"])
+            ids.append(item_id)
+            await db.execute(
+                "INSERT INTO source_items (tenant_id, instance_id, source, item_id, start_ts, data,"
+                " updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (tenant_id, instance_id,"
+                " source, item_id) DO UPDATE SET start_ts = excluded.start_ts,"
+                " data = excluded.data, updated_at = excluded.updated_at",
+                (self.scope.tenant_id, self.scope.instance_id, source, item_id, start,
+                 json.dumps(item, ensure_ascii=False, default=str), now),
+            )  # fmt: skip
+        if replace:
+            rows = await db.fetchall(
+                "SELECT item_id FROM source_items WHERE tenant_id = ? AND instance_id = ?"
+                " AND source = ?",
+                (self.scope.tenant_id, self.scope.instance_id, source),
+            )
+            for row in rows:
+                if row["item_id"] not in ids:
+                    await db.execute(
+                        "DELETE FROM source_items WHERE tenant_id = ? AND instance_id = ?"
+                        " AND source = ? AND item_id = ?",
+                        (self.scope.tenant_id, self.scope.instance_id, source, row["item_id"]),
+                    )
+        await self.scan_relative()
+        return len(items)
+
+    async def scan_relative(self) -> int:
+        """Plan the firing of every relative trigger for every upcoming item."""
+        planned = 0
+        now = self.queue.clock()
+        for name, trig in self.triggers.items():
+            if trig.type != "relative":
+                continue
+            offset = _signed_seconds(trig.offset or "0s")
+            rows = await self.instance.db.fetchall(
+                "SELECT item_id, start_ts, data FROM source_items WHERE tenant_id = ?"
+                " AND instance_id = ? AND source = ?",
+                (self.scope.tenant_id, self.scope.instance_id, trig.source),
+            )
+            for row in rows:
+                at = float(row["start_ts"]) + offset
+                if at <= now:
+                    continue
+                event = {**json.loads(row["data"]), "start_ts": float(row["start_ts"])}
+                job = await self.queue.enqueue(
+                    self.scope, "trigger", {"trigger": name, "event": event}, run_at=at,
+                    dedupe_key=f"rel:{name}:{row['item_id']}:{int(float(row['start_ts']))}",
+                )  # fmt: skip
+                planned += job is not None
+        return planned
+
+    async def _still_due(self, trig: Trigger, event: dict[str, Any]) -> bool:
+        row = await self.instance.db.fetchone(
+            "SELECT start_ts FROM source_items WHERE tenant_id = ? AND instance_id = ?"
+            " AND source = ? AND item_id = ?",
+            (self.scope.tenant_id, self.scope.instance_id, trig.source, str(event.get("id"))),
+        )
+        return (
+            row is not None and abs(float(row["start_ts"]) - float(event.get("start_ts", -1))) < 1
+        )
+
+    async def _job_relative_scan(self, job: Job) -> None:
+        await self.scan_relative()
+        bucket = int(self.queue.clock() // 600) + 1
+        await self.queue.enqueue(
+            self.scope, "relative_scan", {}, run_at=bucket * 600.0, dedupe_key=f"relscan:{bucket}"
+        )
 
     # --- approvals ---------------------------------------------------------------------
 
@@ -426,7 +621,9 @@ class Headless:
         await inst.audit.record(
             self.scope, by, f"inbox_{status}", f"inbox/{item_id}", {"note": note}
         )
-        if item.kind == "approval":
+        if item.kind == "approval" and item.payload.get("run"):
+            await self.engine.decided(str(item.payload["run"]), approved, by, note)
+        elif item.kind == "approval":
             await self.queue.enqueue(
                 self.scope, "approved", {"item": item_id}, dedupe_key=f"approved:{item_id}"
             )
@@ -540,3 +737,15 @@ def _envelope_json(env: Envelope) -> dict[str, Any]:
 
 
 __all__ = ["FALLBACK", "Headless", "TurnResult", "render_event"]
+
+
+def _epoch(value: Any) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+
+
+def _signed_seconds(offset: str) -> float:
+    text = offset.strip()
+    sign = -1.0 if text.startswith("-") else 1.0
+    return sign * duration_days(text.lstrip("+-")) * DAY

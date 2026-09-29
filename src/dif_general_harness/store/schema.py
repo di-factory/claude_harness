@@ -72,6 +72,22 @@ MIGRATIONS: list[list[str]] = [
             attrs TEXT NOT NULL, updated_at DOUBLE PRECISION NOT NULL,
             PRIMARY KEY (tenant_id, instance_id, contact_key))""",
     ],
+    [  # M3: workflow runs and the items relative triggers watch
+        """CREATE TABLE IF NOT EXISTS workflow_runs (
+            id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, instance_id TEXT NOT NULL,
+            workflow TEXT NOT NULL, status TEXT NOT NULL, input TEXT NOT NULL,
+            state TEXT NOT NULL, outcome TEXT, error TEXT,
+            wait_kind TEXT, wait_channel TEXT, wait_contact TEXT, wait_event TEXT,
+            created_at DOUBLE PRECISION NOT NULL, updated_at DOUBLE PRECISION NOT NULL)""",
+        """CREATE INDEX IF NOT EXISTS runs_waiting
+            ON workflow_runs (tenant_id, instance_id, status, wait_kind, wait_channel,
+                              wait_contact)""",
+        """CREATE TABLE IF NOT EXISTS source_items (
+            tenant_id TEXT NOT NULL, instance_id TEXT NOT NULL, source TEXT NOT NULL,
+            item_id TEXT NOT NULL, start_ts DOUBLE PRECISION NOT NULL, data TEXT NOT NULL,
+            updated_at DOUBLE PRECISION NOT NULL,
+            PRIMARY KEY (tenant_id, instance_id, source, item_id))""",
+    ],
 ]
 
 

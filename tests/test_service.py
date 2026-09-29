@@ -137,8 +137,7 @@ async def test_unsupported_parts_are_reported(tmp_path: Path) -> None:
     async with inst:
         codes = {(i.code, i.path) for i in headless.issues}
         assert ("channel_unavailable", "channels.mail") in codes
-        assert ("trigger_unavailable", "triggers.report") in codes
-        assert set(headless.triggers) == {"morning", "lead"}
+        assert set(headless.triggers) == {"morning", "lead", "report"}  # report runs a workflow
 
 
 # --- approvals and escalation ------------------------------------------------------
@@ -273,16 +272,20 @@ async def test_schedule_trigger_runs_and_reschedules(tmp_path: Path) -> None:
     async with inst:
         await headless.start()
         await headless.start()  # a restart seeds nothing twice
-        rows = await inst.db.fetchall("SELECT run_at FROM jobs WHERE kind = 'trigger'")
-        assert len(rows) == 1
-        first = rows[0]["run_at"]
+
+        async def morning(status: str | None = None) -> list[float]:
+            rows = await inst.db.fetchall(
+                "SELECT run_at, payload, status FROM jobs WHERE kind = 'trigger'"
+            )
+            mine = [r for r in rows if json.loads(r["payload"])["trigger"] == "morning"]
+            return [r["run_at"] for r in mine if status in (None, r["status"])]
+
+        assert len(await morning()) == 1
+        first = (await morning())[0]
         env.clock.now = first
         assert await headless.worker().drain() >= 1
         assert env.provider.requests[0].messages[0].text() == "Morning check."
-        pending = await inst.db.fetchall(
-            "SELECT run_at FROM jobs WHERE kind = 'trigger' AND status = 'queued'"
-        )
-        assert [r["run_at"] - first for r in pending] == [86400]
+        assert [t - first for t in await morning("queued")] == [86400]
         assert [r.actor for r in await inst.audit.records(inst.scope, action="trigger_run")] == [
             "trigger:morning"
         ]
