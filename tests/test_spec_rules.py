@@ -106,6 +106,16 @@ PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
         _no_address_delivery,
     ),
     (
+        "service-desk-cell",
+        "invalid_condition",
+        lambda d: d["policies"]["escalation"]["rules"][0].update(when="ticket.priority in ['p1'"),
+    ),
+    (
+        "pyme-receipt-processing",
+        "invalid_condition",
+        lambda d: d["workflows"]["process-document"]["steps"][1].update(when="size(steps) > 1"),
+    ),
+    (
         "dev-cell",
         "invalid_permission_rule",
         lambda d: d["policies"]["permissions"]["deny"].append("coding.bash(cmd=x, y)"),

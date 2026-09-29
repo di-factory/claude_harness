@@ -12,6 +12,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from ..core import cel
 from ..policy.permissions import Rule
 from .errors import Issue
 from .schema import SolutionSpec, Step
@@ -65,6 +66,23 @@ def _covered(rules: list[str], tool: str, *, unconditional: bool = False) -> boo
         prefix = tool[:-1]
         return any(b == tool or b.startswith(prefix) for b in bases)
     return any(fnmatch.fnmatch(tool, b) for b in bases)
+
+
+_CONDITION_KEYS = {"when", "unless", "expr"}
+
+
+def _conditions(obj: Any, path: str = "") -> Iterator[tuple[str, str]]:
+    """Every condition string in the spec, with where it sits."""
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            here = f"{path}.{key}" if path else str(key)
+            if key in _CONDITION_KEYS and isinstance(value, str):
+                yield here, value
+            else:
+                yield from _conditions(value, here)
+    elif isinstance(obj, list):
+        for i, value in enumerate(obj):
+            yield from _conditions(value, f"{path}[{i}]")
 
 
 def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> list[Issue]:
@@ -122,6 +140,14 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
         used = template_refs | set(_VAR_CEL.findall(joined))
         for v in sorted(set(spec.variables) - used):
             warn("unused_variable", f"variables.{v}", f"variable {v!r} is declared but never used")
+
+    # --- conditions (CEL subset) -------------------------------------------------
+    for where, text in _conditions(data):
+        if "{{" in text:
+            continue  # still a template in a pack; checked again once the instance fills it
+        problem = cel.check(text)
+        if problem:
+            err("invalid_condition", where, f"{problem}: {text!r}")
 
     # --- secrets ---------------------------------------------------------------
     used_secrets = set(_secrets_used(data))
