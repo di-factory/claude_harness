@@ -145,9 +145,16 @@ class Clock:
 
 
 class Env:
-    def __init__(self, tmp_path: Path, script: list[Any], edit: Any = None) -> None:
+    def __init__(
+        self,
+        tmp_path: Path,
+        script: list[Any],
+        edit: Any = None,
+        secrets: dict[str, str] | None = None,
+    ) -> None:
         self.tmp_path = tmp_path
         self.edit = edit
+        self.secrets = secrets or {}
         self.provider = FakeProvider(script)
         self.sent: list[httpx2.Request] = []
         self.clock = Clock()
@@ -157,6 +164,8 @@ class Env:
             self.sent.append(request)
             if "telegram" in request.url.host:
                 return httpx2.Response(200, json={"ok": True, "result": {"message_id": 7}})
+            if "slack.com" in request.url.host:
+                return httpx2.Response(200, json={"ok": True, "ts": "1700000000.000200"})
             return httpx2.Response(201, json={"sid": f"SM{len(self.sent)}"})
 
         return httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
@@ -173,6 +182,7 @@ class Env:
                 "DIF_SECRET_API_TOKEN": API_TOKEN,
                 "DIF_SECRET_TELEGRAM": TG_TOKEN,
                 "DIF_SECRET_CRM_HOOK": HOOK,
+                **{f"DIF_SECRET_{k.upper()}": v for k, v in self.secrets.items()},
             }
         )
         options = RuntimeOptions(

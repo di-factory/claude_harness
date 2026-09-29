@@ -358,6 +358,10 @@ class Headless:
         handoff_to = (self.instance.spec.policies.escalation or {}).get("handoff_to") or {}
         if handoff_to.get("type") == "channel" and handoff_to.get("channel"):
             targets.append({"channel": handoff_to["channel"]})
+        elif handoff_to.get("type") == "email" and handoff_to.get("to"):
+            mail = next((n for n, a in self.adapters.items() if a.config.type == "email"), None)
+            if mail is not None:
+                targets.append({"channel": mail, "to": handoff_to["to"]})
         for target in targets:
             name = target.get("channel")
             adapter = self.adapters.get(str(name))

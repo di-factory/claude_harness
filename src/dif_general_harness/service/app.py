@@ -27,7 +27,7 @@ from typing import Any, Literal
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from ..channels import ChannelError, Inbound, Unauthorized
+from ..channels import ChannelError, Handshake, Inbound, Unauthorized
 from ..runtime import Instance
 from ..tenancy.config_versions import ConfigError, ConfigStore
 from .config import apply_active, watch_config
@@ -135,6 +135,8 @@ def create_app(
             results = await headless.receive(name, _inbound(request, await request.body()))
         except Unauthorized as exc:
             raise HTTPException(401, str(exc)) from None
+        except Handshake as shake:
+            return Response(json.dumps(shake.body), media_type="application/json")
         except ChannelError as exc:
             raise HTTPException(400, str(exc)) from None
         if results is not None:

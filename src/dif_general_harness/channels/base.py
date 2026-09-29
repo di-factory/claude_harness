@@ -26,6 +26,15 @@ class Unauthorized(ChannelError):
     """The request is not from the provider it claims (bad or missing signature)."""
 
 
+class Handshake(ChannelError):
+    """A verified provider request that wants a fixed answer, not a conversation (Slack's
+    URL check). The service answers ``body`` with HTTP 200."""
+
+    def __init__(self, body: dict[str, Any]) -> None:
+        super().__init__("handshake")
+        self.body = body
+
+
 @dataclass(frozen=True)
 class Envelope:
     channel: str

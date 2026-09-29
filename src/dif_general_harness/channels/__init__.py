@@ -1,4 +1,4 @@
-"""Channel adapters: gateway (WhatsApp/SMS), Telegram, REST/web."""
+"""Channel adapters: gateway (WhatsApp/SMS), Telegram, REST/web, email, Slack."""
 
 from typing import Any
 
@@ -6,8 +6,10 @@ import httpx2
 
 from ..spec.schema import Channel
 from .api import ApiChannel
-from .base import ChannelAdapter, ChannelError, Envelope, Inbound, Unauthorized
+from .base import ChannelAdapter, ChannelError, Envelope, Handshake, Inbound, Unauthorized
+from .email import EmailChannel
 from .gateway import GatewayChannel
+from .slack import SlackChannel
 from .telegram import TelegramChannel
 
 
@@ -25,6 +27,10 @@ def build_adapter(
         return TelegramChannel(name, config, credentials, client=client)
     if config.type in {"api", "web"}:
         return ApiChannel(name, config, credentials)
+    if config.type == "email":
+        return EmailChannel(name, config, credentials)
+    if config.type == "slack":
+        return SlackChannel(name, config, credentials, client=client)
     raise ChannelError(f"channel type {config.type!r} is not supported yet")
 
 
@@ -32,9 +38,12 @@ __all__ = [
     "ApiChannel",
     "ChannelAdapter",
     "ChannelError",
+    "EmailChannel",
     "Envelope",
     "GatewayChannel",
+    "Handshake",
     "Inbound",
+    "SlackChannel",
     "TelegramChannel",
     "Unauthorized",
     "build_adapter",
