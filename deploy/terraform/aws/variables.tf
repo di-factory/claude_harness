@@ -24,13 +24,54 @@ variable "secret_names" {
 }
 
 variable "size" {
-  description = "small (0.5 vCPU, 1 GB, db.t4g.micro) or medium (1 vCPU, 2 GB, db.t4g.small)."
+  description = <<-EOT
+    Sizing profile (spec deploy.profile):
+      small  - 0.5 vCPU / 1 GB, 1 task, db.t4g.micro, 7-day backups
+      medium - 1 vCPU / 2 GB, 1 task, db.t4g.small, 14-day backups
+      large  - 2 vCPU / 4 GB, 2 tasks, db.t4g.medium Multi-AZ, 30-day backups, private tasks
+  EOT
   type        = string
   default     = "small"
   validation {
-    condition     = contains(["small", "medium"], var.size)
-    error_message = "size must be small or medium."
+    condition     = contains(["small", "medium", "large"], var.size)
+    error_message = "size must be small, medium or large."
   }
+}
+
+variable "private_tasks" {
+  description = "Run tasks in private subnets behind a NAT gateway (default: only for large)."
+  type        = bool
+  default     = null
+}
+
+variable "alarm_email" {
+  description = "Where CloudWatch alarms are sent (empty: the SNS topic has no subscriber yet)."
+  type        = string
+  default     = ""
+}
+
+variable "log_retention_days" {
+  description = "How long container logs are kept (the audit trail lives in the database)."
+  type        = number
+  default     = 30
+}
+
+variable "images_to_keep" {
+  description = "Images kept in ECR, so earlier releases stay available for rollback."
+  type        = number
+  default     = 20
+}
+
+variable "fleet_url" {
+  description = "The Di-Factory control plane (outbound only); empty disables the instance agent."
+  type        = string
+  default     = ""
+}
+
+variable "otel_endpoint" {
+  description = "OTLP/HTTP endpoint for traces (empty: no telemetry leaves the instance)."
+  type        = string
+  default     = ""
 }
 
 variable "certificate_arn" {

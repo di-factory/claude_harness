@@ -11,3 +11,8 @@ build/
 
 # staged deploy builds (constructor v2)
 deploy/build/
+
+# terraform working state (the lock file is committed)
+.terraform/
+*.tfstate
+*.tfstate.*

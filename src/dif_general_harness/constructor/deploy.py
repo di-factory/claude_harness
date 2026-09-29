@@ -188,9 +188,18 @@ def required_secrets(staged: ResolvedSpec) -> dict[str, str]:
     return {**out, **SERVICE_SECRETS}
 
 
+def release_tag(staged: ResolvedSpec, out: Path) -> str:
+    """The image tag of one approved solution: its version plus the start of its content hash,
+    so a config change under the same version is a new, immutable image (and a rollback
+    target stays addressable)."""
+    folder = out / "solution"
+    digest = solution_hash(folder)[:12] if folder.is_dir() else "unstaged"
+    return f"{staged.spec.solution.version}-{digest}"
+
+
 def plan_docker(staged: ResolvedSpec, out: Path, *, image: str | None = None) -> DeployPlan:
     sol = staged.spec.solution
-    image = image or f"dif/{sol.id}:{sol.version}"
+    image = image or f"dif/{sol.id}:{release_tag(staged, out)}"
     secrets = required_secrets(staged)
     (out / "secrets").mkdir(exist_ok=True)
     readme = ["One file per secret, named exactly as below, holding only the value.", ""]
@@ -257,16 +266,18 @@ def plan_aws(staged: ResolvedSpec, out: Path) -> DeployPlan:
     tfvars = {
         "name": name,
         "region": deploy.region,
-        "image_tag": spec.solution.version,
+        "image_tag": release_tag(staged, out),
         "secret_names": sorted(secrets),
         "tenant_id": spec.tenant.id if spec.tenant else "local",
         "size": deploy.profile or "small",
     }
+    if deploy.profile not in (None, "small", "medium", "large"):
+        raise DeployError(f"deploy.profile must be small, medium or large, not {deploy.profile!r}")
     tf_file = out / "terraform.tfvars.json"
     tf_file.write_text(json.dumps(tfvars, indent=2) + "\n", encoding="utf-8")
     tf = ["terraform", f"-chdir={REPO_ROOT / 'deploy' / 'terraform' / 'aws'}"]
     solution = os.path.relpath(out / "solution", REPO_ROOT)
-    image = f"{ECR}:{spec.solution.version}"
+    image = f"{ECR}:{tfvars['image_tag']}"
     login = (
         f"aws ecr get-login-password --region {deploy.region}"
         f" | docker login --username AWS --password-stdin {ECR.split('/')[0]}"

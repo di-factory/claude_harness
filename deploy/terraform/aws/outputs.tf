@@ -15,3 +15,13 @@ output "secrets_to_fill" {
 output "database_endpoint" {
   value = aws_db_instance.main.address
 }
+
+output "alarm_topic" {
+  description = "SNS topic for the instance's alarms (subscribe the client's on-call here)."
+  value       = aws_sns_topic.alarms.arn
+}
+
+output "image_tag" {
+  description = "The running release; to roll back, apply again with the previous image_tag."
+  value       = var.image_tag
+}

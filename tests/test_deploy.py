@@ -119,10 +119,17 @@ def test_aws_plan_respects_the_data_region(examples: Path, tmp_path: Path) -> No
     plan = plan_aws(staged, tmp_path)
     tfvars = json.loads((tmp_path / "terraform.tfvars.json").read_text())
     assert tfvars["region"] == "mx-central-1" and tfvars["tenant_id"] == "clinica-sonrisa"
+    digest = solution_hash(tmp_path / "solution")[:12]
+    assert tfvars["image_tag"] == f"1.0.0-{digest}"  # a config change is a new, immutable image
+    assert any(part.endswith(f":1.0.0-{digest}") for cmd in plan.commands for part in cmd)
     assert "admin_token" in tfvars["secret_names"] and "twilio" in tfvars["secret_names"]
     assert any("{ecr}" in part for cmd in plan.commands for part in cmd)
     assert plan.commands[-1][-1].startswith("-var-file=")
 
+    staged.spec.deploy.profile = "huge"  # type: ignore[union-attr]
+    with pytest.raises(DeployError, match="small, medium or large"):
+        plan_aws(staged, tmp_path)
+    staged.spec.deploy.profile = "large"  # type: ignore[union-attr]
     staged.spec.deploy.region = "us-east-1"  # type: ignore[union-attr]
     with pytest.raises(DeployError, match="outside the allowed data region"):
         plan_aws(staged, tmp_path)
