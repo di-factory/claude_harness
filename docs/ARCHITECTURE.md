@@ -599,6 +599,9 @@ tests/  evals/  docs/
 Milestones have **no dates** (decision 28): each one is done when its gate
 passes, and work moves straight on to the next.
 
+**Status:** M0 to M4 are done; each gate is `tests/test_acceptance_m<n>.py` (M4's is the
+v1.0 gate). After v1.0: GCP and Azure profiles, and the known gaps listed in `CLAUDE.md`.
+
 **Instances** follow the template. The first candidates are listed in §8; an
 instance can start once the modules it needs have shipped.
 
@@ -656,6 +659,13 @@ instance can start once the modules it needs have shipped.
 | 48 | Evals (M3) | Each case runs in a **fresh instance under the headless service**: channels record, fixtures replace connectors, approvals are never granted, and a case controls the clock. Results are stored per config version; a case that passed before and fails now is a **regression**. |
 | 49 | Python extensions (M3) | `tools.python` loads in-process from the **staged solution**, so Jag's deploy signature covers the code. The tool's namespace is the module's name. Extensions run behind the same permissions, verification, budgets and audit; isolating them in a container waits for the M4 executor. |
 | 50 | Email and Slack (M3) | Email arrives through the provider's **inbound-parse webhook** (no IMAP polling) and leaves through SMTP; Slack uses the Events API with one session per thread. |
+| 51 | Cost ledger (M4) | Every model call is recorded **once** in a usage ledger (day, agent, role, vendor, model: calls, tokens, USD at list price) through one charge path; reports group by any of those, and models without a price are listed as **unpriced**, never reported as free. |
+| 52 | Telemetry (M4) | A small, dependency-free **OTLP/HTTP exporter** in the GenAI conventions (`invoke_agent`, `chat`, `execute_tool`), on only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set. **No content leaves**: names, counts, timings and costs only; a collector that is down never slows or breaks a run. |
+| 53 | Region policy (M4) | Providers declare a `region` (the direct Anthropic API defaults to `us`); `governance.regions.models` and `models.allowed_regions` both apply; a provider with no known region is refused while a policy is set; later layers can only narrow the list and the data region cannot move. |
+| 54 | Container executor (M4) | Shell commands run in a **throwaway container per command**: only the workspace mounted, no network unless an egress proxy enforces `allow_hosts`, no capabilities, a read-only root, resource limits, the entrypoint forced to bash, killed on timeout. A bad executor config means no shell, never an unconfined one. |
+| 55 | AWS module (M4) | Sizing **profiles** (small, medium, large: task count, database class, Multi-AZ, backups, private tasks), rolling upgrades with the circuit breaker, images tagged `<version>-<solution hash>` and kept for rollback, CloudWatch alarms to SNS. The module ships `terraform test` files that plan the profiles against a mocked provider. |
+| 56 | Control plane (M4) | Instances pull **signed offers** (a config, or a rollback to a hash they ran), where the signature covers data, approver and gate. An **eval-gated** offer activates only after the instance runs the offered config's suites with its own models (a gate that runs nothing fails). **Rollouts** go instance by instance and roll back every upgraded instance, to the config it reported running before, when one rejects. The control plane validates offers except for file existence, which the instance checks. |
+| 57 | Constructor v3 (M4) | `adjust` and `upgrade` re-resolve, validate and **diff** an instance before writing it; offers carry the config **as the container resolves it** (paths under `/app/solution`); a change that needs new files ships as a new deploy. Instance values are checked against their variables (`invalid_value`), not only in the interview. |
 
 ## 8. First instantiation candidates (parked)
 

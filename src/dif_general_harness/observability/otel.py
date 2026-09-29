@@ -226,3 +226,5 @@ class TracedProvider:
             raise
         finally:
             self.tracer.finish(span)
+            if span.parent_id is None:  # a call outside any run (extraction, a judge)
+                await self.tracer.flush(span.trace_id)

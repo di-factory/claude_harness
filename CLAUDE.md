@@ -2,7 +2,7 @@
 
 Di-Factory's general solution template: an agent runtime where every client
 solution is a declarative **solution spec** (a pack plus a client instance).
-Read `docs/ARCHITECTURE.md` (50 decisions, §7) before changing behaviour;
+Read `docs/ARCHITECTURE.md` (57 decisions, §7) before changing behaviour;
 `docs/spec/SOLUTION_SPEC.md` is the spec contract.
 
 ## Commands
@@ -18,6 +18,11 @@ uv run dif-general-harness build --request "..." [--answers FILE] --packs docs/s
 uv run dif-general-harness run|console|serve INSTANCE.json --packs DIR
 uv run dif-general-harness eval INSTANCE.json --packs DIR   # fresh instance per case; drift
 uv run dif-general-harness keys new jag | approve ... | deploy ... --target docker|aws
+uv run dif-general-harness adjust|upgrade INSTANCE.json ... --dry-run     # constructor v3
+uv run dif-general-harness costs INSTANCE.json --by vendor,model         # spend + quality
+uv run dif-general-harness fleet register|offer|rollout|rollback|status  # via the control plane
+uv run dif-general-harness control serve --key KEY                       # the control plane
+terraform -chdir=deploy/terraform/aws init -backend=false && terraform -chdir=deploy/terraform/aws test
 ```
 
 Tests start a throwaway local Postgres (unix socket, `tests/conftest.py`) and run the
@@ -49,13 +54,16 @@ All four checks must pass before every commit.
   API/web, email, Slack), cron, the inbox
 - `src/dif_general_harness/service/`: the headless runtime (`Headless`), FastAPI app, config boot
 - `src/dif_general_harness/tenancy/`: secrets (env, file, AWS) and config versions
-- `src/dif_general_harness/fleet/`: the outbound-only instance agent
+- `src/dif_general_harness/fleet/`: the outbound-only instance agent (signed, eval-gated offers)
+- `src/dif_general_harness/control/`: the control plane (fleet view, offers, rollouts, audit)
+- `src/dif_general_harness/observability/`: cost ledger and reports, quality metrics, OTLP traces
 - `src/dif_general_harness/console/`: Textual TUI
 - `src/dif_general_harness/constructor/`: matching, interview, build, evals, approve and deploy
-- `deploy/docker/`, `deploy/terraform/aws/`: the image and the basic AWS module
+- `deploy/docker/`, `deploy/terraform/aws/`: the image and the AWS module (profiles, alarms,
+  `tests/*.tftest.hcl` against a mocked provider)
 - `integrations/openclaw-skill/`: the wrapper Teky uses to drive the constructor
 - `docs/spec/examples/`: six example packs + one instance, which are also the **test fixtures**
-- `tests/test_acceptance_m1.py` … `tests/test_acceptance_m3.py`: the milestone gates;
+- `tests/test_acceptance_m1.py` … `tests/test_acceptance_m4.py`: the milestone gates;
   `tests/support.py` holds the service test fixtures
 
 ## Rules that must not be broken
@@ -83,12 +91,13 @@ All four checks must pass before every commit.
 
 ## Current milestone
 
-M3 (intelligence modules) is done: its gate is `tests/test_acceptance_m3.py` (the Clínica
-Sonrisa eval suite end to end, memory and knowledge acceptance). Next: M4 operations
-hardening (Terraform hardening, OpenTelemetry, cost reports, region policy, container
-executor, control plane MVP, constructor v3).
+v1.0: M0 to M4 are done; the last gate is `tests/test_acceptance_m4.py` (one-command deploy
+plan and rollback, costs by tenant and vendor, eval-gated fleet rollouts, regions and the
+sandbox). Next: GCP and Azure profiles, and the known gaps.
 Known gaps: the intent router short-circuit and context compaction (roles are validated,
 not used), file and batch triggers, embeddings/hybrid retrieval (pgvector), PDF/DOCX/OCR
 ingestion (the `documents` pack), syncing knowledge sources other than files (they push
 through the admin API), sampled output verification (`applies_to: output`), the voice
-channel, and extension isolation. See `docs/ARCHITECTURE.md` §6 and decisions 43–50.
+channel, running Python extensions in the container executor, the egress proxy that
+enforces `allow_hosts`, and a first apply of the AWS module in a real account. See
+`docs/ARCHITECTURE.md` §6 and decisions 43–57.

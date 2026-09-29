@@ -204,20 +204,20 @@ The template succeeds when new client solutions are mostly configuration and run
 
 **Acceptance tests (template level)**
 
-- [ ] **Spec:** a pack plus an override spec loads, validates and runs with no code changes.
-- [ ] **Model swap:** changing a role's model in the spec switches providers, and the pack's evals decide pass or fail.
-- [ ] **Tool contract:** adding an MCP or HTTP tool to the spec makes it callable without redeploy.
-- [ ] **Permissions:** a prompt-injected message asking for a side effect produces an approval request, never execution.
-- [ ] **Headless:** a scheduled trigger and an inbound channel message each run a turn and reply through the channel.
-- [ ] **Durability:** killing the service mid-workflow and restarting resumes from the last completed step.
-- [ ] **Escalation:** an escalated conversation arrives in the inbox with transcript, plan, tool trace and verdict.
-- [ ] **PII:** planted names, phones and CURP never appear in model inputs; replies show them only where allowed.
-- [ ] **Consent:** an opted-out contact receives no triggered messages.
-- [ ] **Isolation:** data from tenant A, or contact A, never appears for tenant B or contact B.
-- [ ] **Audit and cost:** every side effect has an audit record; costs sum correctly by tenant and vendor.
-- [ ] **Memory:** a fact from session 1 is recalled in session 2 for the same contact only.
-- [ ] **Knowledge:** answers cite sources, and say "not found" when retrieval is below threshold.
-- [ ] **Deploy:** one command deploys an instance to a clean AWS account, and rollback restores the previous config.
+- [x] **Spec:** a pack plus an override spec loads, validates and runs with no code changes. *(gate M1)*
+- [x] **Model swap:** changing a role's model in the spec switches providers, and the pack's evals decide pass or fail. *(gate M1, M3)*
+- [x] **Tool contract:** adding an MCP or HTTP tool to the spec makes it callable without redeploy. *(gate M1)*
+- [x] **Permissions:** a prompt-injected message asking for a side effect produces an approval request, never execution. *(gate M1)*
+- [x] **Headless:** a scheduled trigger and an inbound channel message each run a turn and reply through the channel. *(gate M2)*
+- [x] **Durability:** killing the service mid-workflow and restarting resumes from the last completed step. *(gate M2)*
+- [x] **Escalation:** an escalated conversation arrives in the inbox with transcript, plan, tool trace and verdict. *(gate M2: transcript and tool trace; when verification escalates, its verdict is the escalation reason; there is no separate plan object yet)*
+- [x] **PII:** planted names, phones and CURP never appear in model inputs; replies show them only where allowed. *(gate M2)*
+- [x] **Consent:** an opted-out contact receives no triggered messages. *(gate M2)*
+- [x] **Isolation:** data from tenant A, or contact A, never appears for tenant B or contact B. *(gate M2)*
+- [x] **Audit and cost:** every side effect has an audit record; costs sum correctly by tenant and vendor. *(gate M2, M4)*
+- [x] **Memory:** a fact from session 1 is recalled in session 2 for the same contact only. *(gate M3)*
+- [x] **Knowledge:** answers cite sources, and say "not found" when retrieval is below threshold. *(gate M3)*
+- [ ] **Deploy:** one command deploys an instance to a clean AWS account, and rollback restores the previous config. *(offline in the M4 gate: the one-command plan, the module's tests against a mocked provider, and rollback; the first apply in a real AWS account is still to do)*
 
 ## Milestones and release plan
 

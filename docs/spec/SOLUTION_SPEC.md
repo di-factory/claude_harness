@@ -441,6 +441,13 @@ crashed half way runs again on resume, so side-effecting tools should be idempot
             "secrets_backend": "aws-secrets-manager", "database": "postgres" }
 ```
 
+- `deploy.profile`: `small` (one task, db.t4g.micro), `medium` (db.t4g.small) or `large`
+  (two tasks, Multi-AZ db.t4g.medium, private subnets); images are tagged
+  `<version>-<solution hash>`.
+- `workspaces.<name>.executor`: `{"type": "container", "image", "cpu", "memory",
+  "timeout", "allow_hosts", "egress_proxy", "runtime"}` runs shell commands in a throwaway
+  container with no network unless `egress_proxy` (which must enforce `allow_hosts`) is set.
+
 ### 5.14 `workspaces` (added by paper test 2)
 
 ```json
