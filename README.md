@@ -6,10 +6,12 @@ across its lines of business.
 One open-source agent runtime, many client solutions: each one is a
 declarative *solution spec* on top of a shared core.
 
-> **Status: M1 (agent core) done; M2 next.** Instances run locally from their spec:
-> real providers, tools, permissions, budgets, redaction, a TUI console and the
-> constructor v1. Channels, triggers and deploy arrive with M2. Commands marked
-> *planned* below are not available yet.
+> **Status: M2 (headless runtime) done; M3 next.** An instance runs as a service from its
+> spec: WhatsApp/SMS, Telegram and REST channels, schedule and webhook triggers, a durable
+> queue on Postgres, an approvals inbox, PII tokenization, consent, a tamper-evident audit
+> log, versioned config with hot reload, an outbound-only instance agent, a Docker image and
+> a basic AWS module. Deploys need Jag's signed approval. Workflows, memory, knowledge and
+> verification arrive with M3.
 
 ---
 
@@ -118,7 +120,7 @@ cell, Conversational RAG, Receipt Processing, Dev cell, OPC C-suite) are in [`do
 |---|---|
 | **M0 Core** ✓ | Data model, event stream, agent loop, solution-spec schema, tenant ids, offline tests |
 | **M1 Agent core** ✓ | Anthropic + OpenAI-compatible providers, tool registry, MCP/HTTP tools, permissions, budgets, TUI console, constructor v1 |
-| **M2 Runtime** | Headless service, channels, triggers, durable queue, approvals inbox, PII/consent/audit, Postgres, instance agent, basic AWS deploy, constructor v2 |
+| **M2 Runtime** ✓ | Headless service, channels, triggers, durable queue, approvals inbox, PII/consent/audit, Postgres, instance agent, basic AWS deploy, constructor v2 |
 | **M3 Intelligence** | 5-layer memory, knowledge/RAG, verification, agent teams, feedback loop, pack evals |
 | **M4 Operations** | Terraform (AWS), OpenTelemetry, cost reports, region policy, fleet control plane, constructor v3 → **v1.0** |
 
@@ -149,11 +151,27 @@ uv run dif-general-harness run instances/<id>.json --packs docs/spec/examples -m
 uv run dif-general-harness eval instances/<id>.json --packs docs/spec/examples
 ```
 
-Planned:
+Run it as a service (M2):
 
 ```bash
-uv tool install git+https://github.com/di-factory/claude_harness@v0.1.0   # once releases are tagged
-dif-general-harness deploy my-solution --target aws   # M2
+# channels, triggers, inbox and admin API; Postgres in production
+export DIF_SECRET_ADMIN_TOKEN=... DIF_DATABASE_URL=postgresql://...
+uv run dif-general-harness serve instances/<id>.json --packs docs/spec/examples \
+    --public-url https://<the-url-providers-call>
+
+# deploy (constructor v2): Jag signs exactly what ships
+uv run dif-general-harness keys new jag                  # once; add the public key to .dif/approvers.json
+uv run dif-general-harness approve instances/<id>.json --packs docs/spec/examples \
+    --target aws --key ~/.dif/keys/jag.key --by jag
+uv run dif-general-harness deploy instances/<id>.json --packs docs/spec/examples --target aws
+#   docker: writes docker-compose.yml (instance + Postgres); aws: terraform.tfvars.json for
+#   deploy/terraform/aws plus the exact commands (--run executes them)
+```
+
+Install a tagged release (no PyPI):
+
+```bash
+uv tool install git+https://github.com/di-factory/claude_harness@v0.2.0
 ```
 
 ## Documentation

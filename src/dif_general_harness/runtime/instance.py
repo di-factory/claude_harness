@@ -35,6 +35,7 @@ import httpx2
 
 from ..core.events import Event, ToolCallFinished, ToolCallStarted, TurnEnded
 from ..core.loop import LoopConfig, run
+from ..core.messages import ToolResultBlock
 from ..core.scope import Scope
 from ..core.session import Session
 from ..governance import AuditLog, ConsentStore, GovernedTools, PiiPolicy, Tokenizer, TokenVault
@@ -222,11 +223,24 @@ class Instance:
         transcript = [
             {"role": str(m.role), "text": m.text()} for m in session.messages[-12:] if m.text()
         ]
+        results = {
+            b.tool_use_id: b
+            for m in session.messages
+            for b in m.content
+            if isinstance(b, ToolResultBlock)
+        }
+        trace = [
+            {"tool": call.name, "input": call.input,
+             "status": str(results[call.id].status) if call.id in results else "pending",
+             "error": results[call.id].error if call.id in results else None}
+            for m in session.messages
+            for call in m.tool_uses()
+        ]  # fmt: skip
         item = await self.inbox.create(
             "escalation",
             reason[:200],
             {"reason": reason, "agent": session.agent_id, "contact": session.contact_key,
-             "transcript": transcript},
+             "transcript": transcript, "tool_trace": trace[-20:]},
             session.id,
         )  # fmt: skip
         await self.store.set_state(self.scope, session.id, "escalated")

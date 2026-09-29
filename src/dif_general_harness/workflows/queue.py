@@ -66,8 +66,12 @@ class JobQueue:
         backoff_s: float = 5.0,
         max_backoff_s: float = 3600.0,
         clock: Callable[[], float] = time.time,
+        scope: Scope | None = None,
     ) -> None:
+        """With ``scope``, this queue claims only that instance's jobs: several instances
+        can share one database without ever running each other's work."""
         self.db = db
+        self.scope = scope
         self.lease_s = lease_s
         self.backoff_s = backoff_s
         self.max_backoff_s = max_backoff_s
@@ -99,13 +103,19 @@ class JobQueue:
     async def claim(self) -> Job | None:
         now = self.clock()
         lock = " FOR UPDATE SKIP LOCKED" if self.db.dialect == "postgres" else ""
+        mine = ""
+        params: list[Any] = [now + self.lease_s, now, now, now]
+        if self.scope is not None:
+            mine = " AND tenant_id = ? AND instance_id = ?"
+            params += [self.scope.tenant_id, self.scope.instance_id]
         async with self.db.transaction() as conn:
             row = await conn.fetchone(
                 "UPDATE jobs SET status = 'running', attempts = attempts + 1,"
                 " locked_until = ?, updated_at = ? WHERE id = (SELECT id FROM jobs WHERE"
-                " (status = 'queued' AND run_at <= ?) OR (status = 'running' AND locked_until < ?)"
-                f" ORDER BY run_at LIMIT 1{lock}) RETURNING *",
-                (now + self.lease_s, now, now, now),
+                " ((status = 'queued' AND run_at <= ?)"
+                " OR (status = 'running' AND locked_until < ?))"
+                f"{mine} ORDER BY run_at LIMIT 1{lock}) RETURNING *",
+                params,
             )
         return Job.from_row(row) if row else None
 

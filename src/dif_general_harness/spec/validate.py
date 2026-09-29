@@ -191,6 +191,12 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
             err("missing_dedupe", where, "file triggers need a dedupe_key")
         if trig.type == "schedule" and not trig.cron:
             err("missing_cron", where, "schedule triggers need a cron expression")
+        if trig.channel is not None:
+            target = channels.get(trig.channel)
+            if target is None:
+                err("unknown_channel", where, f"delivers to unknown channel {trig.channel!r}")
+            elif not trig.to and not target.address:
+                err("no_recipient", where, f"channel {trig.channel!r} has no address; set 'to'")
 
     for wname, wf in workflows.items():
         ids = [s.id for s in wf.steps]

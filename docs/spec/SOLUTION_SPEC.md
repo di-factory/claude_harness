@@ -309,6 +309,11 @@ messages outside a provider's session window must use a template.
 
 `requires_consent` makes the consent module skip contacts who opted out.
 
+A trigger that targets an agent can deliver the agent's reply: `channel` names the channel
+and `to` the address (default: the channel's `address`), for example a founder's daily
+brief. Delivery to a `contact` channel goes through consent; operator channels (`hitl`,
+`founder`, `outbound`) are exempt. The channel must exist, and it needs an address or `to`.
+
 ### 5.10 `workflows`
 
 ```json

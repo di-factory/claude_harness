@@ -25,6 +25,11 @@ def _codes(pack_dir: Path) -> set[str]:
     return {i.code for i in load_pack(pack_dir).issues if i.severity == "error"}
 
 
+def _no_address_delivery(d: dict[str, Any]) -> None:
+    d["channels"]["founder"].pop("address")
+    d["triggers"]["cto-health"]["channel"] = "founder"
+
+
 PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
     ("dev-cell", "unknown_workspace", lambda d: d["agents"]["developer"].update(workspace="nope")),
     ("opc-c-suite", "unknown_agent", lambda d: d["triggers"]["cto-health"].update(agent="cfo")),
@@ -89,6 +94,16 @@ PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
         "conversational-rag",
         "missing_file",
         lambda d: d["agents"]["assistant"].update(prompt="prompts/nope.md"),
+    ),
+    (
+        "opc-c-suite",
+        "unknown_channel",
+        lambda d: d["triggers"]["cto-health"].update(channel="nope"),
+    ),
+    (
+        "opc-c-suite",
+        "no_recipient",
+        _no_address_delivery,
     ),
     (
         "dev-cell",

@@ -212,6 +212,8 @@ class Trigger(Strict):
     agent: str | None = None
     input: Any = None
     requires_consent: bool = False
+    channel: str | None = None  # deliver the agent's reply here (e.g. a founder's daily brief)
+    to: str | None = None  # the address on that channel; default: the channel's address
 
 
 class Step(Loose):

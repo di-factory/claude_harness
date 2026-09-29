@@ -100,7 +100,7 @@ class Headless:
         public_url: str | None = None,
         clock: Any = None,
     ) -> Headless:
-        queue = JobQueue(instance.db, **({"clock": clock} if clock else {}))
+        queue = JobQueue(instance.db, scope=instance.scope, **({"clock": clock} if clock else {}))
         self = cls(instance, queue, _http=http_client, _public_url=public_url)
         self._wire(instance)
         return self
@@ -360,13 +360,45 @@ class Headless:
         text = render_event(trig.input or f"Trigger {name} fired.", event)
         session = await agent.new_session()
         reason = "error"
+        texts: list[str] = []
         async for ev in agent.send(session, text):
             if isinstance(ev, TurnEnded):
                 reason = ev.reason
+            elif (
+                isinstance(ev, MessageAdded)
+                and ev.message.role is Role.ASSISTANT
+                and ev.message.text()
+            ):
+                texts.append(ev.message.text())
         await self.instance.audit.record(
             self.scope, f"trigger:{name}", "trigger_run", trig.agent or "",
             {"session": session.id, "reason": reason},
         )  # fmt: skip
+        if trig.channel and texts:
+            cfg = self.instance.spec.channels[trig.channel]
+            to = render_event(trig.to, event) if trig.to else cfg.address
+            if to:
+                reply = await agent.reply("\n\n".join(texts))
+                await self.message(trig.channel, to, reply, session_id=session.id)
+
+    async def message(
+        self, channel: str, to: str, text: str, *, session_id: str | None = None
+    ) -> bool:
+        """A message the harness starts (not a reply). Contacts get it only with consent;
+        operator channels (hitl, founder, outbound) are exempt. Returns whether it was sent."""
+        inst = self.instance
+        cfg = inst.spec.channels[channel]
+        consent = inst.spec.governance.consent
+        required = consent.required and (not consent.channels or channel in consent.channels)
+        if cfg.purpose == "contact" and not await inst.consent.may_contact(
+            self.scope, to, channel, required=required
+        ):
+            await inst.audit.record(
+                self.scope, "system", "message_suppressed", channel, {"reason": "no consent"}
+            )
+            return False
+        await self.send(channel, to, text, session_id)
+        return True
 
     # --- approvals ---------------------------------------------------------------------
 

@@ -187,3 +187,14 @@ async def test_worker_retries_failures_and_unknown_kinds(db: Any) -> None:
     assert await worker.drain() == 1
     assert calls == 2
     assert await queue.counts(A) == {"done": 1, "dead": 1}
+
+
+async def test_a_scoped_queue_only_claims_its_own_jobs(db: Any) -> None:
+    await JobQueue(db).enqueue(B, "turn", {"tenant": "B"})
+    await JobQueue(db).enqueue(A, "turn", {"tenant": "A"})
+    mine = JobQueue(db, scope=A)
+    job = await mine.claim()
+    assert job is not None and job.payload == {"tenant": "A"}
+    assert await mine.claim() is None  # B's job is not A's to run
+    other = await JobQueue(db, scope=B).claim()
+    assert other is not None and other.payload == {"tenant": "B"}

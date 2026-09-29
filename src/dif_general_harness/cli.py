@@ -7,6 +7,9 @@
 - ``dif-general-harness build``: the constructor: match a pack, interview, write and
   validate the instance spec (``--answers FILE`` for a non-interactive build).
 - ``dif-general-harness eval INSTANCE``: run the instance's eval suites.
+- ``dif-general-harness keys new NAME`` / ``approve INSTANCE --target T`` /
+  ``deploy INSTANCE --target T``: constructor v2; a deploy needs Jag's signed approval of
+  exactly this staged solution.
 - ``dif-general-harness serve INSTANCE``: the headless service (``--database-url`` for
   Postgres); the admin token is the ``admin_token`` secret.
 """
@@ -21,6 +24,15 @@ import sys
 from pathlib import Path
 
 from .constructor import RecordingApprover, build, load_answers, match, run_suites
+from .constructor.deploy import (
+    DeployError,
+    approve,
+    check_approval,
+    new_key,
+    plan_aws,
+    plan_docker,
+    stage,
+)
 from .constructor.interview import Question
 from .core.events import ErrorEvent, TextDelta, ToolCallFinished, ToolCallStarted, TurnEnded
 from .policy import Approver, AutoApprover
@@ -181,6 +193,22 @@ async def _run(
         return code
 
 
+def database_url_from_env(environ: dict[str, str] | None = None) -> str | None:
+    """Postgres from parts (``DIF_DB_HOST``, ``DIF_DB_NAME``, ``DIF_DB_USER``,
+    ``DIF_DB_PASSWORD``), as ECS injects them: the password comes from Secrets Manager."""
+    from urllib.parse import quote
+
+    env = dict(os.environ) if environ is None else environ
+    host = env.get("DIF_DB_HOST")
+    if not host:
+        return None
+    user = quote(env.get("DIF_DB_USER", "dif"), safe="")
+    password = quote(env.get("DIF_DB_PASSWORD", ""), safe="")
+    port = env.get("DIF_DB_PORT", "5432")
+    name = env.get("DIF_DB_NAME", "dif")
+    return f"postgresql://{user}:{password}@{host}:{port}/{name}?sslmode=require"
+
+
 async def _serve(
     args: argparse.Namespace, resolved: ResolvedSpec, provider: ModelProvider | None
 ) -> int:
@@ -195,7 +223,11 @@ async def _serve(
     options = _options(args, provider, None)
     if options is None:
         return 2
-    url = args.database_url or f"sqlite:///{args.state.resolve() / 'dif.db'}"
+    url = (
+        args.database_url
+        or database_url_from_env()
+        or f"sqlite:///{args.state.resolve() / 'dif.db'}"
+    )
     db = await connect(url)
     try:
         running = await boot_config(db, scope_for(resolved.spec), resolved)
@@ -232,6 +264,67 @@ async def _serve(
         config = uvicorn.Config(app, host=args.host, port=args.port, log_level="info")
         await uvicorn.Server(config).serve()
     await db.close()
+    return 0
+
+
+def _approve_or_deploy(args: argparse.Namespace) -> int:
+    import subprocess
+    import tempfile
+
+    target = args.target
+    instance = args.path
+    catalog = PackCatalog(roots=args.packs or [instance.parent.parent, instance.parent])
+    approval_file = getattr(args, "approval", None) or instance.with_suffix(
+        f".{target}.approval.json"
+    )
+    try:
+        if args.group == "approve":
+            with tempfile.TemporaryDirectory() as tmp:
+                staged = stage(instance, catalog, Path(tmp) / "solution")
+                record = approve(staged, Path(tmp) / "solution", target, args.key, args.by)
+            approval_file.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+            print(f"approved {record['instance_id']} for {target} as {args.by}: {approval_file}")
+            return 0
+        if not approval_file.exists():
+            print(f"no approval at {approval_file}: Jag approves every deploy", file=sys.stderr)
+            return 3
+        approvers = json.loads(args.approvers.read_text(encoding="utf-8"))
+        staged_id = load_instance(instance, catalog).spec.solution.id
+        out = args.out or Path("deploy/build") / staged_id
+        out.mkdir(parents=True, exist_ok=True)
+        staged = stage(instance, catalog, out / "solution")
+        check_approval(
+            json.loads(approval_file.read_text(encoding="utf-8")),
+            out / "solution",
+            target,
+            approvers,
+        )
+        plan = plan_docker(staged, out) if target == "docker" else plan_aws(staged, out)
+    except (DeployError, SpecError, OSError, ValueError) as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 3
+    print(f"approved solution staged at {plan.folder / 'solution'}")
+    for f in plan.files:
+        print(f"wrote {f}")
+    print("secrets the client stores in their own vault:")
+    for name in sorted(plan.secrets):
+        print(f"  - {name}: {plan.secrets[name]}")
+    print("commands:")
+    for command in plan.commands:
+        print("  " + " ".join(command))
+    if args.run:
+        ecr = ""
+        for command in plan.commands:
+            if any("{ecr}" in part for part in command):
+                if not ecr:  # the repository exists now: ask terraform where it is
+                    out_cmd = [*plan.commands[0][:2], "output", "-raw", "ecr_repository"]
+                    ecr = subprocess.run(
+                        out_cmd, capture_output=True, text=True, check=True
+                    ).stdout.strip()
+                command = [part.replace("{ecr}", ecr) for part in command]
+            if subprocess.run(command, check=False).returncode != 0:
+                print(f"failed: {' '.join(command)}", file=sys.stderr)
+                return 1
     return 0
 
 
@@ -355,10 +448,44 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
     build_cmd.add_argument("--answers", type=Path, help="answers file (YAML/JSON): no prompts")
     build_cmd.add_argument("--out", type=Path, default=Path("instances"), help="output folder")
     build_cmd.add_argument("--packs", type=Path, action="append", help="folder containing packs")
+
+    keys = sub.add_parser("keys", help="approver keys (Ed25519)")
+    keys_sub = keys.add_subparsers(dest="command", required=True)
+    new = keys_sub.add_parser("new", help="create an approver key")
+    new.add_argument("name", help="who approves with it, e.g. jag")
+    new.add_argument("--out", type=Path, default=Path.home() / ".dif" / "keys")
+
+    for name, text in (
+        ("approve", "sign a staged solution for one deploy target (Jag)"),
+        ("deploy", "stage, check the approval and prepare (or run) the deploy"),
+    ):
+        cmd = sub.add_parser(name, help=text)
+        cmd.add_argument("path", type=Path, help="instance JSON")
+        cmd.add_argument("--packs", type=Path, action="append", help="folder containing packs")
+        cmd.add_argument("--target", choices=["docker", "aws"], required=True)
+        if name == "approve":
+            cmd.add_argument("--key", type=Path, required=True, help="the approver's private key")
+            cmd.add_argument(
+                "--by", required=True, help="the approver's name (as in approvers.json)"
+            )
+        else:
+            cmd.add_argument(
+                "--approval", type=Path, help="default: <instance>.<target>.approval.json"
+            )
+            cmd.add_argument("--approvers", type=Path, default=Path(".dif/approvers.json"))
+            cmd.add_argument("--out", type=Path, help="default: deploy/build/<instance-id>")
+            cmd.add_argument("--run", action="store_true", help="run the deploy commands too")
     args = parser.parse_args(argv)
 
     if args.group == "build":
         return _build(args)
+    if args.group == "keys":
+        path, public = new_key(args.out, args.name)
+        print(f"private key: {path} (keep it secret; only {args.name} uses it)")
+        print(f'add to approvers.json: "{args.name}": "{public}"')
+        return 0
+    if args.group in {"approve", "deploy"}:
+        return _approve_or_deploy(args)
 
     try:
         resolved = _load(args.path, args.packs)
