@@ -112,6 +112,10 @@ class DailySpend:
     def today(self, tenant: str) -> float:
         return self._totals.get(self._key(tenant), 0.0)
 
+    def set_today(self, key: str, usd: float) -> None:
+        """Load a persisted total (see ``SpendStore``)."""
+        self._totals[self._key(key)] = usd
+
 
 class RunMeter:
     """The loop's ``Meter`` for one run: prices each call and enforces the limits."""
@@ -135,6 +139,7 @@ class RunMeter:
         self.prices = DEFAULT_PRICES if prices is None else prices
         self.daily = daily or DailySpend()
         self.total = Usage()
+        self.by_model: dict[str, float] = {}
         self.unpriced: set[str] = set()
         self._started = time.monotonic()
 
@@ -146,6 +151,8 @@ class RunMeter:
         else:
             priced = usage.model_copy(update={"cost_usd": cost_usd(usage, price)})
         self.total = self.total + priced
+        name = model or "unknown"
+        self.by_model[name] = self.by_model.get(name, 0.0) + priced.cost_usd
         self.daily.add(self.tenant, priced.cost_usd)
         if self.agent_key:
             self.daily.add(self.agent_key, priced.cost_usd)

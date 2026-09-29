@@ -195,12 +195,8 @@ async def test_clinic_instance_runs_and_reports_gaps(examples: Path, tmp_path: P
         resumed = await agent.resume(session.id)
         assert [m.role for m in resumed.messages] == [Role.USER, Role.ASSISTANT]
         assert resumed.config_version == inst.resolved.version_hash
-        files = list(
-            (tmp_path / "state" / "clinica-sonrisa" / "clinica-sonrisa-appointments").rglob(
-                "*.jsonl"
-            )
-        )
-        assert len(files) == 1
+        assert await inst.store.list_sessions(inst.scope) == [session.id]
+        assert (tmp_path / "state" / "dif.db").exists()
 
 
 async def test_service_desk_tools_policy_and_redaction(examples: Path, tmp_path: Path) -> None:
@@ -257,7 +253,8 @@ async def test_service_desk_tools_policy_and_redaction(examples: Path, tmp_path:
         assert results["c"].status is ToolStatus.DENIED  # not in the agent's tools
         assert results["d"].status is ToolStatus.OK
 
-        raw = "".join(p.read_text() for p in (tmp_path / "state").rglob("*.jsonl"))
+        rows = await inst.db.fetchall("SELECT data FROM events")
+        raw = "".join(r["data"] for r in rows)
         assert IDP_TOKEN not in raw and "[REDACTED]" in raw
 
 

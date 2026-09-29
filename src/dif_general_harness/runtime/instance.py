@@ -9,6 +9,12 @@
 Each agent then gets its rendered system prompt, the tools matching its globs, a policy gate
 and a budget meter per run. Every event of a run is persisted, redacted, in the session store.
 
+Governance (§3.18) wraps every run: user text and tool results are PII-tokenized before the
+model sees them, tools get only the classes ``reveal_to_tools`` allows, replies are
+de-tokenized with ``reveal_output``, tool calls land in the audit log and spend is persisted
+per tenant, agent and model. The instance's database is SQLite under the state folder
+unless ``database_url`` (Postgres in production) or ``database`` is given.
+
 What the spec asks for but M1 cannot provide yet (knowledge, ledger, calendar connector,
 Python extensions, verification checks) is reported in ``issues`` rather than silently
 dropped. Tools with a ``verify`` check are forced to ``ask`` until the verification engine
@@ -27,16 +33,19 @@ from typing import Any
 
 import httpx2
 
-from ..core.events import Event
+from ..core.events import Event, ToolCallFinished, ToolCallStarted, TurnEnded
 from ..core.loop import LoopConfig, run
 from ..core.scope import Scope
 from ..core.session import Session
+from ..governance import AuditLog, ConsentStore, GovernedTools, PiiPolicy, Tokenizer, TokenVault
 from ..policy import Approver, DailySpend, Limits, PermissionPolicy, PolicyGate, Redactor, RunMeter
+from ..policy.spend import SpendStore
 from ..providers.base import ModelProvider
 from ..spec.errors import Issue
 from ..spec.loader import ResolvedSpec
 from ..spec.schema import Agent, SolutionSpec
-from ..store.jsonl import JsonlSessionStore
+from ..store.db import Database, connect
+from ..store.sql import SqlSessionStore
 from ..tenancy.secrets import EnvSecrets, SecretBackend, SecretResolver
 from ..tools.http import ConnectorError, http_tools
 from ..tools.mcp import McpToolSource
@@ -68,6 +77,8 @@ class RuntimeOptions:
     provider: ModelProvider | None = None  # replaces the router entirely (tests, evals)
     mcp_servers: dict[str, Any] = field(default_factory=dict)  # name -> in-process server
     http_client: httpx2.AsyncClient | None = None  # shared by HTTP connectors (tests: a mock)
+    database_url: str | None = None  # default: sqlite:///<state_root>/dif.db
+    database: Database | None = None  # an open database (the service shares one)
 
 
 def scope_for(spec: SolutionSpec) -> Scope:
@@ -87,7 +98,6 @@ class Instance:
         self.scope = scope_for(self.spec)
         self.redactor = Redactor()
         self.secrets = SecretResolver(options.secrets, self.redactor)
-        self.store = JsonlSessionStore(options.state_root, redactor=self.redactor)
         self.daily = DailySpend()
         self.issues: list[Issue] = []
         self.tools = ToolRegistry()
@@ -95,6 +105,12 @@ class Instance:
         self.provider: ModelProvider | None = None
         self.workspace: Workspace | None = None  # the coding pack's, for undo
         self._stack = AsyncExitStack()
+        self.db: Database  # set in _open_database
+        self.store: SqlSessionStore
+        self.pii: Tokenizer
+        self.consent: ConsentStore
+        self.audit: AuditLog
+        self.spend: SpendStore
 
     # --- lifecycle -----------------------------------------------------------------
 
@@ -108,6 +124,7 @@ class Instance:
             raise InstanceError([i for i in resolved.issues if i.severity == "error"])
         inst = cls(resolved, options)
         try:
+            await inst._open_database()
             await inst._build()
         except BaseException:
             await inst.close()
@@ -122,6 +139,27 @@ class Instance:
 
     async def __aexit__(self, *exc: object) -> None:
         await self.close()
+
+    async def _open_database(self) -> None:
+        opts = self.options
+        if opts.database is not None:
+            self.db = opts.database
+        else:
+            url = opts.database_url or f"sqlite:///{opts.state_root.resolve() / 'dif.db'}"
+            self.db = await connect(url)
+            self._stack.push_async_callback(self.db.close)
+        self.store = SqlSessionStore(self.db, redactor=self.redactor)
+        policy = PiiPolicy.from_spec(self.spec.governance.pii)
+        self.pii = Tokenizer(policy, TokenVault(self.db), self.scope)
+        self.consent = ConsentStore(self.db)
+        self.audit = AuditLog(self.db)
+        self.spend = SpendStore(self.db)
+        if policy.tokenize and policy.undetectable:
+            self._warn(
+                "pii_undetectable",
+                "governance.pii.classes",
+                f"no detector yet for {sorted(policy.undetectable)}; keep them out of free text",
+            )
 
     def _warn(self, code: str, path: str, message: str) -> None:
         self.issues.append(Issue("warning", code, path, message))
@@ -251,9 +289,10 @@ class AgentRuntime:
         self.spec = spec
         self.system = render(load_text(spec.prompt), instance.spec)
         registry = instance.tools
-        self.tools = ToolRegistry(
+        selected = ToolRegistry(
             [t for n in registry.names() if _matches(n, spec.tools) and (t := registry.get(n))]
         )
+        self.tools = GovernedTools(selected, instance.pii)
         self.missing_tools = [
             p for p in spec.tools if not any(_matches(n, [p]) for n in self.tools.names())
         ]
@@ -294,21 +333,56 @@ class AgentRuntime:
             per_agent_day=self.per_agent_day,
         )
 
-    async def send(self, session: Session, text: str) -> AsyncIterator[Event]:
-        """Run one user turn; every event is persisted (redacted) and yielded."""
+    async def send(
+        self, session: Session, text: str, *, names: list[str] | None = None
+    ) -> AsyncIterator[Event]:
+        """Run one user turn; every event is persisted (redacted) and yielded.
+
+        ``names`` are the contact's known names (from the channel profile), so the
+        tokenizer can find them. Yielded text is tokenized; ``reply`` turns it into what the
+        contact may see.
+        """
         inst = self.instance
         assert inst.provider is not None
+        scope = inst.scope
+        spent = await inst.spend.day(scope)
+        inst.daily.set_today(scope.tenant_id, spent.get("tenant", 0.0))
+        inst.daily.set_today(f"{scope.tenant_id}/{self.name}", spent.get(f"agent:{self.name}", 0.0))
+        meter = self.meter()
+        full = inst.spec.governance.audit.get("level") == "full"
+        started: dict[str, ToolCallStarted] = {}
+        safe_text = await inst.pii.tokenize(text, names or [])
         async for event in run(
-            session,
-            text,
-            inst.provider,
-            self.tools,
-            self.config,
-            gate=self.gate,
-            meter=self.meter(),
+            session, safe_text, inst.provider, self.tools, self.config, gate=self.gate, meter=meter
         ):
             await inst.store.append(event)
+            if isinstance(event, ToolCallStarted):
+                started[event.tool_use_id] = event
+            elif isinstance(event, ToolCallFinished):
+                tool = self.tools.get(event.name)
+                effect = tool.effect if tool else Effect.EXTERNAL
+                if full or effect is not Effect.READ:
+                    call = started.get(event.tool_use_id)
+                    await inst.audit.record(
+                        scope,
+                        f"agent:{self.name}",
+                        "tool_call",
+                        event.name,
+                        {"session": session.id, "effect": str(effect), "status": str(event.status),
+                         "input": inst.redactor.redact_obj(call.input if call else {})},
+                    )  # fmt: skip
+            elif isinstance(event, TurnEnded):
+                await inst.spend.add(scope, "tenant", meter.total.cost_usd)
+                await inst.spend.add(scope, f"agent:{self.name}", meter.total.cost_usd)
+                for model, usd in meter.by_model.items():
+                    await inst.spend.add(scope, f"model:{model}", usd)
             yield event
+
+    async def reply(self, text: str) -> str:
+        """What the contact may see: tokens of ``reveal_in_output`` classes resolved, others
+        masked."""
+        pii = self.instance.pii
+        return await pii.detokenize(text, pii.policy.reveal_in_output) if pii.active else text
 
 
 def _secret_refs(obj: Any) -> set[str]:
