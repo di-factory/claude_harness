@@ -92,6 +92,11 @@ PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
     ),
     (
         "dev-cell",
+        "invalid_permission_rule",
+        lambda d: d["policies"]["permissions"]["deny"].append("coding.bash(cmd=x, y)"),
+    ),
+    (
+        "dev-cell",
         "unknown_tool_namespace",
         lambda d: d["agents"]["developer"]["tools"].append("jira.create_issue"),
     ),

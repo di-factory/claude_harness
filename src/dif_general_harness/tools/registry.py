@@ -1,8 +1,9 @@
 """Tool registry: JSON-schema contracts executed by the harness, never by the model.
 
-M0 scope: registration, schema export and execution with structured
-observations and timeouts. Permissions, verification and MCP/HTTP sources
-arrive in M1.
+Every tool, whatever its source (Python, HTTP connector, MCP server), is a JSON-schema
+contract plus an async handler. Inputs are validated before the handler runs, because
+streamed tool inputs can arrive truncated. Execution always ends in a structured
+observation: ``ok | denied | error | timeout``.
 """
 
 from __future__ import annotations
@@ -14,11 +15,17 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, get_type_hints
 
-from pydantic import TypeAdapter, ValidationError, create_model
+from jsonschema import Draft202012Validator
+from pydantic import BaseModel, ValidationError, create_model
 
 from ..core.messages import ToolResultBlock, ToolStatus, ToolUseBlock
 
 Handler = Callable[..., Awaitable[Any]]
+InputCheck = Callable[[dict[str, Any]], dict[str, Any]]
+
+
+class InputError(ValueError):
+    """Tool input that does not match the tool's schema."""
 
 
 class Effect(StrEnum):
@@ -35,7 +42,9 @@ class Tool:
     handler: Handler
     effect: Effect = Effect.READ
     timeout_s: float = 30.0
-    _validator: TypeAdapter[Any] | None = None
+    check_input: InputCheck | None = None
+    verify: str | None = None  # a check from policies.verification that must pass first
+    source: str = "python"
 
     def schema(self) -> dict[str, Any]:
         return {
@@ -63,7 +72,16 @@ def tool(
         for pname, param in params.items():
             default = ... if param.default is inspect.Parameter.empty else param.default
             fields[pname] = (hints.get(pname, Any), default)
-        model = create_model(f"{name.replace('.', '_')}_input", **fields)
+        model: type[BaseModel] = create_model(f"{name.replace('.', '_')}_input", **fields)
+
+        def check(args: dict[str, Any]) -> dict[str, Any]:
+            try:
+                return model.model_validate(args).model_dump()
+            except ValidationError as exc:
+                first = exc.errors()[0]
+                where = ".".join(str(p) for p in first["loc"]) or "input"
+                raise InputError(f"{exc.error_count()} error(s): {where}: {first['msg']}") from None
+
         return Tool(
             name=name,
             description=description or (inspect.getdoc(fn) or "").strip(),
@@ -71,7 +89,7 @@ def tool(
             handler=fn,
             effect=effect,
             timeout_s=timeout_s,
-            _validator=TypeAdapter(model),
+            check_input=check,
         )
 
     return wrap
@@ -109,14 +127,10 @@ class ToolRegistry:
                 tool_use_id=call.id, status=ToolStatus.ERROR, error=f"unknown tool {call.name!r}"
             )
         try:
-            args = call.input
-            if t._validator is not None:
-                args = t._validator.validate_python(call.input).model_dump()
-        except ValidationError as exc:
+            args = t.check_input(call.input) if t.check_input else call.input
+        except InputError as exc:
             return ToolResultBlock(
-                tool_use_id=call.id,
-                status=ToolStatus.ERROR,
-                error=f"invalid input: {exc.error_count()} error(s): {exc.errors()[0]['msg']}",
+                tool_use_id=call.id, status=ToolStatus.ERROR, error=f"invalid input: {exc}"
             )
         try:
             result = await asyncio.wait_for(t.handler(**args), timeout=t.timeout_s)
@@ -131,3 +145,18 @@ class ToolRegistry:
                 tool_use_id=call.id, status=ToolStatus.ERROR, error=f"{type(exc).__name__}: {exc}"
             )
         return ToolResultBlock(tool_use_id=call.id, status=ToolStatus.OK, content=result)
+
+
+def schema_check(schema: dict[str, Any]) -> InputCheck:
+    """An input check from a JSON schema (HTTP operations, MCP tools)."""
+    Draft202012Validator.check_schema(schema)
+    validator = Draft202012Validator(schema)
+
+    def check(args: dict[str, Any]) -> dict[str, Any]:
+        errors = sorted(validator.iter_errors(args), key=lambda e: list(e.path))
+        if errors:
+            where = ".".join(str(p) for p in errors[0].path) or "input"
+            raise InputError(f"{len(errors)} error(s): {where}: {errors[0].message}")
+        return args
+
+    return check

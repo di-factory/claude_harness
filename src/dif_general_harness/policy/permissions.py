@@ -3,7 +3,14 @@
 Rules (from ``policies.permissions`` in the spec):
 - ``calendar.find_slots`` or globs such as ``knowledge.*``
 - argument patterns: ``identity.reset_password(user_id=admin*)``; every listed argument must match
+- a positional pattern matches the tool's primary argument (its first required input):
+  ``coding.bash(git push --force*)``
 - effects: ``effect:external`` (also ``effect:write``, ``effect:read``)
+
+Values are split on shell operators (``;``, ``&&``, ``||``, ``|``, newlines, ``$(``, backticks)
+so that chained commands cannot slip past a rule: a deny or ask rule matches when any
+segment matches; an allow rule only when every segment does. Pattern rules on shell
+commands are a guardrail, not a sandbox; the executor is the containment boundary.
 
 When several rules match, the most restrictive wins: deny > ask > allow. With no match,
 the guardrail profile decides by effect. ``ask`` goes to an ``Approver``: the console
@@ -21,9 +28,11 @@ from typing import Any, Literal, Protocol
 from ..core.loop import GateDecision
 from ..core.messages import ToolUseBlock
 from ..core.session import Session
-from ..tools.registry import Effect, ToolRegistry
+from ..tools.registry import Effect, Tool, ToolRegistry
 
 _RULE = re.compile(r"^(?P<tool>[^()\s]+)(?:\((?P<args>[^()]*)\))?$")
+_SEGMENTS = re.compile(r"\s*(?:;|&&|\|\||\||\n|\$\(|`|\))\s*")
+PRIMARY = "*primary*"  # the argument key of a positional pattern
 
 
 class Verdict(StrEnum):
@@ -59,23 +68,39 @@ class Rule:
         m = _RULE.match(text.strip())
         if not m:
             raise ValueError(f"invalid permission rule {text!r}")
+        inner = (m.group("args") or "").strip()
+        if inner and not re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", inner):
+            return cls(text=text, tool=m.group("tool"), effect=None, args=((PRIMARY, inner),))
         args: list[tuple[str, str]] = []
-        for part in filter(None, (p.strip() for p in (m.group("args") or "").split(","))):
+        for part in filter(None, (p.strip() for p in inner.split(","))):
             key, sep, pattern = part.partition("=")
             if not sep:
                 raise ValueError(f"invalid argument pattern {part!r} in rule {text!r}")
             args.append((key.strip(), pattern.strip()))
         return cls(text=text, tool=m.group("tool"), effect=None, args=tuple(args))
 
-    def matches(self, tool: str, effect: Effect, arguments: dict[str, Any]) -> bool:
+    def matches(
+        self,
+        tool: str,
+        effect: Effect,
+        arguments: dict[str, Any],
+        *,
+        primary: str | None = None,
+        every_segment: bool = False,
+    ) -> bool:
         if self.effect is not None:
             return self.effect == effect
         if self.tool is None or not fnmatch.fnmatchcase(tool, self.tool):
             return False
-        return all(
-            key in arguments and fnmatch.fnmatchcase(str(arguments[key]), pattern)
-            for key, pattern in self.args
-        )
+        for key, pattern in self.args:
+            name = primary if key == PRIMARY else key
+            if name is None or name not in arguments:
+                return False
+            segments = [s for s in _SEGMENTS.split(str(arguments[name])) if s] or [""]
+            hits = (fnmatch.fnmatchcase(s, pattern) for s in segments)
+            if not (all(hits) if every_segment else any(hits)):
+                return False
+        return True
 
 
 @dataclass(frozen=True)
@@ -98,12 +123,16 @@ class PermissionPolicy:
             + [(Verdict.ALLOW, Rule.parse(r)) for r in self.allow]
         )
 
-    def decide(self, tool: str, effect: Effect, arguments: dict[str, Any]) -> Decision:
+    def decide(
+        self, tool: str, effect: Effect, arguments: dict[str, Any], primary: str | None = None
+    ) -> Decision:
+        """``primary`` is the tool's main argument, used by positional patterns."""
         best: tuple[Verdict, str] | None = None
         for verdict, rule in self._rules:
-            if rule.matches(tool, effect, arguments) and (
-                best is None or _RANK[verdict] > _RANK[best[0]]
-            ):
+            hit = rule.matches(
+                tool, effect, arguments, primary=primary, every_segment=verdict is Verdict.ALLOW
+            )
+            if hit and (best is None or _RANK[verdict] > _RANK[best[0]]):
                 best = (verdict, rule.text)
         if best is not None:
             return Decision(best[0], best[1])
@@ -161,7 +190,7 @@ class PolicyGate:
     async def check(self, session: Session, call: ToolUseBlock) -> GateDecision:
         tool = self.tools.get(call.name)
         effect = tool.effect if tool else Effect.EXTERNAL  # unknown tools get the strictest effect
-        decision = self.policy.decide(call.name, effect, call.input)
+        decision = self.policy.decide(call.name, effect, call.input, primary_argument(tool))
         if decision.verdict is Verdict.DENY:
             return GateDecision(False, f"denied by rule {decision.rule!r}")
         if decision.verdict is Verdict.ALLOW:
@@ -176,3 +205,14 @@ class PolicyGate:
         if answer.remember:
             self._remembered.add((session.id, call.name))
         return GateDecision(True)
+
+
+def primary_argument(tool: Tool | None) -> str | None:
+    """The first required input of a tool, else its first input."""
+    if tool is None:
+        return None
+    required = tool.input_schema.get("required") or []
+    if required:
+        return str(required[0])
+    props = list(tool.input_schema.get("properties") or {})
+    return props[0] if props else None

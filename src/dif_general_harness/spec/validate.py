@@ -12,11 +12,12 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from ..policy.permissions import Rule
 from .errors import Issue
 from .schema import SolutionSpec, Step
 
 BUILTIN_NAMESPACES = {"ledger", "runs", "knowledge", "memory"}
-# Until the tool registry exists (M1), known tool packs declare their namespaces here.
+# Namespaces each built-in tool pack provides (tools/packs/); "web" arrives with a search provider.
 PACK_NAMESPACES: dict[str, set[str]] = {
     "general": {"http", "web", "notes"},
     "coding": {"coding"},
@@ -200,6 +201,12 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
 
     # --- permissions and verification of side effects ----------------------------
     perms = spec.policies.permissions
+    for kind, rules in (("allow", perms.allow), ("ask", perms.ask), ("deny", perms.deny)):
+        for i, text in enumerate(rules):
+            try:
+                Rule.parse(text)
+            except ValueError as exc:
+                err("invalid_permission_rule", f"policies.permissions.{kind}[{i}]", str(exc))
     overrides = spec.tools.overrides
     externals = {k for k, o in overrides.items() if o.effect == "external"}
     verify_refs = {k: o.verify for k, o in overrides.items() if o.verify}

@@ -80,7 +80,10 @@ def test_rule_parsing() -> None:
     assert r.tool == "identity.reset_password"
     assert r.args == (("user_id", "admin*"), ("reason", "*"))
     assert Rule.parse("effect:external").effect is Effect.EXTERNAL
-    for bad in ["a(b)", "tool(x=1", "effect:dangerous", "two words"]:
+    assert Rule.parse("coding.bash(git push --force*)").args == (
+        ("*primary*", "git push --force*"),
+    )
+    for bad in ["tool(x=1", "tool(x=1, y)", "effect:dangerous", "two words"]:
         with pytest.raises(ValueError):
             Rule.parse(bad)
 
@@ -114,6 +117,26 @@ def test_effect_rules_and_profile_defaults() -> None:
     assert fast.decide("x", Effect.WRITE, {}).verdict is Verdict.ALLOW
     assert fast.decide("x", Effect.EXTERNAL, {}).verdict is Verdict.ASK
     assert default.decide("x", Effect.WRITE, {}).rule is None
+
+
+def test_positional_patterns_and_chained_commands() -> None:
+    policy = PermissionPolicy(allow=["coding.bash(ls*)"], deny=["coding.bash(git push --force*)"])
+
+    def verdict(command: str) -> Verdict:
+        return policy.decide("coding.bash", Effect.WRITE, {"command": command}, "command").verdict
+
+    assert verdict("ls -la") is Verdict.ALLOW
+    assert verdict("git push --force origin main") is Verdict.DENY
+    for sneaky in [
+        "echo hi && git push --force",
+        "true; git push --force",
+        "x $(git push --force)",
+    ]:
+        assert verdict(sneaky) is Verdict.DENY
+    assert verdict("ls; rm -rf ~") is Verdict.ASK  # allow needs every segment to match
+    assert verdict("ls | grep x") is Verdict.ASK
+    # without a known primary argument a positional pattern never matches
+    assert policy.decide("coding.bash", Effect.WRITE, {"command": "ls"}).verdict is Verdict.ASK
 
 
 # --- the gate ----------------------------------------------------------------------
