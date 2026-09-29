@@ -99,6 +99,10 @@ class ToolRegistry:
 
     async def execute(self, call: ToolUseBlock) -> ToolResultBlock:
         """Run one call. Always returns a structured observation; never raises."""
+        if call.input_error:
+            return ToolResultBlock(
+                tool_use_id=call.id, status=ToolStatus.ERROR, error=call.input_error
+            )
         t = self._tools.get(call.name)
         if t is None:
             return ToolResultBlock(

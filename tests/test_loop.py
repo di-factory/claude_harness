@@ -170,3 +170,108 @@ def test_history_messages_are_recorded(scope: Scope) -> None:
     session = Session(scope=scope, agent_id="a")
     ev = session.add_message(Message.user("hola"))
     assert isinstance(ev, MessageAdded) and ev.seq == 0 and session.next_seq == 1
+
+
+# --- stop reasons and the tool gate (M1) -------------------------------------------
+
+from dif_general_harness.core.loop import GateDecision  # noqa: E402
+from dif_general_harness.core.messages import Usage  # noqa: E402
+from dif_general_harness.providers.base import ProviderMessage  # noqa: E402
+
+
+def _scripted(message: Message, stop: str) -> ProviderMessage:
+    return ProviderMessage(message=message, usage=Usage(), stop_reason=stop, model="m")  # type: ignore[arg-type]
+
+
+async def test_refusal_never_runs_tools_and_keeps_history_valid(scope: Scope) -> None:
+    session = Session(scope=scope, agent_id="a")
+    turn = _calls(("t1", "calendar.move_event", {"event_id": "e", "slot": "s"}))
+    events = await _collect(session, "x", FakeProvider([_scripted(turn, "refusal")]))
+    assert not any(isinstance(e, ToolCallStarted) for e in events)
+    end = events[-1]
+    assert isinstance(end, TurnEnded) and end.reason == "refusal"
+    results = session.messages[-1].content
+    assert [r.status for r in results if isinstance(r, ToolResultBlock)] == [ToolStatus.ERROR]
+
+
+async def test_truncated_tool_call_is_not_executed(scope: Scope) -> None:
+    session = Session(scope=scope, agent_id="a")
+    turn = _calls(("t1", "calendar.find_slots", {"day": "d"}))
+    events = await _collect(session, "x", FakeProvider([_scripted(turn, "max_tokens")]))
+    assert not any(isinstance(e, ToolCallStarted) for e in events)
+    assert isinstance(events[-1], TurnEnded) and events[-1].reason == "max_tokens"
+    assert any(isinstance(e, ErrorEvent) and "truncated" in e.message for e in events)
+
+
+async def test_pause_turn_resumes(scope: Scope) -> None:
+    session = Session(scope=scope, agent_id="a")
+    provider = FakeProvider(
+        [_scripted(Message.assistant("working..."), "pause_turn"), Message.assistant("done")]
+    )
+    events = await _collect(session, "x", provider)
+    assert isinstance(events[-1], TurnEnded) and events[-1].reason == "end_turn"
+    assert len(provider.requests) == 2
+
+
+async def test_empty_assistant_turn_is_not_recorded(scope: Scope) -> None:
+    session = Session(scope=scope, agent_id="a")
+    empty = Message(role=Role.ASSISTANT, content=[])
+    await _collect(session, "x", FakeProvider([_scripted(empty, "refusal")]))
+    assert [m.role for m in session.messages] == [Role.USER]
+
+
+class DenyExternal:
+    async def check(self, session: Session, call: ToolUseBlock) -> GateDecision:
+        if call.name == "calendar.move_event":
+            return GateDecision(False, "needs front-desk approval")
+        return GateDecision(True)
+
+
+class BrokenGate:
+    async def check(self, session: Session, call: ToolUseBlock) -> GateDecision:
+        raise RuntimeError("policy store unreachable")
+
+
+@pytest.mark.parametrize(
+    ("gate", "expected"),
+    [
+        (DenyExternal(), {"t1": ToolStatus.OK, "t2": ToolStatus.DENIED}),
+        (BrokenGate(), {"t1": ToolStatus.DENIED, "t2": ToolStatus.DENIED}),
+    ],
+)
+async def test_gate_decides_each_call(
+    scope: Scope, gate: object, expected: dict[str, ToolStatus]
+) -> None:
+    session = Session(scope=scope, agent_id="a")
+    provider = FakeProvider(
+        [
+            _calls(
+                ("t1", "calendar.find_slots", {"day": "d"}),
+                ("t2", "calendar.move_event", {"event_id": "e", "slot": "s"}),
+            ),
+            Message.assistant("ok"),
+        ]
+    )
+    events = [ev async for ev in run(session, "x", provider, _registry(), gate=gate)]  # type: ignore[arg-type]
+    status = {e.tool_use_id: e.status for e in events if isinstance(e, ToolCallFinished)}
+    assert status == expected
+    denied = [
+        r
+        for r in session.messages[2].content
+        if isinstance(r, ToolResultBlock) and r.status is ToolStatus.DENIED
+    ]
+    assert all(r.error for r in denied)
+
+
+async def test_invalid_provider_arguments_are_never_executed(scope: Scope) -> None:
+    session = Session(scope=scope, agent_id="a")
+    bad = Message(
+        role=Role.ASSISTANT,
+        content=[
+            ToolUseBlock(id="t1", name="calendar.move_event", input_error="invalid tool arguments")
+        ],
+    )
+    provider = FakeProvider([_scripted(bad, "tool_use"), Message.assistant("sorry")])
+    events = await _collect(session, "x", provider)
+    status = {e.tool_use_id: e.status for e in events if isinstance(e, ToolCallFinished)}
+    assert status == {"t1": ToolStatus.ERROR}

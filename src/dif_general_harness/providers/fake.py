@@ -1,4 +1,4 @@
-"""FakeProvider: replays scripted assistant messages for deterministic, offline tests."""
+"""FakeProvider: replays scripted assistant turns for deterministic, offline tests."""
 
 from __future__ import annotations
 
@@ -13,16 +13,18 @@ class ScriptError(RuntimeError):
 
 
 class FakeProvider:
-    """Each call to ``stream`` returns the next scripted message.
+    """Each call to ``stream`` plays the next script step.
 
-    A script step is a ``Message`` (assistant role) or an ``Exception`` to raise.
-    Every request is recorded in ``requests`` so tests can assert on what the
-    model was shown.
+    A step is an assistant ``Message`` (stop reason inferred), a full ``ProviderMessage``
+    (to script stop reasons, usage or the serving model), or an ``Exception`` to raise.
+    Every request is recorded in ``requests`` so tests can assert on what the model saw.
     """
 
     name = "fake"
 
-    def __init__(self, script: Sequence[Message | Exception], *, chunk: int = 16) -> None:
+    def __init__(
+        self, script: Sequence[Message | ProviderMessage | Exception], *, chunk: int = 16
+    ) -> None:
         self._script = list(script)
         self._chunk = chunk
         self.requests: list[ModelRequest] = []
@@ -34,16 +36,20 @@ class FakeProvider:
         step = self._script.pop(0)
         if isinstance(step, Exception):
             raise step
-        if step.role is not Role.ASSISTANT:
+        if isinstance(step, Message):
+            prompt_size = sum(len(m.model_dump_json()) for m in request.messages)
+            step = ProviderMessage(
+                message=step,
+                usage=Usage(
+                    input_tokens=prompt_size // 4, output_tokens=len(step.model_dump_json()) // 4
+                ),
+                stop_reason="tool_use" if step.tool_uses() else "end_turn",
+                model="fake-model",
+            )
+        if step.message.role is not Role.ASSISTANT:
             raise ScriptError("scripted messages must have the assistant role")
-        for block in step.content:
+        for block in step.message.content:
             if isinstance(block, TextBlock):
                 for i in range(0, len(block.text), self._chunk):
                     yield ProviderTextDelta(block.text[i : i + self._chunk])
-        prompt_size = sum(len(m.model_dump_json()) for m in request.messages)
-        yield ProviderMessage(
-            message=step,
-            usage=Usage(
-                input_tokens=prompt_size // 4, output_tokens=len(step.model_dump_json()) // 4
-            ),
-        )
+        yield step
