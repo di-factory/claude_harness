@@ -134,6 +134,10 @@ class PackCatalog:
                 if layer.data.get("kind") == "pack" and "id" in sol:
                     self._index.setdefault(sol["id"], []).append(layer)
 
+    def latest(self) -> list[Layer]:
+        """The newest version of every pack, sorted by id."""
+        return [self.find(pack_id) for pack_id in sorted(self._index)]
+
     def find(self, ref: str) -> Layer:
         pack_id, _, rng = ref.partition("@")
         candidates = [

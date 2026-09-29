@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -16,55 +15,6 @@ from dif_general_harness.spec import PackCatalog, load_instance
 from dif_general_harness.tenancy import EnvSecrets
 
 
-def _write_solution(root: Path) -> Path:
-    pack = root / "packs" / "helper"
-    (pack / "prompts").mkdir(parents=True)
-    (pack / "prompts" / "helper.md").write_text("You help {{var.owner}} with files and notes.")
-    (pack / "pack.json").write_text(
-        json.dumps(
-            {
-                "spec_version": "1",
-                "kind": "pack",
-                "solution": {"id": "helper", "version": "1.0.0", "lob": "general"},
-                "variables": {"owner": {"type": "string", "required": True}},
-                "secrets": {"llm": {"description": "Model API key"}},
-                "models": {
-                    "roles": {"main": {"provider": "anthropic", "model": "claude-opus-5-5"}},
-                    "providers": {"anthropic": {"api_key": {"$secret": "llm"}}},
-                },
-                "agents": {
-                    "helper": {
-                        "prompt": "prompts/helper.md",
-                        "model_role": "main",
-                        "tools": ["notes.*", "coding.*"],
-                        "workspace": "repo",
-                    }
-                },
-                "workspaces": {"repo": {"type": "local"}},
-                "tools": {"packs": ["general", "coding"]},
-                "evals": {"suites": ["evals/smoke.yaml"]},
-            }
-        )
-    )
-    (pack / "evals").mkdir()
-    (pack / "evals" / "smoke.yaml").write_text("cases: []\n")
-    instance = root / "instances" / "acme-helper.json"
-    instance.parent.mkdir()
-    instance.write_text(
-        json.dumps(
-            {
-                "spec_version": "1",
-                "kind": "instance",
-                "solution": {"id": "acme-helper", "version": "1.0.0", "lob": "general"},
-                "extends": ["helper@^1.0"],
-                "tenant": {"id": "acme", "name": "ACME"},
-                "values": {"owner": "Ana"},
-            }
-        )
-    )
-    return instance
-
-
 def _calls(*calls: tuple[str, str, dict[str, Any]]) -> Message:
     return Message(
         role=Role.ASSISTANT,
@@ -72,8 +22,9 @@ def _calls(*calls: tuple[str, str, dict[str, Any]]) -> Message:
     )
 
 
-async def _open(tmp_path: Path, script: list[Any]) -> tuple[Instance, ConsoleApprover, Path]:
-    instance_file = _write_solution(tmp_path)
+async def _open(
+    tmp_path: Path, instance_file: Path, script: list[Any]
+) -> tuple[Instance, ConsoleApprover, Path]:
     resolved = load_instance(instance_file, PackCatalog(roots=[tmp_path / "packs"]))
     assert resolved.ok, resolved.issues
     repo = tmp_path / "repo"
@@ -101,8 +52,10 @@ async def _settle(app: ConsoleApp, pilot: Any) -> None:
     await pilot.pause()
 
 
-async def test_chat_streams_and_reports_cost(tmp_path: Path) -> None:
-    instance, approver, _ = await _open(tmp_path, [Message.assistant("Hello Ana, how can I help?")])
+async def test_chat_streams_and_reports_cost(tmp_path: Path, helper_solution: Path) -> None:
+    instance, approver, _ = await _open(
+        tmp_path, helper_solution, [Message.assistant("Hello Ana, how can I help?")]
+    )
     async with instance:
         agent = instance.agent()
         app = ConsoleApp(instance, agent, agent.new_session())
@@ -120,11 +73,13 @@ async def test_chat_streams_and_reports_cost(tmp_path: Path) -> None:
     ("key", "approved", "asked_twice"),
     [("y", True, True), ("a", True, False), ("n", False, True)],
 )
-async def test_approvals(tmp_path: Path, key: str, approved: bool, asked_twice: bool) -> None:
+async def test_approvals(
+    tmp_path: Path, helper_solution: Path, key: str, approved: bool, asked_twice: bool
+) -> None:
     write = ("c1", "notes.write", {"key": "todo", "text": "call Luis"})
     again = ("c2", "notes.write", {"key": "todo", "text": "call Luis today"})
     script = [_calls(write), _calls(again), Message.assistant("Saved.")]
-    instance, approver, _ = await _open(tmp_path, script)
+    instance, approver, _ = await _open(tmp_path, helper_solution, script)
     async with instance:
         agent = instance.agent()
         app = ConsoleApp(instance, agent, agent.new_session())
@@ -146,9 +101,11 @@ async def test_approvals(tmp_path: Path, key: str, approved: bool, asked_twice: 
             assert not isinstance(app.screen, ApprovalScreen)
 
 
-async def test_commands_and_undo(tmp_path: Path) -> None:
+async def test_commands_and_undo(tmp_path: Path, helper_solution: Path) -> None:
     edit = ("e1", "coding.edit", {"path": "app.py", "old": "hola", "new": "hello"})
-    instance, approver, repo = await _open(tmp_path, [_calls(edit), Message.assistant("Edited.")])
+    instance, approver, repo = await _open(
+        tmp_path, helper_solution, [_calls(edit), Message.assistant("Edited.")]
+    )
     async with instance:
         agent = instance.agent()
         app = ConsoleApp(instance, agent, agent.new_session())
