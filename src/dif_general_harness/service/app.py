@@ -38,6 +38,19 @@ class Decision(BaseModel):
     approved: bool
     note: str = ""
     by: str = "operator"
+    text: str | None = None  # a proposed constraint, reworded by the person
+
+
+class Feedback(BaseModel):
+    rating: Literal["up", "down"]
+    comment: str = ""
+    by: str = "operator"
+
+
+class NewConstraint(BaseModel):
+    text: str
+    agent: str = "*"
+    by: str = "operator"
 
 
 class OperatorReply(BaseModel):
@@ -182,7 +195,9 @@ def create_app(
     @app.post("/admin/inbox/{item_id}/decision", dependencies=[Depends(admin)])
     async def decide(item_id: str, decision: Decision) -> dict[str, Any]:
         try:
-            item = await headless.decide(item_id, decision.approved, decision.by, decision.note)
+            item = await headless.decide(
+                item_id, decision.approved, decision.by, decision.note, decision.text
+            )
         except KeyError as exc:
             raise HTTPException(404, str(exc)) from None
         except ValueError as exc:
@@ -327,6 +342,45 @@ def create_app(
             raise HTTPException(400, "items need an id and a start")
         count = await headless.upsert_items(source, given, replace=bool(body.get("replace")))
         return {"items": count}
+
+    # --- feedback -----------------------------------------------------------------------
+
+    @app.post("/admin/sessions/{session_id}/feedback", dependencies=[Depends(admin)])
+    async def feedback(session_id: str, body: Feedback) -> dict[str, Any]:
+        """A thumbs up or down on a conversation; a down with a comment proposes a rule."""
+        try:
+            proposed = await headless.feedback(session_id, body.rating, body.comment, body.by)
+        except KeyError as exc:
+            raise HTTPException(404, str(exc)) from None
+        return {"proposed": proposed}
+
+    @app.get("/admin/constraints", dependencies=[Depends(admin)])
+    async def constraints(status: str | None = None) -> list[dict[str, Any]]:
+        return [c.public() for c in await current().constraints.all(status)]
+
+    @app.post("/admin/constraints", dependencies=[Depends(admin)])
+    async def add_constraint(body: NewConstraint) -> dict[str, Any]:
+        """A rule a person writes directly: pinned at once."""
+        if body.agent != "*" and body.agent not in current().spec.agents:
+            raise HTTPException(404, f"unknown agent {body.agent!r}")
+        if not body.text.strip():
+            raise HTTPException(400, "a rule needs text")
+        added = await current().constraints.add(body.agent, body.text.strip(), body.by)
+        await current().audit.record(
+            scope, body.by, "constraint_added", f"constraint/{added.id}", {"text": added.text}
+        )
+        return added.public()
+
+    @app.delete("/admin/constraints/{constraint_id}", dependencies=[Depends(admin)])
+    async def retire_constraint(constraint_id: str, by: str = "operator") -> dict[str, Any]:
+        found = await current().constraints.get(constraint_id)
+        if found is None:
+            raise HTTPException(404, f"no constraint {constraint_id!r}")
+        await current().constraints.decide(constraint_id, "retired", by)
+        await current().audit.record(
+            scope, by, "constraint_retired", f"constraint/{constraint_id}", {}
+        )
+        return {"id": constraint_id, "status": "retired"}
 
     # --- knowledge ----------------------------------------------------------------------
 

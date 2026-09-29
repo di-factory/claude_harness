@@ -38,6 +38,7 @@ from ..channels import ChannelAdapter, ChannelError, Envelope, Inbound, Unauthor
 from ..core import cel
 from ..core.events import Event, MessageAdded, TurnEnded
 from ..core.messages import Message, Role, ToolUseBlock
+from ..feedback import ALL_AGENTS
 from ..governance import is_opt_out, purge
 from ..hitl import InboxApprover, InboxItem
 from ..hitl.inbox import Status as InboxStatus
@@ -692,8 +693,11 @@ class Headless:
                 dedupe_key=f"approval_timeout:{item_id}",
             )  # fmt: skip
 
-    async def decide(self, item_id: str, approved: bool, by: str, note: str = "") -> InboxItem:
-        """A person's decision on an inbox item. Approvals queue the action."""
+    async def decide(
+        self, item_id: str, approved: bool, by: str, note: str = "", text: str | None = None
+    ) -> InboxItem:
+        """A person's decision on an inbox item. Approvals queue the action; ``text`` rewords
+        a proposed constraint before it is pinned."""
         inst = self.instance
         item = await inst.inbox.get(item_id)
         if item is None:
@@ -718,9 +722,67 @@ class Headless:
         elif item.kind == "skill":
             skill_status = "active" if approved else "rejected"
             await inst.memory.set_status(str(item.payload["memory_id"]), skill_status)
+        elif item.kind == "constraint":
+            await inst.constraints.decide(
+                str(item.payload["constraint_id"]), "active" if approved else "rejected", by, text
+            )
+        await self._lesson(item, approved, by, note)
         decided = await inst.inbox.get(item_id)
         assert decided is not None
         return decided
+
+    async def _lesson(self, item: InboxItem, approved: bool, by: str, note: str) -> None:
+        """A person's reason is a candidate rule: a denied action, a resolved escalation."""
+        if not note.strip() or by.startswith("system:"):
+            return
+        agent = str(item.payload.get("agent") or ALL_AGENTS)
+        if item.kind == "approval" and not approved and not item.payload.get("run"):
+            tool = str(item.payload.get("tool"))
+            await self.instance.propose_constraint(
+                agent,
+                f'A person declined {tool} and said: "{note.strip()}". Follow that before'
+                f" using {tool} again.",
+                "denial",
+                {"inbox": item.id, "tool": tool, "arguments": item.payload.get("arguments")},
+                key=f"denial:{tool}:{note}",
+                session_id=item.session_id,
+            )
+        elif item.kind == "escalation":
+            reason = str(item.payload.get("reason") or item.title)
+            await self.instance.propose_constraint(
+                agent,
+                f"When this comes up ({reason[:160]}): {note.strip()}",
+                "escalation",
+                {"inbox": item.id, "reason": reason},
+                key=f"escalation:{note}",
+                session_id=item.session_id,
+            )
+
+    async def feedback(self, session_id: str, rating: str, comment: str, by: str) -> str | None:
+        """A rating on a conversation (thumbs up or down). A thumbs-down with a comment
+        proposes a rule. Returns the proposed constraint's id, if any."""
+        inst = self.instance
+        try:
+            session = await inst.store.load(self.scope, session_id)
+        except (FileNotFoundError, ValueError):
+            raise KeyError(f"no session {session_id!r}") from None
+        answer = next(
+            (m.text() for m in reversed(session.messages) if m.role is Role.ASSISTANT), ""
+        )
+        await inst.audit.record(
+            self.scope, by, f"feedback_{rating}", f"session/{session_id}",
+            {"comment": comment[:500]},
+        )  # fmt: skip
+        if rating != "down" or not comment.strip():
+            return None
+        return await inst.propose_constraint(
+            session.agent_id or ALL_AGENTS,
+            f"From feedback on an earlier answer: {comment.strip()}",
+            "rating",
+            {"session": session_id, "answer": answer[:500], "by": by},
+            key=f"rating:{comment}",
+            session_id=session_id,
+        )
 
     async def _job_approval_timeout(self, job: Job) -> None:
         inst = self.instance

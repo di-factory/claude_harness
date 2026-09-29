@@ -39,6 +39,7 @@ from ..core.loop import LoopConfig, run
 from ..core.messages import Message, Role, ToolResultBlock, ToolUseBlock
 from ..core.scope import Scope
 from ..core.session import Session
+from ..feedback.store import ALL_AGENTS, ConstraintStore, pinned_block
 from ..governance import AuditLog, ConsentStore, GovernedTools, PiiPolicy, Tokenizer, TokenVault
 from ..governance.contacts import ContactStore
 from ..hitl.inbox import Inbox
@@ -138,6 +139,7 @@ class Instance:
         self.contacts: ContactStore
         self.memory: MemoryStore
         self.knowledge: KnowledgeBase
+        self.constraints: ConstraintStore
         self.verifier = Verifier(self, on_failed_twice=self._verification_failed_twice)
         self.notify: Notify | None = None  # set by the service: tells a person about inbox items
         self.emit: Emit | None = None  # set by the service: internal events (ledger, workflows)
@@ -193,6 +195,7 @@ class Instance:
         self.contacts = ContactStore(self.db)
         self.memory = MemoryStore(self.db, self.scope)
         self.knowledge = KnowledgeBase(self.db, self.scope, dict(self.spec.knowledge.corpora))
+        self.constraints = ConstraintStore(self.db, self.scope)
         if self.spec.ledger is not None:
             self.ledger = LedgerStore(self.db, self.scope, self.spec.ledger, list(self.spec.agents))
             self.ledger.emit = self._emit
@@ -298,6 +301,23 @@ class Instance:
         if rule is not None and rule.get("to") == "human":
             await self.escalate(session, f"{corpus} has no answer: {query[:120]}", by="knowledge")
 
+    async def propose_constraint(
+        self, agent: str, text: str, source: str, evidence: dict[str, Any],
+        *, key: str | None = None, session_id: str | None = None,
+    ) -> str:  # fmt: skip
+        """A candidate constraint from a signal; new ones go to a person in the inbox."""
+        constraint, new = await self.constraints.propose(agent, text, source, evidence, key)
+        if new:
+            item = await self.inbox.create(
+                "constraint", f"Proposed rule for {agent}: {text[:100]}",
+                {"constraint_id": constraint.id, "agent": agent, "text": constraint.text,
+                 "source": source, "evidence": evidence},
+                session_id,
+            )  # fmt: skip
+            if self.notify is not None:
+                await self.notify(item, f"A rule was proposed for {agent} ({source})")
+        return constraint.id
+
     async def flag_contradiction(self, previous: Memory, value: str, new_id: str) -> None:
         """A fact changed: keep the new value, and let a person restore the old one."""
         item = await self.inbox.create(
@@ -359,6 +379,14 @@ class Instance:
             "tool": call.name,
             "var": self.spec.values,
         }
+        await self.propose_constraint(
+            session.agent_id or ALL_AGENTS,
+            f"Before using {call.name}, make sure its check will pass: {reason}",
+            "verification",
+            {"tool": call.name, "reason": reason, "session": session.id},
+            key=f"verification:{call.name}",
+            session_id=session.id,
+        )
         rule = first_match(list(escalation.get("rules") or []), context)
         if rule is not None and rule.get("to") == "human":
             await self.escalate(
@@ -609,6 +637,16 @@ class AgentRuntime:
             if isinstance(event, TurnEnded):
                 reason = event.reason
             yield event
+        if reason == "budget":
+            await self.instance.propose_constraint(
+                self.name,
+                "Stay within the run budget: plan before calling tools, do not repeat calls,"
+                " and hand off when a task needs more than one run.",
+                "budget",
+                {"session": session.id},
+                key="budget",
+                session_id=session.id,
+            )
         if reason != "end_turn" or not self.citation_checks:
             return
         for attempt in (1, 2):
@@ -621,6 +659,15 @@ class AgentRuntime:
                 {"session": session.id, "reason": failure, "attempt": attempt},
             )  # fmt: skip
             if attempt == 2:
+                await inst.propose_constraint(
+                    self.name,
+                    "Answer only from the passages you retrieved, with a source marker after each"
+                    " statement; when they do not cover the question, say so.",
+                    "citations",
+                    {"reason": failure, "session": session.id},
+                    key="citations",
+                    session_id=session.id,
+                )
                 added = session.add_message(Message.assistant(ungrounded_text(inst)))
                 await inst.store.append(added)
                 yield added
@@ -655,8 +702,9 @@ class AgentRuntime:
         inst = self.instance
         scope = inst.scope
         assert inst.provider is not None
+        pinned = pinned_block(await inst.constraints.active(self.name))
         remembered = await memory_block(inst, self.name, session)
-        config = dataclasses.replace(self.config, system=self.system + remembered)
+        config = dataclasses.replace(self.config, system=self.system + pinned + remembered)
         async for event in run(
             session, safe_text, inst.provider, self.tools, config, gate=self.gate, meter=meter
         ):

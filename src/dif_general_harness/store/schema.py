@@ -120,6 +120,16 @@ MIGRATIONS: list[list[str]] = [
             ON knowledge_chunks (tenant_id, instance_id, corpus)""",
         """CREATE INDEX IF NOT EXISTS knowledge_chunks_by_doc ON knowledge_chunks (doc_id)""",
     ],
+    [  # M3: the feedback loop (candidate and approved constraints)
+        """CREATE TABLE IF NOT EXISTS constraints (
+            id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, instance_id TEXT NOT NULL,
+            agent TEXT NOT NULL, text TEXT NOT NULL, fingerprint TEXT NOT NULL,
+            status TEXT NOT NULL, source TEXT NOT NULL, evidence TEXT NOT NULL,
+            occurrences INTEGER NOT NULL, created_at DOUBLE PRECISION NOT NULL,
+            decided_at DOUBLE PRECISION, decided_by TEXT)""",
+        """CREATE INDEX IF NOT EXISTS constraints_by_agent
+            ON constraints (tenant_id, instance_id, agent, status)""",
+    ],
 ]
 
 
