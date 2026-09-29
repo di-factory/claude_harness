@@ -119,6 +119,7 @@ class Agent(Strict):
     subagents: list[str] = Field(default_factory=list)
     handoffs: list[str] = Field(default_factory=list)
     max_turns: int | None = Field(default=None, ge=1)
+    context_tokens: int | None = Field(default=None, ge=2000)  # compact the history beyond it
     output_schema: str | None = None
     workspace: str | None = None
     budgets: dict[str, Any] | None = None

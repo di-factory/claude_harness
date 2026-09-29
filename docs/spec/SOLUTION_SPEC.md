@@ -210,6 +210,11 @@ evals decide whether it passes.
 - `handoffs` lists agents (or the reserved `human`) this agent may transfer
   a conversation to.
 - `subagents` are called as tools and return only their final answer.
+- `context_tokens` (optional, at least 2000; default 60000) is the history budget. With a
+  `compaction` model role, a history above it is summarised before the turn: durable facts
+  go to memory first, the recent tail (at least 40% of the budget, starting at a user
+  message) stays verbatim, and the summary is stored as an event so a resumed session sees
+  the same history. Without a `compaction` role nothing is cut.
 - A **team** is simply several agents with handoffs, plus a shared ledger when
   `workflows` or `memory.shared_ledger` is enabled.
 
@@ -409,8 +414,11 @@ crashed half way runs again on resume, so side-effecting tools should be idempot
   - `condition`: an expression over context;
   - `citations`: the answer cites retrieved sources;
   - `verifier`: the verifier agent judges against listed criteria.
-- `policies.router` lists intents answered by the cheap `router` role without
-  running the main agent.
+- `policies.router` (`short_circuit`: a list of intents such as `greeting`, `thanks`;
+  `model_role`, default `router`) lets the cheap router role answer a contact's trivial
+  message without running the main agent. Anything else, or a router answer that is not
+  valid JSON, names an unlisted intent or has no reply, goes to the main agent. Only
+  contact conversations are routed; staff tasks, triggers and workflow steps never are.
 - Permission rules match tool names, argument patterns (`"messaging.send(to=+52*)"`)
   or effects (`"effect:external"`).
 - Profiles set the defaults; explicit rules win.

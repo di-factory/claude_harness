@@ -283,7 +283,7 @@ class Headless:
             session = await agent.new_session(contact_key=env.contact_key)
             await inst.store.bind(self.scope, session.id, env.channel, env.contact_key)
 
-        texts, reason = await answer(agent.send(session, env.text, names=env.names))
+        texts, reason = await answer(agent.send(session, env.text, names=env.names, route=True))
         escalated = await inst.store.state(self.scope, session.id) == "escalated"
         if inst.spec.models and "memory_extraction" in inst.spec.models.roles:
             await self.queue.enqueue(

@@ -85,8 +85,10 @@ from ..tools.packs.google_calendar import PACK as GOOGLE_CALENDAR
 from ..tools.packs.google_calendar import CalendarError, Source, calendar_tools
 from ..tools.registry import Effect, Tool, ToolRegistry
 from ..verify import Verifier
+from .compaction import compact_if_needed
 from .context import current_session
 from .prompts import load_text, render
+from .router import short_circuit
 from .routing import ProviderFactory, build_router
 
 LOCAL_TENANT = "local"
@@ -695,7 +697,7 @@ class AgentRuntime:
         )
 
     async def send(
-        self, session: Session, text: str, *, names: list[str] | None = None
+        self, session: Session, text: str, *, names: list[str] | None = None, route: bool = False
     ) -> AsyncIterator[Event]:
         """Run one user turn; every event is persisted (redacted) and yielded.
 
@@ -729,6 +731,18 @@ class AgentRuntime:
         )
         span_token = _current_span.set(root) if root else None
         try:
+            routed = await short_circuit(self, session, safe_text) if route else None
+            if routed is not None:  # a trivial message the router answered: no main agent
+                for event in routed:
+                    await inst.store.append(event)
+                    if isinstance(event, TurnEnded):
+                        await record_episode(inst, self.name, session)
+                    yield event
+                return
+            compacted = await compact_if_needed(self, session)
+            if compacted is not None:
+                await inst.store.append(compacted)
+                yield compacted
             async for event in self._run(session, safe_text, meter, started, full):
                 if root is not None and isinstance(event, TurnEnded):
                     root.set(dif__turn_reason=event.reason, dif__cost_usd=meter.total.cost_usd,
