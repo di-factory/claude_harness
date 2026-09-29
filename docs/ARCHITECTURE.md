@@ -487,7 +487,7 @@ wording.
 
 | Concern | Choice |
 |---|---|
-| Python | 3.12+ · MIT · PyPI `di-factory-general-harness` |
+| Python | 3.12+ · MIT · distribution name `di-factory-general-harness` (not published to PyPI; decision 22) |
 | Packaging | `uv`, `pyproject.toml` |
 | Schemas / config / specs | Pydantic v2; JSON specs and settings |
 | LLM transport | `anthropic` SDK, `openai` SDK (OpenAI-compatible endpoints) |
@@ -617,7 +617,7 @@ instance can start once the modules it needs have shipped.
 | 19 | Data guardrails | Secret redaction + deny list + PII tokenization. |
 | 20 | Observability | Per-tenant event log and cost by vendor; OpenTelemetry opt-in. |
 | 21 | Evals | Every pack ships an eval set; run before model swaps and releases. |
-| 22 | Packaging | Python 3.12+, MIT, PyPI `di-factory-general-harness`, import `dif_general_harness`, CLI `dif-general-harness`. |
+| 22 | Packaging | Python 3.12+, MIT, distribution `di-factory-general-harness`, import `dif_general_harness`, CLI `dif-general-harness`. **Not published to PyPI** (revised 2026-09-29): releases are git tags, installed with `uv tool install git+<repo>@<tag>`, and client deployments ship as container images (M2). PyPI stays an option if the open core needs outside adoption; no code changes required. |
 | 23 | Pack licensing | **Open core**: core + reference packs MIT; production packs are Di-Factory proprietary; each client fully owns its instance. |
 | 24 | Pack sequence | Appointment Agent first, then **Service Desk cell**, **Conversational RAG assistant** and the **other PyME agents**; **Dev cell after v1** (needs the M4 container executor). |
 | 25 | Messaging gateway | **Client holds the account** (zero markup, client owns numbers and templates); Di-Factory sets it up. |

@@ -17,7 +17,7 @@
 
 **How it is used.** When Di-Factory sells solution S to client X, Jag (or Teky, Di-Factory's CTO agent on OpenClaw) asks the constructor agent to build it. The constructor matches S to the pack catalog, interviews for the open details, writes the instance spec, verifies it with evals, and after Jag's approval deploys it into X's cloud.
 
-**Summary.** A headless runtime (channels, triggers, admin and approvals API) with a terminal console for developers and operators. It is model-agnostic from the first usable release and deploys to AWS first. It is distributed on PyPI as `di-factory-general-harness` (command `dif-general-harness`, import `dif_general_harness`).
+**Summary.** A headless runtime (channels, triggers, admin and approvals API) with a terminal console for developers and operators. It is model-agnostic from the first usable release and deploys to AWS first. It is distributed as `di-factory-general-harness` through git release tags and, for client deployments, container images; it is not published to PyPI (command `dif-general-harness`, import `dif_general_harness`).
 
 ## Goals and non-goals
 
@@ -184,7 +184,7 @@ A channel message, schedule or console command reaches a tenant-scoped instance 
 | Memory | 5 layers per tenant, instance and contact; SQLite locally, Postgres in production |
 | Budgets | On by default per run and per tenant per day |
 | Evals | Every pack ships an eval set; run before model swaps and releases |
-| Packaging | Python 3.12+, MIT, PyPI `di-factory-general-harness` |
+| Packaging | Python 3.12+, MIT, `di-factory-general-harness`; git release tags and container images, no PyPI |
 
 ## Success metrics and acceptance tests
 
@@ -231,7 +231,7 @@ The template ships in five milestones, owned by Jag Pascoe with agent builders. 
 | M3 Intelligence | 5-layer memory, knowledge (RAG), verification, agent teams, feedback loop, pack evals | eval suite |
 | M4 Operations | Terraform (AWS), OpenTelemetry, cost reports, region policy, containers, control plane MVP, constructor v3; GCP and Azure later | v1.0 release |
 
-Each milestone is published to PyPI as a pre-release (0.x) once its gate passes; M4 ends with v1.0.
+Each milestone is tagged as a pre-release (0.x) in the repository once its gate passes; from M2 each tag also builds a container image. M4 ends with v1.0. Publishing to PyPI is deferred until outside adoption of the open core is wanted.
 
 **First instantiation candidates (parked).** Chosen earlier for the first client instance, and kept on hold until M2 (runtime and governance) ships:
 
@@ -271,7 +271,7 @@ The largest risk is building a general platform before any instance proves it; t
 | Pack sequence | Appointment Agent first, then Service Desk cell, Conversational RAG assistant and the other PyME agents; Dev cell after v1 (needs the M4 container executor) |
 | Messaging gateway account | Held by the client (zero markup, client owns numbers and templates); Di-Factory sets it up |
 | Success targets | Accepted as listed under Success metrics |
-| Naming and state | PyPI name `di-factory-general-harness` is free (to be registered on first release); state in `.dif/` and `~/.dif/`, project memory file `DIF.md` |
+| Naming and state | Distribution name `di-factory-general-harness` (not published to PyPI); state in `.dif/` and `~/.dif/`, project memory file `DIF.md` |
 | Timeline | No time goals; milestones are ordered and gated by acceptance tests |
 | Fleet operations | Control plane plus an outbound-only instance agent in each deployment; the client can revoke it (FR-27, FR-28) |
 | Spec portability | Harness-native, kept clean so exporters to other platforms can come later |

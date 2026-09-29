@@ -122,7 +122,7 @@ cell, Conversational RAG, Receipt Processing, Dev cell, OPC C-suite) are in [`do
 | **M3 Intelligence** | 5-layer memory, knowledge/RAG, verification, agent teams, feedback loop, pack evals |
 | **M4 Operations** | Terraform (AWS), OpenTelemetry, cost reports, region policy, fleet control plane, constructor v3 → **v1.0** |
 
-No time goals: each milestone is done when its acceptance gate passes, and ships as a PyPI pre-release.
+No time goals: each milestone is done when its acceptance gate passes, and ships as a tagged pre-release in this repository (not on PyPI).
 
 ## Getting started
 
@@ -152,7 +152,7 @@ uv run dif-general-harness eval instances/<id>.json --packs docs/spec/examples
 Planned:
 
 ```bash
-uv tool install di-factory-general-harness       # after the first release
+uv tool install git+https://github.com/di-factory/claude_harness@v0.1.0   # once releases are tagged
 dif-general-harness deploy my-solution --target aws   # M2
 ```
 
