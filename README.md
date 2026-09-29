@@ -123,7 +123,18 @@ cell, Conversational RAG, Receipt Processing, Dev cell, OPC C-suite) are in [`do
 
 No time goals: each milestone is done when its acceptance gate passes, and ships as a PyPI pre-release.
 
-## Getting started (planned)
+## Getting started
+
+Available now (M0):
+
+```bash
+uv sync
+uv run dif-general-harness spec validate docs/spec/examples/pyme-appointment-agent
+uv run dif-general-harness spec resolve docs/spec/examples/instances/clinica-sonrisa.json
+uv run pytest -q
+```
+
+Planned:
 
 ```bash
 uv tool install di-factory-general-harness       # after the first release

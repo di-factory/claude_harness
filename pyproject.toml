@@ -1,0 +1,51 @@
+[project]
+name = "di-factory-general-harness"
+version = "0.0.1"
+description = "Di-Factory's general solution template: an agent runtime where each client solution is a declarative spec."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.12"
+authors = [{ name = "Data Intelligence Factory" }]
+dependencies = [
+    "pydantic>=2.8",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+dif-general-harness = "dif_general_harness.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-pyyaml>=6.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/dif_general_harness"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["dif_general_harness"]
+mypy_path = "src"
