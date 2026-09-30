@@ -241,13 +241,8 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
             err("missing_dedupe", where, "file triggers need a dedupe_key")
         if trig.dedupe_key and not _DOTTED.match(trig.dedupe_key):
             err("invalid_dedupe_key", where, "dedupe_key is a field path such as file.sha256")
-        if trig.type == "file":
-            src = trig.source if isinstance(trig.source, dict) else {}
-            needs = {"folder": "path", "s3": "bucket"}.get(str(src.get("type")))
-            if needs is None:
-                err("invalid_source", where, "file triggers need a source of type folder or s3")
-            elif not src.get(needs):
-                err("invalid_source", where, f"{src.get('type')} sources need a {needs}")
+        if trig.type == "file" and (why := _file_source_issue(trig.source)):
+            err("invalid_source", where, why)
         if trig.type == "batch":
             tool = trig.source if isinstance(trig.source, str) else None
             if isinstance(trig.source, dict):
@@ -266,6 +261,10 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
                 err("unknown_channel", where, f"delivers to unknown channel {trig.channel!r}")
             elif not trig.to and not target.address:
                 err("no_recipient", where, f"channel {trig.channel!r} has no address; set 'to'")
+
+    storage = (spec.tools.config.get("documents") or {}).get("storage")
+    if storage is not None and (why := _file_source_issue(storage)):
+        err("invalid_source", "tools.config.documents.storage", why)
 
     for wname, wf in workflows.items():
         ids = [s.id for s in wf.steps]
@@ -377,6 +376,16 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
             err("unresolved_variable", f"{{{{var.{v}}}}}", f"variable {v!r} has no value")
 
     return issues
+
+
+def _file_source_issue(source: Any) -> str | None:
+    src = source if isinstance(source, dict) else {}
+    needs = {"folder": "path", "s3": "bucket"}.get(str(src.get("type")))
+    if needs is None:
+        return "a file source has type folder or s3"
+    if not src.get(needs):
+        return f"{src.get('type')} sources need a {needs}"
+    return None
 
 
 def _check_step(

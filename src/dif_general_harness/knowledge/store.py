@@ -230,11 +230,15 @@ class KnowledgeBase:
         for path in files:
             fmt = format_of(path)
             if fmt is None:
-                report.skipped.append(str(path))
-                continue
+                text = _document_text(path)  # PDF, DOCX, XLSX: their text
+                if text is None:
+                    report.skipped.append(str(path))
+                    continue
+                fmt = "text"
+            else:
+                text = path.read_text(encoding="utf-8", errors="replace")
             uri = f"file:{path.resolve()}"
             seen.add(uri)
-            text = path.read_text(encoding="utf-8", errors="replace")
             _, outcome = await self.put(corpus, uri, text, fmt=fmt, origin="file")
             setattr(report, outcome, getattr(report, outcome) + 1)
         on_delete = str((spec.get("sync") or {}).get("on_delete") or "propagate")
@@ -326,3 +330,20 @@ def _describe(src: Any) -> str:
         where = next((str(v) for k, v in src.items() if k not in ("type", "auth")), "")
         return f"{kind}:{where}" if where else str(kind)
     return str(src)
+
+
+def _document_text(path: Path) -> str | None:
+    """The text of a PDF (text layer), DOCX or XLSX; None for anything else, for scans and
+    for unreadable files (reported as skipped, never indexed half-read)."""
+    from ..documents.extract import DocumentError, extract
+    from ..documents.extract import format_of as document_format
+
+    if document_format(path.name) not in ("pdf", "docx", "xlsx"):
+        return None
+    try:
+        found = extract(path.read_bytes(), path.name)
+    except DocumentError:
+        return None
+    if found.needs_ocr or not found.text.strip():
+        return None
+    return found.text

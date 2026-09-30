@@ -37,7 +37,7 @@ All four checks must pass before every commit.
 - `src/dif_general_harness/spec/`: schema (Pydantic), loader (catalog, merge, interpolation), validate
 - `src/dif_general_harness/providers/`: provider protocol, Anthropic, OpenAI-compatible, `FakeProvider`
 - `src/dif_general_harness/tools/`: registry (`@tool`, input checks), HTTP connectors, MCP client,
-  `python.py` (pack extensions), `packs/` (coding, general, google_calendar)
+  `python.py` (pack extensions), `packs/` (coding, general, documents, google_calendar)
 - `src/dif_general_harness/policy/`: permissions and approvals, budgets, secret redaction
 - `src/dif_general_harness/tenancy/`: secret backends and `$secret` resolution
 - `src/dif_general_harness/store/`: database layer (SQLite/Postgres, migrations), SQL and JSONL
@@ -47,6 +47,7 @@ All four checks must pass before every commit.
 - `src/dif_general_harness/teams/`: ledger, sub-agent tools, `handoff.agent`, `runs.*`
 - `src/dif_general_harness/memory/`: scoped episodic/semantic/procedural store, `memory.*` tools
 - `src/dif_general_harness/knowledge/`: chunking, sync, retrieval, citations, `knowledge.search_*`
+- `src/dif_general_harness/documents/`: text from PDF/DOCX/XLSX, OCR with a vision role
 - `src/dif_general_harness/feedback/`: candidate and pinned constraints
 - `src/dif_general_harness/governance/`: PII tokenization, consent, audit chain, retention
 - `src/dif_general_harness/runtime/`: `Instance` (spec to runnable agents), role routing, prompts
@@ -94,9 +95,8 @@ All four checks must pass before every commit.
 v1.0: M0 to M4 are done; the last gate is `tests/test_acceptance_m4.py` (one-command deploy
 plan and rollback, costs by tenant and vendor, eval-gated fleet rollouts, regions and the
 sandbox). Next: GCP and Azure profiles, and the known gaps.
-Known gaps: embeddings/hybrid retrieval (pgvector), PDF/DOCX/OCR
-ingestion (the `documents` pack), syncing knowledge sources other than files (they push
-through the admin API), sampled output verification (`applies_to: output`), the voice
-channel, running Python extensions in the container executor, the egress proxy that
+Known gaps: embeddings/hybrid retrieval (pgvector), syncing knowledge sources other than
+files (they push through the admin API), sampled output verification
+(`applies_to: output`), the voice channel, running Python extensions in the container executor, the egress proxy that
 enforces `allow_hosts`, and a first apply of the AWS module in a real account. See
-`docs/ARCHITECTURE.md` §6 and decisions 43–59.
+`docs/ARCHITECTURE.md` §6 and decisions 43–60.

@@ -184,7 +184,7 @@ route elsewhere, and later layers can only narrow the lists; `governance.regions
 cannot change once set.
 
 The roles are `main`, `subagent`, `verifier`, `compaction`,
-`memory_extraction`, `router` and `title`. Agents pick a role; they never
+`memory_extraction`, `router`, `title` and `ocr` (a vision model for the documents pack). Agents pick a role; they never
 name a model directly. A model swap is therefore one edit, and the pack's
 evals decide whether it passes.
 
@@ -245,6 +245,12 @@ evals decide whether it passes.
 - `verify` names a check from `policies.verification.checks` that must pass
   before the call commits.
 - `config` passes settings and secrets to a tool pack.
+- The `documents` pack gives `documents.read` (the text of PDF, DOCX, XLSX, HTML, XML, CSV
+  and text files, with `needs_ocr` for photos and scans) and `documents.ocr` (images and
+  scanned PDFs, read by the `ocr` model role, or `main` when there is none; at most 20
+  pages per call). Documents are named by `uri` and only the solution's own sources are
+  readable: its file triggers' folders and buckets and
+  `config.documents.storage` (a folder or S3 source, as for file triggers).
 
 ### 5.6 `knowledge`
 

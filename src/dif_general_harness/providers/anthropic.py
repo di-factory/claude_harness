@@ -19,6 +19,7 @@ from typing import Any
 import anthropic
 
 from ..core.messages import (
+    MediaBlock,
     Message,
     Role,
     TextBlock,
@@ -75,6 +76,10 @@ def to_anthropic_messages(messages: list[Message]) -> list[dict[str, Any]]:
                 )
             elif isinstance(b, ToolResultBlock):
                 blocks.append(_tool_result(b))
+            elif isinstance(b, MediaBlock):
+                kind = "document" if b.media_type == "application/pdf" else "image"
+                source = {"type": "base64", "media_type": b.media_type, "data": b.data}
+                blocks.append({"type": kind, "source": source})
         if blocks:
             out.append({"role": msg.role.value, "content": blocks})
     return out

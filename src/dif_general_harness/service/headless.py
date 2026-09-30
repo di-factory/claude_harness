@@ -98,7 +98,6 @@ class Headless:
     engine: WorkflowEngine = field(init=False)
     _public_url: str | None = None
     file_sources: dict[str, file_sources.FileSource] = field(default_factory=dict)
-    s3_client: Any = None  # tests inject one; production builds boto3's
 
     # --- construction ----------------------------------------------------------------
 
@@ -110,10 +109,9 @@ class Headless:
         http_client: httpx2.AsyncClient | None = None,
         public_url: str | None = None,
         clock: Any = None,
-        s3_client: Any = None,
     ) -> Headless:
         queue = JobQueue(instance.db, scope=instance.scope, **({"clock": clock} if clock else {}))
-        self = cls(instance, queue, _http=http_client, _public_url=public_url, s3_client=s3_client)
+        self = cls(instance, queue, _http=http_client, _public_url=public_url)
         self.engine = WorkflowEngine(self)
         self._wire(instance)
         return self
@@ -197,14 +195,11 @@ class Headless:
         return None
 
     def _file_source(self, name: str, trig: Trigger) -> str | None:
-        raw = (self.instance.resolved.data["triggers"][name].get("source") or {}).get("credentials")
-        try:
-            creds = self.instance.secrets.resolve(raw) if raw is not None else None
-            self.file_sources[name] = file_sources.build_source(
-                trig.source, creds, s3_client=self.s3_client
-            )
-        except Exception as exc:
-            return f"file source: {exc}"
+        source = self.instance.file_sources.get(name)
+        if source is None:
+            why = self.instance.file_source_errors.get(name, "not configured")
+            return f"file source: {why}"
+        self.file_sources[name] = source
         return None
 
     def agent(self, name: str) -> AgentRuntime:
@@ -515,11 +510,7 @@ class Headless:
 
     async def read_file(self, uri: str) -> bytes:
         """The bytes of a file a file trigger announced (by its ``uri``)."""
-        for source in self.file_sources.values():
-            key = source.key(uri)
-            if key:
-                return await source.read(key)
-        raise KeyError(f"{uri} is not in any file trigger's source")
+        return await self.instance.read_document(uri)
 
     async def run_batch(self, name: str, items: list[Any] | None = None) -> dict[str, Any]:
         """Fan a batch trigger out: one firing per item (from its source tool, or the

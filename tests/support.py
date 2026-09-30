@@ -200,12 +200,12 @@ class Env:
             database=database,
             http_client=self.outbound(),
             telemetry=self.telemetry,
+            s3_client=self.s3_client,
         )
         inst = await Instance.open(resolved, options)
         headless = await Headless.build(
-            inst, http_client=self.outbound(), public_url=PUBLIC, clock=self.clock,
-            s3_client=self.s3_client,
-        )  # fmt: skip
+            inst, http_client=self.outbound(), public_url=PUBLIC, clock=self.clock
+        )
         app = create_app(headless, admin_token=ADMIN, run_worker=False)
         client = httpx2.AsyncClient(
             transport=httpx2.ASGITransport(app=app), base_url="http://desk.internal"

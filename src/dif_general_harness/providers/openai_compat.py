@@ -15,6 +15,7 @@ from typing import Any
 import openai
 
 from ..core.messages import (
+    MediaBlock,
     Message,
     Role,
     TextBlock,
@@ -66,9 +67,22 @@ def to_openai_messages(system: str, messages: list[Message]) -> list[dict[str, A
         for b in msg.content:
             if isinstance(b, ToolResultBlock):
                 out.append({"role": "tool", "tool_call_id": b.tool_use_id, "content": _result(b)})
-        if text:
+        media = [b for b in msg.content if isinstance(b, MediaBlock)]
+        if media:
+            parts: list[dict[str, Any]] = [_media_part(b) for b in media]
+            if text:
+                parts.append({"type": "text", "text": text})
+            out.append({"role": "user", "content": parts})
+        elif text:
             out.append({"role": "user", "content": text})
     return out
+
+
+def _media_part(b: MediaBlock) -> dict[str, Any]:
+    url = f"data:{b.media_type};base64,{b.data}"
+    if b.media_type == "application/pdf":
+        return {"type": "file", "file": {"filename": "document.pdf", "file_data": url}}
+    return {"type": "image_url", "image_url": {"url": url}}
 
 
 def _result(b: ToolResultBlock) -> str:

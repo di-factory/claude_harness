@@ -55,8 +55,17 @@ class ToolResultBlock(BaseModel):
     error: str | None = None
 
 
+class MediaBlock(BaseModel):
+    """An image or a PDF for a model to read (base64). Used for OCR requests; never stored
+    in a session's history."""
+
+    type: Literal["media"] = "media"
+    media_type: str  # image/png, image/jpeg, image/gif, image/webp, application/pdf
+    data: str
+
+
 Block = Annotated[
-    TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock,
+    TextBlock | ThinkingBlock | ToolUseBlock | ToolResultBlock | MediaBlock,
     Field(discriminator="type"),
 ]
 

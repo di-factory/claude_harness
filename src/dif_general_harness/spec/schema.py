@@ -12,7 +12,16 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-MODEL_ROLES = {"main", "subagent", "verifier", "compaction", "memory_extraction", "router", "title"}
+MODEL_ROLES = {
+    "main",
+    "subagent",
+    "verifier",
+    "compaction",
+    "memory_extraction",
+    "router",
+    "title",
+    "ocr",
+}
 _ID = r"^[a-z0-9][a-z0-9._-]*$"
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+([-+][0-9A-Za-z.-]+)?$")
 

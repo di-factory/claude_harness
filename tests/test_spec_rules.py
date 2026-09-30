@@ -71,6 +71,11 @@ PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
     ),
     (
         "pyme-receipt-processing",
+        "invalid_source",
+        lambda d: d["tools"]["config"]["documents"]["storage"].pop("bucket"),
+    ),
+    (
+        "pyme-receipt-processing",
         "missing_source",
         lambda d: d["triggers"].update(
             nightly={"type": "batch", "cron": "0 2 * * *", "workflow": "send-report"}

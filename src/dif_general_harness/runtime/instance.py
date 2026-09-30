@@ -81,9 +81,11 @@ from ..tools.packs.coding import (
     ExecutorError,
     executor_from_spec,
 )
+from ..tools.packs.documents import documents_tools
 from ..tools.packs.google_calendar import PACK as GOOGLE_CALENDAR
 from ..tools.packs.google_calendar import CalendarError, Source, calendar_tools
 from ..tools.registry import Effect, Tool, ToolRegistry
+from ..triggers.files import FileSource, build_source
 from ..verify import Verifier
 from .compaction import compact_if_needed
 from .context import current_session
@@ -119,6 +121,10 @@ class RuntimeOptions:
     database_url: str | None = None  # default: sqlite:///<state_root>/dif.db
     database: Database | None = None  # an open database (the service shares one)
     telemetry: OtlpExporter | None = None  # default: from OTEL_EXPORTER_OTLP_ENDPOINT, if set
+    s3_client: Any = None  # for file sources in S3 (tests: a fake); default: boto3's
+
+
+DOCUMENTS_STORAGE = "documents:storage"  # the documents pack's own source, by this name
 
 
 def scope_for(spec: SolutionSpec) -> Scope:
@@ -165,6 +171,9 @@ class Instance:
         self.ledger: LedgerStore | None = None
         self.pending_handoffs: dict[str, tuple[str, str, str]] = {}  # source session -> target
         self.sources: dict[str, tuple[Source, float]] = {}  # item feeds: (fetch, every s)
+        # folders and buckets: file triggers' (by trigger name) and the documents storage
+        self.file_sources: dict[str, FileSource] = {}
+        self.file_source_errors: dict[str, str] = {}
         self.tracer: Tracer | None = None  # OpenTelemetry, when an OTLP endpoint is set
 
     # --- lifecycle -----------------------------------------------------------------
@@ -261,6 +270,7 @@ class Instance:
             self.provider = TracedProvider(self.provider, self.tracer, self.vendor)
         for corpus in self.spec.knowledge.corpora:
             await self.sync_knowledge(corpus)
+        self._file_sources(data, missing)
         tools: list[Tool] = []
         tools += await self._packs(data, missing)
         tools += self._http(data, missing)
@@ -303,8 +313,8 @@ class Instance:
             self._warn(
                 "knowledge_format_unavailable",
                 where,
-                f"{len(report.skipped)} file(s) in formats not read yet (PDF, DOCX, images need"
-                f" the documents pack): {', '.join(report.skipped[:5])}",
+                f"{len(report.skipped)} file(s) without readable text (images, scans,"
+                f" unsupported formats): {', '.join(report.skipped[:5])}",
             )
         if report.added or report.updated or report.removed:
             await self.audit.record(
@@ -491,6 +501,8 @@ class Instance:
                 out += await self._google_calendar(data, missing)
             elif pack == "general":
                 out += general_tools(NoteStore(self.options.state_root, self.scope))
+            elif pack == "documents":
+                out += documents_tools(self.read_document, self._transcribe)
             elif pack == "coding":
                 roots = self.options.workspaces
                 name = next((a.workspace for a in self.spec.agents.values() if a.workspace), None)
@@ -531,6 +543,47 @@ class Instance:
             except python_tools.PythonToolError as exc:
                 self._warn("python_tool_error", f"tools.python[{i}]", str(exc))
         return out
+
+    def _file_sources(self, data: dict[str, Any], missing: set[str]) -> None:
+        """The folders and buckets this solution reads: its file triggers' sources and the
+        documents pack's ``storage``."""
+        wanted: dict[str, Any] = {
+            name: raw.get("source")
+            for name, raw in (data.get("triggers") or {}).items()
+            if isinstance(raw, dict) and raw.get("type") == "file"
+        }
+        storage = ((data.get("tools") or {}).get("config") or {}).get("documents") or {}
+        if "documents" in self.spec.tools.packs and storage.get("storage") is not None:
+            wanted[DOCUMENTS_STORAGE] = storage["storage"]
+        for name, raw in wanted.items():
+            if _secret_refs(raw) & missing:
+                self.file_source_errors[name] = "a secret is not set"
+                continue
+            try:
+                creds = raw.get("credentials") if isinstance(raw, dict) else None
+                resolved = self.secrets.resolve(creds) if creds is not None else None
+                self.file_sources[name] = build_source(
+                    raw, resolved, s3_client=self.options.s3_client
+                )
+            except Exception as exc:  # one broken source must not stop the instance
+                self.file_source_errors[name] = str(exc)
+        if DOCUMENTS_STORAGE in self.file_source_errors:
+            self._warn("file_source_error", "tools.config.documents.storage",
+                       self.file_source_errors[DOCUMENTS_STORAGE])  # fmt: skip
+
+    async def read_document(self, uri: str) -> bytes:
+        """The bytes of a document in one of this solution's own sources; anything else is
+        refused."""
+        for source in self.file_sources.values():
+            key = source.key(uri)
+            if key:
+                return await source.read(key)
+        raise PermissionError(f"{uri} is not in this solution's document sources")
+
+    async def _transcribe(self, data: bytes, media_type: str) -> str:
+        from ..documents.ocr import transcribe
+
+        return await transcribe(self, data, media_type)
 
     async def _google_calendar(self, data: dict[str, Any], missing: set[str]) -> list[Tool]:
         raw = (data.get("tools", {}).get("config") or {}).get(GOOGLE_CALENDAR) or {}
