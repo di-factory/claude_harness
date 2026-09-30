@@ -28,6 +28,7 @@ PACK_NAMESPACES: dict[str, set[str]] = {
     "documents": {"documents"},
     "connectors/google-calendar": {"calendar"},
 }
+EMBEDDING_PROVIDERS = {"openai", "openai-compatible"}
 OPERATOR_PURPOSES = {"hitl", "founder", "outbound"}
 AWS_REGION_PREFIX = {"mx": "mx-", "us": "us-", "eu": "eu-"}
 
@@ -209,6 +210,11 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
     router = spec.policies.router or {}
     if router.get("model_role") and router["model_role"] not in roles:
         err("unknown_model_role", "policies.router", "router model role not defined")
+    embedding = spec.models.roles.get("embedding") if spec.models else None
+    if embedding is not None and embedding.provider not in EMBEDDING_PROVIDERS:
+        err("invalid_embedding_provider", "models.roles.embedding",
+            f"{embedding.provider} has no embeddings API here; use an OpenAI-compatible"
+            " endpoint (OpenAI, a self-hosted model, a gateway)")  # fmt: skip
 
     # --- channels, triggers, workflows ------------------------------------------
     for cname, ch in channels.items():

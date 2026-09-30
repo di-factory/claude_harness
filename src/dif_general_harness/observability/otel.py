@@ -197,6 +197,24 @@ class TracedProvider:
         self.vendor = vendor  # role -> provider name
         self.name = getattr(inner, "name", "provider")
 
+    async def embed(self, texts: list[str], *, model_role: str = "embedding") -> Any:
+        span = self.tracer.start(
+            f"embeddings {model_role}", kind=3, gen_ai__operation__name="embeddings",
+            gen_ai__provider__name=self.vendor(model_role), dif__model_role=model_role,
+        )  # fmt: skip
+        try:
+            result = await self.inner.embed(texts, model_role=model_role)  # type: ignore[attr-defined]
+            span.set(gen_ai__request__model=result.model,
+                     gen_ai__usage__input_tokens=result.input_tokens)  # fmt: skip
+            return result
+        except Exception as exc:
+            span.error = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            self.tracer.finish(span)
+            if span.parent_id is None:
+                await self.tracer.flush(span.trace_id)
+
     async def stream(self, request: ModelRequest) -> AsyncIterator[ProviderEvent]:
         span = self.tracer.start(
             f"chat {request.model_role}",

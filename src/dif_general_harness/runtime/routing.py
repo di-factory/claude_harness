@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
-from ..providers.base import ModelProvider, ModelRequest, ProviderEvent
+from ..providers.base import Embeddings, ModelProvider, ModelRequest, ProviderEvent
 from ..spec.schema import ModelRoleConfig
 
 ProviderFactory = Callable[[ModelRoleConfig, dict[str, Any]], ModelProvider]
@@ -63,6 +63,14 @@ class RoleRouter:
 
     def stream(self, request: ModelRequest) -> AsyncIterator[ProviderEvent]:
         return self.for_role(request.model_role).stream(request)
+
+    async def embed(self, texts: list[str], *, model_role: str = "embedding") -> Embeddings:
+        provider = self.providers.get(model_role)  # never falls back to a chat model
+        embed = getattr(provider, "embed", None)
+        if embed is None:
+            raise RoutingError(f"model role {model_role!r} has no embedding model")
+        result: Embeddings = await embed(texts, model_role=model_role)
+        return result
 
 
 def build_router(

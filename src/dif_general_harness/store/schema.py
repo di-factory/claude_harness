@@ -174,6 +174,16 @@ MIGRATIONS: list[list[str]] = [
             seen_key TEXT NOT NULL, seen_at DOUBLE PRECISION NOT NULL,
             PRIMARY KEY (tenant_id, instance_id, trigger_name, seen_key))""",
     ],
+    [  # hybrid retrieval and remote knowledge sources
+        "ALTER TABLE knowledge_docs ADD COLUMN source_version TEXT",
+        """CREATE TABLE IF NOT EXISTS knowledge_vectors (
+            chunk_id TEXT PRIMARY KEY, doc_id TEXT NOT NULL, tenant_id TEXT NOT NULL,
+            instance_id TEXT NOT NULL, corpus TEXT NOT NULL, model TEXT NOT NULL,
+            vector TEXT NOT NULL)""",
+        """CREATE INDEX IF NOT EXISTS knowledge_vectors_by_corpus
+            ON knowledge_vectors (tenant_id, instance_id, corpus)""",
+        "CREATE INDEX IF NOT EXISTS knowledge_vectors_by_doc ON knowledge_vectors (doc_id)",
+    ],
 ]
 
 

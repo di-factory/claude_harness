@@ -92,13 +92,14 @@ class GoogleAuth:
     key: dict[str, Any]
     http: httpx2.AsyncClient
     subject: str | None = None
+    scope: str = SCOPE
     _token: str = ""
     _expires: float = 0.0
 
     def assertion(self, now: float) -> str:
         claims = {
             "iss": self.key["client_email"],
-            "scope": SCOPE,
+            "scope": self.scope,
             "aud": self.key.get("token_uri", "https://oauth2.googleapis.com/token"),
             "iat": int(now),
             "exp": int(now) + 3600,

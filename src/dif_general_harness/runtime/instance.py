@@ -45,6 +45,7 @@ from ..feedback.store import ALL_AGENTS, ConstraintStore, pinned_block
 from ..governance import AuditLog, ConsentStore, GovernedTools, PiiPolicy, Tokenizer, TokenVault
 from ..governance.contacts import ContactStore
 from ..hitl.inbox import Inbox
+from ..knowledge import sources as knowledge_sources
 from ..knowledge.store import KnowledgeBase, SyncReport
 from ..knowledge.tools import (
     check_citations,
@@ -86,6 +87,7 @@ from ..tools.packs.coding import (
     executor_from_spec,
 )
 from ..tools.packs.documents import documents_tools
+from ..tools.packs.general import guarded_client
 from ..tools.packs.google_calendar import PACK as GOOGLE_CALENDAR
 from ..tools.packs.google_calendar import CalendarError, Source, calendar_tools
 from ..tools.registry import Effect, Tool, ToolRegistry
@@ -274,6 +276,7 @@ class Instance:
                 "dif.config_version": self.resolved.version_hash[:12],
             })  # fmt: skip
             self.provider = TracedProvider(self.provider, self.tracer, self.vendor)
+        self._wire_knowledge(data, missing)
         for corpus in self.spec.knowledge.corpora:
             await self.sync_knowledge(corpus)
         self._file_sources(data, missing)
@@ -304,6 +307,50 @@ class Instance:
 
         return handoff
 
+    def _wire_knowledge(self, data: dict[str, Any], missing: set[str]) -> None:
+        """Embeddings for hybrid corpora, and the remote sources (S3, Drive, web pages)."""
+        roles = self.spec.models.roles if self.spec.models else {}
+        if "embedding" in roles and hasattr(self.provider, "embed"):
+            self.knowledge.embedder = self._embed
+        corpora = (data.get("knowledge") or {}).get("corpora") or {}
+        http = self.options.http_client
+        guarded = http  # tests inject a mock; production guards every hop like http.get
+
+        def build(corpus: str, src: dict[str, Any]) -> Any:
+            nonlocal http, guarded
+            raw = src.get("auth") or src.get("credentials") or corpora.get(corpus, {}).get("auth")
+            if raw is not None and _secret_refs(raw) & missing:
+                raise ValueError("a secret is not set")
+            secret = self.secrets.resolve(raw) if raw is not None else None
+            if http is None:
+                http = httpx2.AsyncClient(timeout=60.0, follow_redirects=True)
+                self._stack.push_async_callback(http.aclose)
+            if guarded is None:
+                guarded = guarded_client()
+                self._stack.push_async_callback(guarded.aclose)
+            public = {k: v for k, v in src.items() if k not in ("auth", "credentials")}
+            return knowledge_sources.build(
+                public, secret, http, s3_client=self.options.s3_client, guarded_http=guarded
+            )
+
+        self.knowledge.sources = build
+        for name, corpus in self.spec.knowledge.corpora.items():
+            if (corpus.get("retrieval") or {}).get("mode") == "hybrid" and (
+                self.knowledge.embedder is None
+            ):
+                self._warn("keyword_only", f"knowledge.corpora.{name}.retrieval",
+                           "hybrid retrieval needs an embedding model role; keyword scoring"
+                           " is used")  # fmt: skip
+
+    async def _embed(self, texts: list[str]) -> tuple[list[list[float]], str]:
+        result = await self.provider.embed(texts, model_role="embedding")  # type: ignore[union-attr]
+        price = DEFAULT_PRICES.get(result.model)
+        usage = Usage(input_tokens=result.input_tokens)
+        if price:
+            usage = usage.model_copy(update={"cost_usd": cost_usd(usage, price)})
+        await self.record_usage("knowledge", "embedding", result.model, usage)
+        return result.vectors, result.model
+
     async def sync_knowledge(self, corpus: str) -> SyncReport:
         report = await self.knowledge.sync(corpus)
         where = f"knowledge.corpora.{corpus}.sources"
@@ -315,6 +362,10 @@ class Instance:
                 f"not synced here: {', '.join(report.unavailable)}; push their documents with"
                 f" PUT /admin/knowledge/{corpus}/documents",
             )
+        if report.embedding_error:
+            self._warn("embedding_error", f"knowledge.corpora.{corpus}.retrieval",
+                       f"vectors not updated ({report.embedding_error}); keyword scoring"
+                       " still works")  # fmt: skip
         if report.skipped:
             self._warn(
                 "knowledge_format_unavailable",

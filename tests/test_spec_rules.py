@@ -38,6 +38,13 @@ PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
     ),
     (
         "pyme-appointment-agent",
+        "invalid_embedding_provider",
+        lambda d: d["models"]["roles"].update(
+            embedding={"provider": "anthropic", "model": "claude-haiku-4-5"}
+        ),
+    ),
+    (
+        "pyme-appointment-agent",
         "invalid_isolation",
         lambda d: d["tools"]["config"].update(python={"isolation": "container"}),
     ),

@@ -18,6 +18,7 @@ MODEL_ROLES = {
     "verifier",
     "compaction",
     "memory_extraction",
+    "embedding",
     "router",
     "title",
     "ocr",

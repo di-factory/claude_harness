@@ -184,7 +184,8 @@ route elsewhere, and later layers can only narrow the lists; `governance.regions
 cannot change once set.
 
 The roles are `main`, `subagent`, `verifier`, `compaction`,
-`memory_extraction`, `router`, `title` and `ocr` (a vision model for the documents pack). Agents pick a role; they never
+`memory_extraction`, `router`, `title`, `ocr` (a vision model for the documents pack) and
+`embedding` (hybrid retrieval; an OpenAI-compatible endpoint). Agents pick a role; they never
 name a model directly. A model swap is therefore one edit, and the pack's
 evals decide whether it passes.
 
@@ -279,10 +280,24 @@ Agents reach a corpus through the generated `knowledge.search_<corpus>` tool.
 - With `cite: true`, passages carry `kb:<id>` markers; a `citations` check
   (`min_citations`, `claims_must_cite`) runs on answers that used them. A failing answer
   gets one rewrite, then "not found". Contacts see `[1]` and a Sources list.
-- `file` sources (a file or a folder) are synced when the instance opens and on
-  `sync.schedule`; `on_delete: propagate` (the default) removes files that disappeared.
-  Markdown, text, HTML and CSV are read; other formats are reported. Other sources push
-  documents with `PUT /admin/knowledge/{corpus}/documents`.
+- Sources are synced when the instance opens and on `sync.schedule`:
+  - `file` (a file or a folder), and absolute paths;
+  - `s3` (`bucket`, `prefix`, `region`, `credentials`), or `"s3://bucket/prefix"`;
+  - `gdrive` (`folder_id`, `auth`: a service account key shared on the folder;
+    subfolders included), or `"gdrive://<folder id>"`;
+  - `url` (one public web page), or an `https://` string.
+
+  A source's `auth` may be given once for the corpus. Only entries whose version changed
+  are re-read. `on_delete: propagate` (the default) removes what disappeared from a source
+  that was listed completely; a source that is down removes nothing. Markdown, text, HTML,
+  CSV, PDF, DOCX and XLSX are read (Google Docs and Slides as text, Sheets as CSV); images
+  and scans are reported. Anything else (SharePoint, Notion...) pushes documents with
+  `PUT /admin/knowledge/{corpus}/documents`.
+- `retrieval.mode: hybrid` with an `embedding` model role (an OpenAI-compatible endpoint)
+  also embeds every chunk. Searches then fuse keyword and vector rankings: a passage
+  qualifies by `min_score` or by `min_similarity` (cosine, default 0.5), and its score is
+  the higher of the two. Without an embedding role, or while the embedding model is down,
+  searches use keywords only.
 
 ### 5.7 `memory`
 

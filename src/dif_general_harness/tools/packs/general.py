@@ -71,18 +71,27 @@ class NoteStore:
         return sorted(self._load())
 
 
-def general_tools(
-    notes: NoteStore,
-    *,
-    client: httpx2.AsyncClient | None = None,
-    url_check: Any = check_public_url,
-) -> list[Tool]:
+def guarded_client(
+    client: httpx2.AsyncClient | None = None, url_check: Any = check_public_url
+) -> httpx2.AsyncClient:
+    """An HTTP client that refuses private addresses on every hop (redirects included)."""
+
     async def guard(request: httpx2.Request) -> None:
         await url_check(request.url)
 
     http = client or httpx2.AsyncClient(timeout=20.0, follow_redirects=True, max_redirects=5)
     hooks = http.event_hooks
     http.event_hooks = {**hooks, "request": [*hooks.get("request", []), guard]}
+    return http
+
+
+def general_tools(
+    notes: NoteStore,
+    *,
+    client: httpx2.AsyncClient | None = None,
+    url_check: Any = check_public_url,
+) -> list[Tool]:
+    http = guarded_client(client, url_check)
 
     @tool("http.get")
     async def http_get(url: str) -> dict[str, Any]:

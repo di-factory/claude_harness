@@ -25,6 +25,7 @@ from ..core.messages import (
     Usage,
 )
 from .base import (
+    Embeddings,
     ModelRequest,
     ProviderEvent,
     ProviderMessage,
@@ -122,6 +123,16 @@ class OpenAICompatibleProvider:
         self.client = client or openai.AsyncOpenAI(api_key=api_key, base_url=base_url)
         self.effort = effort
         self.max_tokens = max_tokens
+
+    async def embed(self, texts: list[str], *, model_role: str = "embedding") -> Embeddings:
+        response = await self.client.embeddings.create(model=self.model, input=texts)
+        ordered = sorted(response.data, key=lambda d: d.index)
+        usage = getattr(response, "usage", None)
+        return Embeddings(
+            [list(d.embedding) for d in ordered],
+            str(getattr(response, "model", None) or self.model),
+            int(getattr(usage, "prompt_tokens", 0) or 0),
+        )
 
     async def stream(self, request: ModelRequest) -> AsyncIterator[ProviderEvent]:
         names = tool_name_map(request.tools)
