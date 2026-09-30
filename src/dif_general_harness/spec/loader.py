@@ -96,6 +96,10 @@ def _absolutize(data: dict[str, Any], base: Path) -> None:
             for src in sources:
                 if isinstance(src, dict) and src.get("type") == "file" and "path" in src:
                     src["path"] = _abs(base, src["path"])
+    for trig in (data.get("triggers") or {}).values():
+        src = (trig or {}).get("source") if isinstance(trig, dict) else None
+        if isinstance(src, dict) and src.get("type") == "folder" and "path" in src:
+            src["path"] = _abs(base, src["path"])
     tools = data.get("tools") or {}
     if isinstance(tools.get("python"), list):
         tools["python"] = [

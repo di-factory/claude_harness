@@ -162,6 +162,7 @@ class Env:
         self.provider = FakeProvider(script)
         self.sent: list[httpx2.Request] = []
         self.clock = Clock()
+        self.s3_client: Any = None  # a fake S3 client for file triggers
 
     def outbound(self) -> httpx2.AsyncClient:
         def handle(request: httpx2.Request) -> httpx2.Response:
@@ -202,8 +203,9 @@ class Env:
         )
         inst = await Instance.open(resolved, options)
         headless = await Headless.build(
-            inst, http_client=self.outbound(), public_url=PUBLIC, clock=self.clock
-        )
+            inst, http_client=self.outbound(), public_url=PUBLIC, clock=self.clock,
+            s3_client=self.s3_client,
+        )  # fmt: skip
         app = create_app(headless, admin_token=ADMIN, run_worker=False)
         client = httpx2.AsyncClient(
             transport=httpx2.ASGITransport(app=app), base_url="http://desk.internal"

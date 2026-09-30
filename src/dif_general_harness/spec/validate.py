@@ -34,6 +34,8 @@ AWS_REGION_PREFIX = {"mx": "mx-", "us": "us-", "eu": "eu-"}
 _VAR_TEMPLATE = re.compile(r"\{\{\s*var\.([A-Za-z0-9_]+)\s*\}\}")
 _VAR_CEL = re.compile(r"\bvar\.([A-Za-z0-9_]+)")
 
+_DOTTED = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
+
 
 def _strings(obj: Any) -> Iterator[str]:
     if isinstance(obj, str):
@@ -237,6 +239,25 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
             err("unknown_workflow", where, f"started_by unknown workflow {trig.started_by!r}")
         if trig.type == "file" and not trig.dedupe_key:
             err("missing_dedupe", where, "file triggers need a dedupe_key")
+        if trig.dedupe_key and not _DOTTED.match(trig.dedupe_key):
+            err("invalid_dedupe_key", where, "dedupe_key is a field path such as file.sha256")
+        if trig.type == "file":
+            src = trig.source if isinstance(trig.source, dict) else {}
+            needs = {"folder": "path", "s3": "bucket"}.get(str(src.get("type")))
+            if needs is None:
+                err("invalid_source", where, "file triggers need a source of type folder or s3")
+            elif not src.get(needs):
+                err("invalid_source", where, f"{src.get('type')} sources need a {needs}")
+        if trig.type == "batch":
+            tool = trig.source if isinstance(trig.source, str) else None
+            if isinstance(trig.source, dict):
+                tool = trig.source.get("tool")
+            if trig.source is not None and not isinstance(tool, str):
+                err("invalid_source", where, "a batch source names a read tool")
+            elif tool and tool.split(".", 1)[0] not in namespaces:
+                err("unknown_tool_namespace", where, f"tool {tool!r} has no provider namespace")
+            if trig.cron and trig.source is None:
+                err("missing_source", where, "a scheduled batch needs a source tool")
         if trig.type == "schedule" and not trig.cron:
             err("missing_cron", where, "schedule triggers need a cron expression")
         if trig.channel is not None:

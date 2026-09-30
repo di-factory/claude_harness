@@ -331,9 +331,28 @@ messages outside a provider's session window must use a template.
 | `delay` | a timer started by a workflow step, which can be cancelled |
 | `webhook` | a client system calls the harness |
 | `event` | an internal event (for example `escalation.resolved`) |
+| `file` | new files in a folder or an S3 bucket |
 | `batch` | runs over a list of items |
 
 `requires_consent` makes the consent module skip contacts who opted out.
+
+**File triggers** poll their `source` every `poll` (default `1m`):
+`{"type": "folder", "path": "/data/inbox"}` or
+`{"type": "s3", "bucket": "...", "prefix": "in/", "region": "...", "credentials": {"$secret": "storage"}}`
+(without credentials the instance's IAM role is used; a credentials secret is JSON with
+`access_key_id` and `secret_access_key`). `match` filters by glob, `dedupe_key` (required, a
+field path such as `file.sha256`) fires once per value, and files over `max_bytes` (default
+25 MB) are skipped and audited. The event is `{"file": {key, name, size, sha256, uri,
+content_type, text}}`; `text` is present for text files (XML, JSON, CSV...) up to
+`inline_bytes` (default 64 KB).
+
+**Batch triggers** fan out one firing per item, with the event `{"item": ..., "batch": {id,
+index, total}}`. Items come from a read tool, `"source": {"tool": "erp.open_invoices",
+"args": {...}, "items": "data.rows"}` (the list, or the field path to it), on the trigger's
+`cron` or on demand; or they are pushed with `POST /admin/triggers/{name}/run`
+(`{"items": [...]}`), which also runs a file trigger's scan at once. With a `dedupe_key`
+(such as `item.id`) an item is processed once across batches; items without that field are
+skipped. At most `max_items` (default 1000) per batch.
 
 A trigger that targets an agent can deliver the agent's reply: `channel` names the channel
 and `to` the address (default: the channel's `address`), for example a founder's daily

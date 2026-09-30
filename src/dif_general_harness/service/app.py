@@ -7,8 +7,8 @@ Routes:
 - ``POST /hooks/{path}``: webhook triggers, verified with their shared secret
   (``X-Hub-Signature-256`` or a bearer token), deduplicated by delivery id.
 - ``/admin/*``: the inbox (list, decide), sessions (view, reply as a person), consent,
-  audit verification, spend and job counts. Bearer ``admin_token``; without one the admin
-  API is off.
+  audit verification, spend and job counts, running file and batch triggers. Bearer
+  ``admin_token``; without one the admin API is off.
 
 The worker (queue lanes) runs inside the same process by default: one container per
 instance (ARCHITECTURE §3.20).
@@ -354,6 +354,23 @@ def create_app(
             raise HTTPException(400, "an event needs a name")
         woken = await headless.emit(name, dict(body.get("data") or {}))
         return {"woken": woken}
+
+    @app.post("/admin/triggers/{name}/run", dependencies=[Depends(admin)])
+    async def run_trigger(name: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Run a file trigger's scan now, or a batch trigger now (``{"items": [...]}`` pushes
+        the items instead of calling its source tool)."""
+        trig = headless.triggers.get(name)
+        if trig is None or trig.type not in ("file", "batch"):
+            raise HTTPException(404, "no file or batch trigger by that name")
+        if trig.type == "file":
+            return {"queued": await headless.scan_files(name)}
+        given = (body or {}).get("items")
+        if given is not None and not isinstance(given, list):
+            raise HTTPException(400, "items must be a list")
+        try:
+            return await headless.run_batch(name, given)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
 
     @app.post("/admin/sources/{source}/items", dependencies=[Depends(admin)])
     async def items(source: str, body: dict[str, Any]) -> dict[str, Any]:

@@ -168,6 +168,12 @@ MIGRATIONS: list[list[str]] = [
             position INTEGER NOT NULL, error TEXT, created_at DOUBLE PRECISION NOT NULL,
             finished_at DOUBLE PRECISION)""",
     ],
+    [  # file and batch triggers: what each trigger has already seen (object versions, keys)
+        """CREATE TABLE IF NOT EXISTS trigger_seen (
+            tenant_id TEXT NOT NULL, instance_id TEXT NOT NULL, trigger_name TEXT NOT NULL,
+            seen_key TEXT NOT NULL, seen_at DOUBLE PRECISION NOT NULL,
+            PRIMARY KEY (tenant_id, instance_id, trigger_name, seen_key))""",
+    ],
 ]
 
 

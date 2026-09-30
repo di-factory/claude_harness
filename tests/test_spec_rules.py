@@ -60,6 +60,23 @@ PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
         lambda d: d["triggers"]["new-document"].pop("dedupe_key"),
     ),
     (
+        "pyme-receipt-processing",
+        "invalid_dedupe_key",
+        lambda d: d["triggers"]["new-document"].update(dedupe_key="{{file.sha256}}"),
+    ),
+    (
+        "pyme-receipt-processing",
+        "invalid_source",
+        lambda d: d["triggers"]["new-document"]["source"].update(type="ftp"),
+    ),
+    (
+        "pyme-receipt-processing",
+        "missing_source",
+        lambda d: d["triggers"].update(
+            nightly={"type": "batch", "cron": "0 2 * * *", "workflow": "send-report"}
+        ),
+    ),
+    (
         "pyme-appointment-agent",
         "unknown_model_role",
         lambda d: d["agents"]["receptionist"].update(model_role="subagent"),
