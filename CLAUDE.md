@@ -37,7 +37,8 @@ All four checks must pass before every commit.
 - `src/dif_general_harness/spec/`: schema (Pydantic), loader (catalog, merge, interpolation), validate
 - `src/dif_general_harness/providers/`: provider protocol, Anthropic, OpenAI-compatible, `FakeProvider`
 - `src/dif_general_harness/tools/`: registry (`@tool`, input checks), HTTP connectors, MCP client,
-  `python.py` (pack extensions), `packs/` (coding, general, documents, google_calendar)
+  `python.py` and `python_sandbox.py` (pack extensions), `egress.py` (the sandbox proxy),
+  `packs/` (coding, general, documents, google_calendar)
 - `src/dif_general_harness/policy/`: permissions and approvals, budgets, secret redaction
 - `src/dif_general_harness/tenancy/`: secret backends and `$secret` resolution
 - `src/dif_general_harness/store/`: database layer (SQLite/Postgres, migrations), SQL and JSONL
@@ -96,7 +97,6 @@ v1.0: M0 to M4 are done; the last gate is `tests/test_acceptance_m4.py` (one-com
 plan and rollback, costs by tenant and vendor, eval-gated fleet rollouts, regions and the
 sandbox). Next: GCP and Azure profiles, and the known gaps.
 Known gaps: embeddings/hybrid retrieval (pgvector), syncing knowledge sources other than
-files (they push through the admin API), the voice channel, running Python extensions in
-the container executor, the egress proxy that enforces `allow_hosts`, and a first apply of
-the AWS module in a real account. See
-`docs/ARCHITECTURE.md` §6 and decisions 43–61.
+files (they push through the admin API), the voice channel, and a first apply of the AWS
+module in a real account. See
+`docs/ARCHITECTURE.md` §6 and decisions 43–62.

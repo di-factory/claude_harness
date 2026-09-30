@@ -38,6 +38,11 @@ PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
     ),
     (
         "pyme-appointment-agent",
+        "invalid_isolation",
+        lambda d: d["tools"]["config"].update(python={"isolation": "container"}),
+    ),
+    (
+        "pyme-appointment-agent",
         "missing_file",
         lambda d: d["tools"].update(python=["extensions.nope:best_slot"]),
     ),

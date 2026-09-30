@@ -487,7 +487,19 @@ crashed half way runs again on resume, so side-effecting tools should be idempot
   `<version>-<solution hash>`.
 - `workspaces.<name>.executor`: `{"type": "container", "image", "cpu", "memory",
   "timeout", "allow_hosts", "egress_proxy", "runtime"}` runs shell commands in a throwaway
-  container with no network unless `egress_proxy` (which must enforce `allow_hosts`) is set.
+  container with no network unless `allow_hosts` is set and an egress proxy enforces it:
+  `"egress_proxy": "builtin"` is the harness's own proxy (set `DIF_EGRESS_ADVERTISE` to the
+  address containers reach it at, e.g. `harness:3128`, and `DIF_EGRESS_LISTEN` if not
+  `0.0.0.0:3128`; the harness and the containers share `proxy_network`, an internal
+  network with no route out). It gives each command credentials bound to its
+  `allow_hosts` (`github.com`, `*.pythonhosted.org`, `host:port`), refuses private
+  addresses, and audits every decision as `egress`. Any other value is the URL of a proxy
+  the operator runs and vouches for.
+- `tools.config.python`: `{"isolation": "container", "image": "python:3.12-slim", "cpu",
+  "memory", "timeout", "allow_hosts", "egress_proxy", "runtime"}` runs every extension call
+  in a throwaway container (the extension's folder mounted read-only, no secrets). The
+  harness reads the extension's contract with `ast` and never imports it. The default,
+  `"isolation": "none"`, loads extensions in-process.
 
 ### 5.14 `workspaces` (added by paper test 2)
 

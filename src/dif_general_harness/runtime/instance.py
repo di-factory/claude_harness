@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import dataclasses
 import fnmatch
+import os
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack
@@ -72,10 +73,13 @@ from ..store.sql import SqlSessionStore
 from ..teams import LedgerStore, handoff_tool, runs_tools, subagent_tool
 from ..tenancy.secrets import EnvSecrets, SecretBackend, SecretResolver
 from ..tools import python as python_tools
+from ..tools import python_sandbox
+from ..tools.egress import EgressProxy
 from ..tools.http import ConnectorError, http_tools
 from ..tools.mcp import McpToolSource
 from ..tools.packs import NoteStore, Workspace, coding_tools, general_tools
 from ..tools.packs.coding import (
+    BUILTIN,
     ContainerExecutor,
     Executor,
     ExecutorError,
@@ -122,6 +126,7 @@ class RuntimeOptions:
     database: Database | None = None  # an open database (the service shares one)
     telemetry: OtlpExporter | None = None  # default: from OTEL_EXPORTER_OTLP_ENDPOINT, if set
     s3_client: Any = None  # for file sources in S3 (tests: a fake); default: boto3's
+    egress_proxy: EgressProxy | None = None  # default: from DIF_EGRESS_ADVERTISE, if set
 
 
 DOCUMENTS_STORAGE = "documents:storage"  # the documents pack's own source, by this name
@@ -151,6 +156,7 @@ class Instance:
         self.provider: ModelProvider | None = None
         self.workspace: Workspace | None = None  # the coding pack's, for undo
         self.executor: Executor | None = None  # where shell commands and command checks run
+        self.egress: EgressProxy | None = None  # the builtin egress proxy, when containers use it
         self._stack = AsyncExitStack()
         self.owns_db = False  # True when this instance opened the database (closes it too)
         self.db: Database  # set in _open_database
@@ -521,28 +527,89 @@ class Instance:
                 except ExecutorError as exc:
                     self._warn("executor_error", f"workspaces.{name}.executor", str(exc))
                     continue  # no shell rather than an unconfined one
-                unenforced = isinstance(executor, ContainerExecutor) and (
-                    executor.allow_hosts and not executor.egress_proxy
-                )
-                if unenforced:
-                    self._warn(
-                        "egress_proxy_missing",
-                        f"workspaces.{name}.executor",
-                        "allow_hosts needs an egress_proxy that enforces it; the container"
-                        " gets no network",
-                    )
+                if isinstance(executor, ContainerExecutor):
+                    await self._attach_egress(executor, f"workspaces.{name}.executor")
                 self.executor = self.options.executor or executor
                 out += coding_tools(self.workspace, self.executor, bash_timeout_s=timeout or 120.0)
             else:
                 self._warn(
                     "unavailable_pack", "tools.packs", f"tool pack {pack!r} is not built yet"
                 )
+        out += await self._python_tools(data)
+        return out
+
+    async def _python_tools(self, data: dict[str, Any]) -> list[Tool]:
+        """Pack extensions: in-process, or each call in a container
+        (``tools.config.python.isolation: "container"``)."""
+        config = ((data.get("tools") or {}).get("config") or {}).get("python") or {}
+        where = "tools.config.python"
+        isolation = str(config.get("isolation") or "none")
+        executor: ContainerExecutor | None = None
+        timeout = 30.0
+        if self.spec.tools.python and isolation == "container":
+            try:
+                built, limit = executor_from_spec({**config, "type": "container"})
+            except ExecutorError as exc:
+                self._warn("executor_error", where, f"{exc}; Python extensions are off")
+                return []  # never fall back to running them unconfined
+            assert isinstance(built, ContainerExecutor)
+            executor, timeout = built, limit or timeout
+            await self._attach_egress(executor, where)
+        elif isolation not in ("none", "container"):
+            self._warn("executor_error", where, "isolation must be none or container")
+            return []
+        out: list[Tool] = []
         for i, ref in enumerate(self.spec.tools.python):
             try:
-                out.append(python_tools.load(ref))
+                if executor is not None:
+                    out.append(python_sandbox.isolated(ref, executor, timeout))
+                else:
+                    out.append(python_tools.load(ref))
             except python_tools.PythonToolError as exc:
                 self._warn("python_tool_error", f"tools.python[{i}]", str(exc))
         return out
+
+    async def _attach_egress(self, executor: ContainerExecutor, where: str) -> None:
+        """Give a container executor its way out: the builtin proxy (per-command credentials
+        bound to ``allow_hosts``), an operator's proxy, or none (no network)."""
+        if not executor.allow_hosts:
+            return
+        if executor.egress_proxy == BUILTIN:
+            executor.proxy = await self._egress()
+            if executor.proxy is None:
+                executor.egress_proxy = None
+                self._warn("egress_proxy_missing", where,
+                           "the builtin egress proxy needs DIF_EGRESS_ADVERTISE (the address"
+                           " containers reach it at); the container gets no network")  # fmt: skip
+        elif not executor.egress_proxy:
+            self._warn("egress_proxy_missing", where,
+                       "allow_hosts needs an egress_proxy that enforces it; the container"
+                       " gets no network")  # fmt: skip
+
+    async def _egress(self) -> EgressProxy | None:
+        if self.egress is not None:
+            return self.egress
+        proxy = self.options.egress_proxy
+        if proxy is None:
+            advertise = os.environ.get("DIF_EGRESS_ADVERTISE")
+            if not advertise:
+                return None
+            host, _, port = os.environ.get("DIF_EGRESS_LISTEN", "0.0.0.0:3128").rpartition(":")
+            proxy = EgressProxy(advertise, listen_host=host or "0.0.0.0", listen_port=int(port))
+        proxy.on_decision = self._egress_decision
+        if proxy._server is None:
+            await proxy.start()
+            self._stack.push_async_callback(proxy.close)
+        self.egress = proxy
+        return proxy
+
+    async def _egress_decision(
+        self, label: str, host: str, port: int, allowed: bool, reason: str
+    ) -> None:
+        await self.audit.record(
+            self.scope, f"sandbox:{label}", "egress", f"{host}:{port}",
+            {"allowed": allowed, "reason": reason},
+        )  # fmt: skip
 
     def _file_sources(self, data: dict[str, Any], missing: set[str]) -> None:
         """The folders and buckets this solution reads: its file triggers' sources and the

@@ -276,6 +276,15 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
         elif mode == "critical_only" and "output" in (verifier.get("applies_to") or []):
             err("invalid_verifier", where, "answers have no critical checks; use sampled or always")
 
+    isolation = spec.tools.config.get("python") or {}
+    if isolation:
+        where = "tools.config.python"
+        mode = isolation.get("isolation", "none")
+        if mode not in ("none", "container"):
+            err("invalid_isolation", where, "isolation must be none or container")
+        elif mode == "container" and not isolation.get("image"):
+            err("invalid_isolation", where, "container isolation needs an image with python3")
+
     storage = (spec.tools.config.get("documents") or {}).get("storage")
     if storage is not None and (why := _file_source_issue(storage)):
         err("invalid_source", "tools.config.documents.storage", why)
