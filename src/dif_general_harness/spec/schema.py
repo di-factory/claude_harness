@@ -203,6 +203,7 @@ class Channel(Strict):
     purpose: Literal["contact", "hitl", "founder", "outbound"] = "contact"
     reply_via: str | None = None
     enabled: bool | str = True
+    voice: dict[str, Any] | None = None  # voice channels: language, voice, greeting...
 
 
 class Trigger(Strict):

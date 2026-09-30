@@ -329,8 +329,19 @@ end user), `instance` or `agent`. It is always tenant-scoped underneath.
 ```
 
 Channel types: `gateway` (WhatsApp/SMS via Twilio-style providers),
-`telegram`, `web`, `email`, `slack`, `api`, and later `voice`. Outbound
+`telegram`, `web`, `email`, `slack`, `api` and `voice`. Outbound
 messages outside a provider's session window must use a template.
+
+A `voice` channel (Twilio Programmable Voice; point the number's voice webhook at
+`/channels/<name>`) holds phone conversations with the same agents. Twilio recognizes the
+caller's speech and each utterance is one ordinary turn; the reply is spoken, without
+citation markers or the Sources list, and the call keeps listening. Silence ends the call
+politely, and an escalated turn transfers it to `voice.transfer_to` when set. Settings go
+under `voice`: `language` (default `en-US`, `es-MX` for Mexico), `voice` (a Twilio/Polly
+voice), `greeting`, `goodbye`, `transferring`, `transfer_to` (`+52...` or `sip:...`),
+`speech_timeout` and `hints`. With an `address`, the harness can also place calls that
+speak a message (reminders), under the same consent rules. Twilio waits about 15 seconds
+per turn, so voice agents need a fast model and few tool calls.
 
 ### 5.9 `triggers`
 

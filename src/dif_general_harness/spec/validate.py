@@ -35,6 +35,7 @@ AWS_REGION_PREFIX = {"mx": "mx-", "us": "us-", "eu": "eu-"}
 _VAR_TEMPLATE = re.compile(r"\{\{\s*var\.([A-Za-z0-9_]+)\s*\}\}")
 _VAR_CEL = re.compile(r"\bvar\.([A-Za-z0-9_]+)")
 
+_DIALABLE = re.compile(r"^(\+[1-9]\d{6,14}|sip:[^\s@]+@[^\s]+)$")
 _DOTTED = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
 
 
@@ -220,6 +221,12 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
     for cname, ch in channels.items():
         if ch.entry_agent and ch.entry_agent not in agents:
             err("unknown_agent", f"channels.{cname}", f"entry agent {ch.entry_agent!r} not defined")
+        if ch.voice is not None and ch.type != "voice":
+            err("invalid_voice", f"channels.{cname}.voice", "voice settings need a voice channel")
+        transfer = (ch.voice or {}).get("transfer_to")
+        if isinstance(transfer, str) and "{{" not in transfer and not _DIALABLE.match(transfer):
+            err("invalid_voice", f"channels.{cname}.voice.transfer_to",
+                "transfer_to is a phone number (+525512345678) or a sip: address")  # fmt: skip
     for cname, corpus_cfg in corpora.items():
         where = f"knowledge.corpora.{cname}"
         cron = (corpus_cfg.get("sync") or {}).get("schedule")

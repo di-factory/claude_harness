@@ -53,7 +53,7 @@ All four checks must pass before every commit.
 - `src/dif_general_harness/governance/`: PII tokenization, consent, audit chain, retention
 - `src/dif_general_harness/runtime/`: `Instance` (spec to runnable agents), role routing, prompts
 - `src/dif_general_harness/channels/`, `triggers/`, `hitl/`: adapters (gateway, Telegram,
-  API/web, email, Slack), cron, the inbox
+  API/web, email, Slack, voice), cron, file sources, the inbox
 - `src/dif_general_harness/service/`: the headless runtime (`Headless`), FastAPI app, config boot
 - `src/dif_general_harness/tenancy/`: secrets (env, file, AWS) and config versions
 - `src/dif_general_harness/fleet/`: the outbound-only instance agent (signed, eval-gated offers)
@@ -95,8 +95,11 @@ All four checks must pass before every commit.
 
 v1.0: M0 to M4 are done; the last gate is `tests/test_acceptance_m4.py` (one-command deploy
 plan and rollback, costs by tenant and vendor, eval-gated fleet rollouts, regions and the
-sandbox). Next: GCP and Azure profiles, and the known gaps.
-Known gaps: the voice channel, knowledge connectors beyond files, S3, Drive and web pages
-(SharePoint, Notion... push through the admin API), pgvector for very large corpora,
-and a first apply of the AWS module in a real account. See
-`docs/ARCHITECTURE.md` §6 and decisions 43–63.
+sandbox). After v1.0 the listed gaps were closed (decisions 58–64): context compaction and
+the intent router, file and batch triggers, the documents pack, sampled verification, the
+egress proxy and isolated extensions, hybrid retrieval with S3/Drive/web sources, and voice.
+Next: GCP and Azure profiles.
+Known gaps: streaming (speech-to-speech) voice, knowledge connectors beyond files, S3,
+Drive and web pages (SharePoint, Notion... push through the admin API), pgvector for very
+large corpora, and a first apply of the AWS module in a real account. See
+`docs/ARCHITECTURE.md` §6 and decisions 43–64.

@@ -363,8 +363,8 @@ class Headless:
 
     async def send(self, channel: str, contact_key: str, text: str, session_id: str | None) -> None:
         adapter = self.adapters.get(channel)
-        if adapter is None or adapter.inline_reply:
-            return
+        if adapter is None or (adapter.inline_reply and not getattr(adapter, "outbound", False)):
+            return  # REST/web replies travel in the HTTP response; voice can place a call
         message_id = await adapter.send(contact_key, text)
         await self.instance.audit.record(
             self.scope, "system", "message_out", channel,

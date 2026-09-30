@@ -600,7 +600,8 @@ Milestones have **no dates** (decision 28): each one is done when its gate
 passes, and work moves straight on to the next.
 
 **Status:** M0 to M4 are done; each gate is `tests/test_acceptance_m<n>.py` (M4's is the
-v1.0 gate). After v1.0: GCP and Azure profiles, and the known gaps listed in `CLAUDE.md`.
+v1.0 gate). After v1.0, the v1.0 known gaps were closed (decisions 58–64, each with its
+tests); next are the GCP and Azure profiles and the remaining gaps listed in `CLAUDE.md`.
 
 **Instances** follow the template. The first candidates are listed in §8; an
 instance can start once the modules it needs have shipped.
@@ -672,6 +673,7 @@ instance can start once the modules it needs have shipped.
 | 61 | Sampled verification (after v1) | `sampled` picks calls and answers by a **hash of the session and the call or turn**, so retries and replays decide the same way. Side effects are checked before they commit; **answers are reviewed after sending**, because a gate on every sampled answer would add latency to a random share of contacts, and a wrong answer is fixed by a person (the `review` inbox item) and at the source (a proposed constraint). |
 | 62 | Egress and isolation (after v1) | The **egress proxy runs inside the harness**, which already joins the containers' internal network: no extra service to deploy, and it knows each command's `allow_hosts`, so every command gets **its own credentials**, revoked when it ends. The proxy resolves hosts itself and connects to the checked address (no DNS rebinding into the client's network). **Isolated extensions** are described with `ast`, never imported by the harness, and run per call in the same container executor; a bad isolation config turns extensions off, never on unconfined. |
 | 63 | Hybrid retrieval and remote sources (after v1) | Vectors live in a **portable table** (SQLite and Postgres alike) and are compared in-process, exactly, with results fused by **reciprocal rank fusion**; `min_score` keeps its meaning and `min_similarity` adds a semantic floor. This covers SMB corpora (up to about 100k chunks) without pgvector, which remains an option for larger ones. Embeddings come from an `embedding` role on an OpenAI-compatible endpoint, charged like any call; a down model degrades to keywords. S3, Google Drive and web pages sync incrementally by source version; a source that fails to list deletes nothing. |
+| 64 | Voice (after v1) | Phone calls use **the provider's own speech recognition and text-to-speech** (Twilio `<Gather input="speech">` and `<Say>`), so the harness stays text-only: each utterance is an ordinary inline turn with every guardrail, and no audio is stored or streamed through the harness. Streaming speech-to-speech (barge-in, lower latency) is a later option behind the same channel type. |
 
 ## 8. First instantiation candidates (parked)
 

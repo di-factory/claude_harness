@@ -3,7 +3,8 @@
 Routes:
 - ``GET /healthz``: liveness and config version; ``GET /readyz``: the database answers.
 - ``POST /channels/{name}``: inbound messages. Gateway and Telegram requests are verified
-  and queued (acknowledged at once); REST/web channels answer inline.
+  and queued (acknowledged at once); REST/web channels answer inline, and voice answers
+  inline with TwiML (speak, listen, transfer).
 - ``POST /hooks/{path}``: webhook triggers, verified with their shared secret
   (``X-Hub-Signature-256`` or a bearer token), deduplicated by delivery id.
 - ``/admin/*``: the inbox (list, decide), sessions (view, reply as a person), consent,
@@ -140,6 +141,11 @@ def create_app(
             return Response(json.dumps(shake.body), media_type="application/json")
         except ChannelError as exc:
             raise HTTPException(400, str(exc)) from None
+        adapter = headless.adapters[name]
+        respond = getattr(adapter, "respond", None)
+        if results is not None and respond is not None:  # voice: TwiML, not JSON
+            content, media_type = respond(_inbound(request, await request.body()), results)
+            return Response(content, media_type=media_type)
         if results is not None:
             body = [
                 {"reply": r.reply, "session": r.session_id, "status": r.reason} for r in results
@@ -147,7 +153,6 @@ def create_app(
             return Response(
                 json.dumps({"replies": body}, ensure_ascii=False), media_type="application/json"
             )
-        adapter = headless.adapters[name]
         if adapter.config.type == "gateway":  # an empty TwiML answer: we reply asynchronously
             return Response("<Response/>", media_type="application/xml")
         return Response("{}", media_type="application/json")
