@@ -96,7 +96,7 @@ v1.0: M0 to M4 are done; the last gate is `tests/test_acceptance_m4.py` (one-com
 plan and rollback, costs by tenant and vendor, eval-gated fleet rollouts, regions and the
 sandbox). Next: GCP and Azure profiles, and the known gaps.
 Known gaps: embeddings/hybrid retrieval (pgvector), syncing knowledge sources other than
-files (they push through the admin API), sampled output verification
-(`applies_to: output`), the voice channel, running Python extensions in the container executor, the egress proxy that
-enforces `allow_hosts`, and a first apply of the AWS module in a real account. See
-`docs/ARCHITECTURE.md` §6 and decisions 43–60.
+files (they push through the admin API), the voice channel, running Python extensions in
+the container executor, the egress proxy that enforces `allow_hosts`, and a first apply of
+the AWS module in a real account. See
+`docs/ARCHITECTURE.md` §6 and decisions 43–61.

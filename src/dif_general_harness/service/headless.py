@@ -52,6 +52,7 @@ from ..spec.schema import Trigger
 from ..tools.registry import Effect
 from ..triggers import CronError, next_fire
 from ..triggers import files as file_sources
+from ..verify.output import review_output, wants_review
 from ..workflows import Job, JobQueue, Worker
 from ..workflows.engine import WorkflowEngine
 from ..workflows.render import render as render_value
@@ -224,6 +225,7 @@ class Headless:
             "knowledge_sync": self._job_knowledge_sync,
             "source_sync": self._job_source_sync,
             "file_scan": self._job_file_scan,
+            "output_review": self._job_output_review,
             "batch_run": lambda job: self.run_batch(job.payload["trigger"]),
         }
 
@@ -338,6 +340,12 @@ class Headless:
             )
             await self.notify(item, f"Turn ended with {reason} ({agent_name})")
             reply = reply or FALLBACK
+        elif reply and wants_review(inst, session.id, len(session.messages)):
+            await self.queue.enqueue(
+                self.scope, "output_review",
+                {"agent": agent.name, "session": session.id, "upto": len(session.messages)},
+                dedupe_key=f"review:{session.id}:{len(session.messages)}",
+            )  # fmt: skip
         return TurnResult(reply, reason, session.id, escalated)
 
     async def _hold_for_person(self, session: Any, env: Envelope) -> TurnResult:
@@ -587,6 +595,15 @@ class Headless:
         if not isinstance(found, list):
             raise ValueError(f"batch source {tool_name} did not return a list of items")
         return found
+
+    async def _job_output_review(self, job: Job) -> None:
+        name = job.payload["agent"]
+        if name not in self.instance.spec.agents:
+            return
+        agent = self.agent(name)
+        session = await agent.resume(job.payload["session"])
+        session.messages = session.messages[: int(job.payload["upto"])]  # the answer sent
+        await review_output(agent, session)
 
     async def _job_knowledge_sync(self, job: Job) -> None:
         corpus = job.payload["corpus"]

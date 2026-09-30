@@ -262,6 +262,20 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
             elif not trig.to and not target.address:
                 err("no_recipient", where, f"channel {trig.channel!r} has no address; set 'to'")
 
+    verifier = spec.policies.verification.verifier or {}
+    if verifier:
+        mode = verifier.get("mode", "critical_only")
+        rate = verifier.get("sample_rate")
+        where = "policies.verification.verifier"
+        if mode not in ("always", "critical_only", "sampled"):
+            err("invalid_verifier", where, "mode must be always, critical_only or sampled")
+        elif mode == "sampled" and not (
+            isinstance(rate, (int, float)) and not isinstance(rate, bool) and 0 < rate <= 1
+        ):
+            err("invalid_verifier", where, "sampled mode needs a sample_rate above 0, up to 1")
+        elif mode == "critical_only" and "output" in (verifier.get("applies_to") or []):
+            err("invalid_verifier", where, "answers have no critical checks; use sampled or always")
+
     storage = (spec.tools.config.get("documents") or {}).get("storage")
     if storage is not None and (why := _file_source_issue(storage)):
         err("invalid_source", "tools.config.documents.storage", why)

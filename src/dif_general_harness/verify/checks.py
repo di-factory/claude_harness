@@ -11,8 +11,10 @@ Before a tool call with side effects commits, its checks run:
 ``citations`` checks apply to answers, not tool calls (the knowledge module runs them).
 
 The spec's ``policies.verification.verifier`` adds the verifier agent to calls matching
-``applies_to``: every such call (``mode: always``) or only calls that already have a
-``verify`` check (``critical_only``).
+``applies_to``: every such call (``mode: always``), only calls that already have a
+``verify`` check (``critical_only``), or a share of them (``sampled``, with
+``sample_rate``). ``applies_to: ["output"]`` reviews the agent's answers instead
+(``output.py``).
 
 A failure goes back to the maker as the denial reason, so it can correct itself. The second
 failure for the same tool in one conversation sets ``verification.failed_twice`` for the
@@ -21,6 +23,7 @@ escalation rules; after that the call is refused without checking again.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections.abc import Awaitable, Callable
@@ -50,6 +53,17 @@ DEFAULT_CRITERIA = [
 ]
 
 
+OUTPUT = "output"  # applies_to entry: the agent's answers, not its tool calls
+
+
+def sampled(cfg: dict[str, Any], *parts: str) -> bool:
+    """Whether this call or answer is in the sample (deterministic, so a retry or a replay
+    decides the same way; ``sample_rate`` 0 to 1, default 0.1)."""
+    rate = float(cfg.get("sample_rate", 0.1))
+    digest = hashlib.sha256(":".join(parts).encode()).digest()
+    return int.from_bytes(digest[:8], "big") / 2**64 < rate
+
+
 @dataclass(frozen=True)
 class Verdict:
     passed: bool
@@ -65,15 +79,21 @@ class Verifier:
 
     # --- which checks apply ----------------------------------------------------------
 
-    def checks_for(self, tool: Tool | None, call: ToolUseBlock) -> list[str]:
+    def checks_for(self, tool: Tool | None, call: ToolUseBlock, session_id: str = "") -> list[str]:
         names = [tool.verify] if tool is not None and tool.verify else []
         cfg = self.instance.spec.policies.verification.verifier or {}
         if cfg:
             mode = cfg.get("mode", "critical_only")
-            applies = [Rule.parse(r) for r in cfg.get("applies_to", ["effect:external"])]
+            rules = [r for r in cfg.get("applies_to", ["effect:external"]) if r != OUTPUT]
+            applies = [Rule.parse(r) for r in rules]
             effect = tool.effect if tool else Effect.EXTERNAL
             matches = any(r.matches(call.name, effect, call.input) for r in applies)
-            if matches and (mode == "always" or names):
+            wanted = (
+                mode == "always"
+                or (mode == "critical_only" and names)
+                or (mode == "sampled" and sampled(cfg, session_id, call.id))
+            )
+            if matches and wanted:
                 names.append("__verifier__")
         return names
 
@@ -97,7 +117,7 @@ class Verifier:
     # --- running them ----------------------------------------------------------------
 
     async def verify(self, session: Session, call: ToolUseBlock, tool: Tool | None) -> Verdict:
-        names = self.checks_for(tool, call)
+        names = self.checks_for(tool, call, session.id)
         if not names:
             return Verdict(True)
         key = (session.id, call.name)

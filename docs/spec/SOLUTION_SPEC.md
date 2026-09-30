@@ -439,6 +439,14 @@ crashed half way runs again on resume, so side-effecting tools should be idempot
   - `condition`: an expression over context;
   - `citations`: the answer cites retrieved sources;
   - `verifier`: the verifier agent judges against listed criteria.
+- `policies.verification.verifier` adds the verifier agent (its `model_role`, optional
+  `criteria`) to what `applies_to` matches: tool rules (names, argument patterns, effects)
+  and/or `output` (the agent's answers). `mode` is `always`, `critical_only` (only calls
+  that already have a `verify` check) or `sampled` (a deterministic share, `sample_rate`
+  above 0 up to 1). Tool calls are checked before they commit. Answers are **reviewed after
+  they are sent** (quality control, never a delay for the contact): each review is audited
+  and counted in `/admin/metrics`, a failed one files a `review` inbox item, and the rule
+  the verifier suggests is proposed as a candidate constraint.
 - `policies.router` (`short_circuit`: a list of intents such as `greeting`, `thanks`;
   `model_role`, default `router`) lets the cheap router role answer a contact's trivial
   message without running the main agent. Anything else, or a router answer that is not

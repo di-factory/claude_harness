@@ -75,6 +75,16 @@ PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
         lambda d: d["tools"]["config"]["documents"]["storage"].pop("bucket"),
     ),
     (
+        "conversational-rag",
+        "invalid_verifier",
+        lambda d: d["policies"]["verification"]["verifier"].pop("sample_rate"),
+    ),
+    (
+        "conversational-rag",
+        "invalid_verifier",
+        lambda d: d["policies"]["verification"]["verifier"].update(mode="critical_only"),
+    ),
+    (
         "pyme-receipt-processing",
         "missing_source",
         lambda d: d["triggers"].update(

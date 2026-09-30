@@ -3,6 +3,7 @@ the event log, the audit chain, the inbox, sessions and usage.
 
 - **tool success rate:** tool calls that ended ``ok`` / all tool calls;
 - **verify pass rate:** verification checks that passed / all checks run;
+- **answer review pass rate:** sampled answers the verifier passed / all reviewed;
 - **escalation rate:** escalations filed / conversations started;
 - **cost per resolved request:** model spend / conversations that were neither escalated
   nor handed to a teammate.
@@ -50,6 +51,15 @@ async def quality(db: Database, scope: Scope, since: str = "7d") -> dict[str, An
     for row in rows:
         checks["passed" if json.loads(row["data"]).get("passed") else "failed"] += 1
 
+    reviews = {"passed": 0, "failed": 0}
+    rows = await db.fetchall(
+        "SELECT data FROM audit WHERE tenant_id = ? AND instance_id = ?"
+        " AND action = 'output_review' AND ts >= ?",
+        (*key, start),
+    )
+    for row in rows:
+        reviews["passed" if json.loads(row["data"]).get("passed") else "failed"] += 1
+
     states: dict[str, int] = {}
     rows = await db.fetchall(
         "SELECT state, COUNT(*) AS n FROM sessions WHERE tenant_id = ? AND instance_id = ?"
@@ -78,6 +88,8 @@ async def quality(db: Database, scope: Scope, since: str = "7d") -> dict[str, An
         "tool_success_rate": _rate(tools.get("ok", 0), sum(tools.values())),
         "verifications": checks,
         "verify_pass_rate": _rate(checks["passed"], sum(checks.values())),
+        "answer_reviews": reviews,
+        "answer_review_pass_rate": _rate(reviews["passed"], sum(reviews.values())),
         "conversations": conversations,
         "escalations": escalated,
         "escalation_rate": _rate(escalated, conversations),
