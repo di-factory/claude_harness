@@ -184,7 +184,8 @@ route elsewhere, and later layers can only narrow the lists; `governance.regions
 cannot change once set.
 
 The roles are `main`, `subagent`, `verifier`, `compaction`,
-`memory_extraction`, `router` and `title`. Agents pick a role; they never
+`memory_extraction`, `router`, `title`, `ocr` (a vision model for the documents pack) and
+`embedding` (hybrid retrieval; an OpenAI-compatible endpoint). Agents pick a role; they never
 name a model directly. A model swap is therefore one edit, and the pack's
 evals decide whether it passes.
 
@@ -210,6 +211,11 @@ evals decide whether it passes.
 - `handoffs` lists agents (or the reserved `human`) this agent may transfer
   a conversation to.
 - `subagents` are called as tools and return only their final answer.
+- `context_tokens` (optional, at least 2000; default 60000) is the history budget. With a
+  `compaction` model role, a history above it is summarised before the turn: durable facts
+  go to memory first, the recent tail (at least 40% of the budget, starting at a user
+  message) stays verbatim, and the summary is stored as an event so a resumed session sees
+  the same history. Without a `compaction` role nothing is cut.
 - A **team** is simply several agents with handoffs, plus a shared ledger when
   `workflows` or `memory.shared_ledger` is enabled.
 
@@ -240,6 +246,12 @@ evals decide whether it passes.
 - `verify` names a check from `policies.verification.checks` that must pass
   before the call commits.
 - `config` passes settings and secrets to a tool pack.
+- The `documents` pack gives `documents.read` (the text of PDF, DOCX, XLSX, HTML, XML, CSV
+  and text files, with `needs_ocr` for photos and scans) and `documents.ocr` (images and
+  scanned PDFs, read by the `ocr` model role, or `main` when there is none; at most 20
+  pages per call). Documents are named by `uri` and only the solution's own sources are
+  readable: its file triggers' folders and buckets and
+  `config.documents.storage` (a folder or S3 source, as for file triggers).
 
 ### 5.6 `knowledge`
 
@@ -268,10 +280,24 @@ Agents reach a corpus through the generated `knowledge.search_<corpus>` tool.
 - With `cite: true`, passages carry `kb:<id>` markers; a `citations` check
   (`min_citations`, `claims_must_cite`) runs on answers that used them. A failing answer
   gets one rewrite, then "not found". Contacts see `[1]` and a Sources list.
-- `file` sources (a file or a folder) are synced when the instance opens and on
-  `sync.schedule`; `on_delete: propagate` (the default) removes files that disappeared.
-  Markdown, text, HTML and CSV are read; other formats are reported. Other sources push
-  documents with `PUT /admin/knowledge/{corpus}/documents`.
+- Sources are synced when the instance opens and on `sync.schedule`:
+  - `file` (a file or a folder), and absolute paths;
+  - `s3` (`bucket`, `prefix`, `region`, `credentials`), or `"s3://bucket/prefix"`;
+  - `gdrive` (`folder_id`, `auth`: a service account key shared on the folder;
+    subfolders included), or `"gdrive://<folder id>"`;
+  - `url` (one public web page), or an `https://` string.
+
+  A source's `auth` may be given once for the corpus. Only entries whose version changed
+  are re-read. `on_delete: propagate` (the default) removes what disappeared from a source
+  that was listed completely; a source that is down removes nothing. Markdown, text, HTML,
+  CSV, PDF, DOCX and XLSX are read (Google Docs and Slides as text, Sheets as CSV); images
+  and scans are reported. Anything else (SharePoint, Notion...) pushes documents with
+  `PUT /admin/knowledge/{corpus}/documents`.
+- `retrieval.mode: hybrid` with an `embedding` model role (an OpenAI-compatible endpoint)
+  also embeds every chunk. Searches then fuse keyword and vector rankings: a passage
+  qualifies by `min_score` or by `min_similarity` (cosine, default 0.5), and its score is
+  the higher of the two. Without an embedding role, or while the embedding model is down,
+  searches use keywords only.
 
 ### 5.7 `memory`
 
@@ -303,8 +329,19 @@ end user), `instance` or `agent`. It is always tenant-scoped underneath.
 ```
 
 Channel types: `gateway` (WhatsApp/SMS via Twilio-style providers),
-`telegram`, `web`, `email`, `slack`, `api`, and later `voice`. Outbound
+`telegram`, `web`, `email`, `slack`, `api` and `voice`. Outbound
 messages outside a provider's session window must use a template.
+
+A `voice` channel (Twilio Programmable Voice; point the number's voice webhook at
+`/channels/<name>`) holds phone conversations with the same agents. Twilio recognizes the
+caller's speech and each utterance is one ordinary turn; the reply is spoken, without
+citation markers or the Sources list, and the call keeps listening. Silence ends the call
+politely, and an escalated turn transfers it to `voice.transfer_to` when set. Settings go
+under `voice`: `language` (default `en-US`, `es-MX` for Mexico), `voice` (a Twilio/Polly
+voice), `greeting`, `goodbye`, `transferring`, `transfer_to` (`+52...` or `sip:...`),
+`speech_timeout` and `hints`. With an `address`, the harness can also place calls that
+speak a message (reminders), under the same consent rules. Twilio waits about 15 seconds
+per turn, so voice agents need a fast model and few tool calls.
 
 ### 5.9 `triggers`
 
@@ -326,9 +363,28 @@ messages outside a provider's session window must use a template.
 | `delay` | a timer started by a workflow step, which can be cancelled |
 | `webhook` | a client system calls the harness |
 | `event` | an internal event (for example `escalation.resolved`) |
+| `file` | new files in a folder or an S3 bucket |
 | `batch` | runs over a list of items |
 
 `requires_consent` makes the consent module skip contacts who opted out.
+
+**File triggers** poll their `source` every `poll` (default `1m`):
+`{"type": "folder", "path": "/data/inbox"}` or
+`{"type": "s3", "bucket": "...", "prefix": "in/", "region": "...", "credentials": {"$secret": "storage"}}`
+(without credentials the instance's IAM role is used; a credentials secret is JSON with
+`access_key_id` and `secret_access_key`). `match` filters by glob, `dedupe_key` (required, a
+field path such as `file.sha256`) fires once per value, and files over `max_bytes` (default
+25 MB) are skipped and audited. The event is `{"file": {key, name, size, sha256, uri,
+content_type, text}}`; `text` is present for text files (XML, JSON, CSV...) up to
+`inline_bytes` (default 64 KB).
+
+**Batch triggers** fan out one firing per item, with the event `{"item": ..., "batch": {id,
+index, total}}`. Items come from a read tool, `"source": {"tool": "erp.open_invoices",
+"args": {...}, "items": "data.rows"}` (the list, or the field path to it), on the trigger's
+`cron` or on demand; or they are pushed with `POST /admin/triggers/{name}/run`
+(`{"items": [...]}`), which also runs a file trigger's scan at once. With a `dedupe_key`
+(such as `item.id`) an item is processed once across batches; items without that field are
+skipped. At most `max_items` (default 1000) per batch.
 
 A trigger that targets an agent can deliver the agent's reply: `channel` names the channel
 and `to` the address (default: the channel's `address`), for example a founder's daily
@@ -409,8 +465,19 @@ crashed half way runs again on resume, so side-effecting tools should be idempot
   - `condition`: an expression over context;
   - `citations`: the answer cites retrieved sources;
   - `verifier`: the verifier agent judges against listed criteria.
-- `policies.router` lists intents answered by the cheap `router` role without
-  running the main agent.
+- `policies.verification.verifier` adds the verifier agent (its `model_role`, optional
+  `criteria`) to what `applies_to` matches: tool rules (names, argument patterns, effects)
+  and/or `output` (the agent's answers). `mode` is `always`, `critical_only` (only calls
+  that already have a `verify` check) or `sampled` (a deterministic share, `sample_rate`
+  above 0 up to 1). Tool calls are checked before they commit. Answers are **reviewed after
+  they are sent** (quality control, never a delay for the contact): each review is audited
+  and counted in `/admin/metrics`, a failed one files a `review` inbox item, and the rule
+  the verifier suggests is proposed as a candidate constraint.
+- `policies.router` (`short_circuit`: a list of intents such as `greeting`, `thanks`;
+  `model_role`, default `router`) lets the cheap router role answer a contact's trivial
+  message without running the main agent. Anything else, or a router answer that is not
+  valid JSON, names an unlisted intent or has no reply, goes to the main agent. Only
+  contact conversations are routed; staff tasks, triggers and workflow steps never are.
 - Permission rules match tool names, argument patterns (`"messaging.send(to=+52*)"`)
   or effects (`"effect:external"`).
 - Profiles set the defaults; explicit rules win.
@@ -446,7 +513,19 @@ crashed half way runs again on resume, so side-effecting tools should be idempot
   `<version>-<solution hash>`.
 - `workspaces.<name>.executor`: `{"type": "container", "image", "cpu", "memory",
   "timeout", "allow_hosts", "egress_proxy", "runtime"}` runs shell commands in a throwaway
-  container with no network unless `egress_proxy` (which must enforce `allow_hosts`) is set.
+  container with no network unless `allow_hosts` is set and an egress proxy enforces it:
+  `"egress_proxy": "builtin"` is the harness's own proxy (set `DIF_EGRESS_ADVERTISE` to the
+  address containers reach it at, e.g. `harness:3128`, and `DIF_EGRESS_LISTEN` if not
+  `0.0.0.0:3128`; the harness and the containers share `proxy_network`, an internal
+  network with no route out). It gives each command credentials bound to its
+  `allow_hosts` (`github.com`, `*.pythonhosted.org`, `host:port`), refuses private
+  addresses, and audits every decision as `egress`. Any other value is the URL of a proxy
+  the operator runs and vouches for.
+- `tools.config.python`: `{"isolation": "container", "image": "python:3.12-slim", "cpu",
+  "memory", "timeout", "allow_hosts", "egress_proxy", "runtime"}` runs every extension call
+  in a throwaway container (the extension's folder mounted read-only, no secrets). The
+  harness reads the extension's contract with `ast` and never imports it. The default,
+  `"isolation": "none"`, loads extensions in-process.
 
 ### 5.14 `workspaces` (added by paper test 2)
 

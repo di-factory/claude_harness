@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import dataclasses
 import fnmatch
+import os
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack
@@ -44,6 +45,7 @@ from ..feedback.store import ALL_AGENTS, ConstraintStore, pinned_block
 from ..governance import AuditLog, ConsentStore, GovernedTools, PiiPolicy, Tokenizer, TokenVault
 from ..governance.contacts import ContactStore
 from ..hitl.inbox import Inbox
+from ..knowledge import sources as knowledge_sources
 from ..knowledge.store import KnowledgeBase, SyncReport
 from ..knowledge.tools import (
     check_citations,
@@ -72,21 +74,29 @@ from ..store.sql import SqlSessionStore
 from ..teams import LedgerStore, handoff_tool, runs_tools, subagent_tool
 from ..tenancy.secrets import EnvSecrets, SecretBackend, SecretResolver
 from ..tools import python as python_tools
+from ..tools import python_sandbox
+from ..tools.egress import EgressProxy
 from ..tools.http import ConnectorError, http_tools
 from ..tools.mcp import McpToolSource
 from ..tools.packs import NoteStore, Workspace, coding_tools, general_tools
 from ..tools.packs.coding import (
+    BUILTIN,
     ContainerExecutor,
     Executor,
     ExecutorError,
     executor_from_spec,
 )
+from ..tools.packs.documents import documents_tools
+from ..tools.packs.general import guarded_client
 from ..tools.packs.google_calendar import PACK as GOOGLE_CALENDAR
 from ..tools.packs.google_calendar import CalendarError, Source, calendar_tools
 from ..tools.registry import Effect, Tool, ToolRegistry
+from ..triggers.files import FileSource, build_source
 from ..verify import Verifier
+from .compaction import compact_if_needed
 from .context import current_session
 from .prompts import load_text, render
+from .router import short_circuit
 from .routing import ProviderFactory, build_router
 
 LOCAL_TENANT = "local"
@@ -117,6 +127,11 @@ class RuntimeOptions:
     database_url: str | None = None  # default: sqlite:///<state_root>/dif.db
     database: Database | None = None  # an open database (the service shares one)
     telemetry: OtlpExporter | None = None  # default: from OTEL_EXPORTER_OTLP_ENDPOINT, if set
+    s3_client: Any = None  # for file sources in S3 (tests: a fake); default: boto3's
+    egress_proxy: EgressProxy | None = None  # default: from DIF_EGRESS_ADVERTISE, if set
+
+
+DOCUMENTS_STORAGE = "documents:storage"  # the documents pack's own source, by this name
 
 
 def scope_for(spec: SolutionSpec) -> Scope:
@@ -143,6 +158,7 @@ class Instance:
         self.provider: ModelProvider | None = None
         self.workspace: Workspace | None = None  # the coding pack's, for undo
         self.executor: Executor | None = None  # where shell commands and command checks run
+        self.egress: EgressProxy | None = None  # the builtin egress proxy, when containers use it
         self._stack = AsyncExitStack()
         self.owns_db = False  # True when this instance opened the database (closes it too)
         self.db: Database  # set in _open_database
@@ -163,6 +179,9 @@ class Instance:
         self.ledger: LedgerStore | None = None
         self.pending_handoffs: dict[str, tuple[str, str, str]] = {}  # source session -> target
         self.sources: dict[str, tuple[Source, float]] = {}  # item feeds: (fetch, every s)
+        # folders and buckets: file triggers' (by trigger name) and the documents storage
+        self.file_sources: dict[str, FileSource] = {}
+        self.file_source_errors: dict[str, str] = {}
         self.tracer: Tracer | None = None  # OpenTelemetry, when an OTLP endpoint is set
 
     # --- lifecycle -----------------------------------------------------------------
@@ -257,8 +276,10 @@ class Instance:
                 "dif.config_version": self.resolved.version_hash[:12],
             })  # fmt: skip
             self.provider = TracedProvider(self.provider, self.tracer, self.vendor)
+        self._wire_knowledge(data, missing)
         for corpus in self.spec.knowledge.corpora:
             await self.sync_knowledge(corpus)
+        self._file_sources(data, missing)
         tools: list[Tool] = []
         tools += await self._packs(data, missing)
         tools += self._http(data, missing)
@@ -286,6 +307,50 @@ class Instance:
 
         return handoff
 
+    def _wire_knowledge(self, data: dict[str, Any], missing: set[str]) -> None:
+        """Embeddings for hybrid corpora, and the remote sources (S3, Drive, web pages)."""
+        roles = self.spec.models.roles if self.spec.models else {}
+        if "embedding" in roles and hasattr(self.provider, "embed"):
+            self.knowledge.embedder = self._embed
+        corpora = (data.get("knowledge") or {}).get("corpora") or {}
+        http = self.options.http_client
+        guarded = http  # tests inject a mock; production guards every hop like http.get
+
+        def build(corpus: str, src: dict[str, Any]) -> Any:
+            nonlocal http, guarded
+            raw = src.get("auth") or src.get("credentials") or corpora.get(corpus, {}).get("auth")
+            if raw is not None and _secret_refs(raw) & missing:
+                raise ValueError("a secret is not set")
+            secret = self.secrets.resolve(raw) if raw is not None else None
+            if http is None:
+                http = httpx2.AsyncClient(timeout=60.0, follow_redirects=True)
+                self._stack.push_async_callback(http.aclose)
+            if guarded is None:
+                guarded = guarded_client()
+                self._stack.push_async_callback(guarded.aclose)
+            public = {k: v for k, v in src.items() if k not in ("auth", "credentials")}
+            return knowledge_sources.build(
+                public, secret, http, s3_client=self.options.s3_client, guarded_http=guarded
+            )
+
+        self.knowledge.sources = build
+        for name, corpus in self.spec.knowledge.corpora.items():
+            if (corpus.get("retrieval") or {}).get("mode") == "hybrid" and (
+                self.knowledge.embedder is None
+            ):
+                self._warn("keyword_only", f"knowledge.corpora.{name}.retrieval",
+                           "hybrid retrieval needs an embedding model role; keyword scoring"
+                           " is used")  # fmt: skip
+
+    async def _embed(self, texts: list[str]) -> tuple[list[list[float]], str]:
+        result = await self.provider.embed(texts, model_role="embedding")  # type: ignore[union-attr]
+        price = DEFAULT_PRICES.get(result.model)
+        usage = Usage(input_tokens=result.input_tokens)
+        if price:
+            usage = usage.model_copy(update={"cost_usd": cost_usd(usage, price)})
+        await self.record_usage("knowledge", "embedding", result.model, usage)
+        return result.vectors, result.model
+
     async def sync_knowledge(self, corpus: str) -> SyncReport:
         report = await self.knowledge.sync(corpus)
         where = f"knowledge.corpora.{corpus}.sources"
@@ -297,12 +362,16 @@ class Instance:
                 f"not synced here: {', '.join(report.unavailable)}; push their documents with"
                 f" PUT /admin/knowledge/{corpus}/documents",
             )
+        if report.embedding_error:
+            self._warn("embedding_error", f"knowledge.corpora.{corpus}.retrieval",
+                       f"vectors not updated ({report.embedding_error}); keyword scoring"
+                       " still works")  # fmt: skip
         if report.skipped:
             self._warn(
                 "knowledge_format_unavailable",
                 where,
-                f"{len(report.skipped)} file(s) in formats not read yet (PDF, DOCX, images need"
-                f" the documents pack): {', '.join(report.skipped[:5])}",
+                f"{len(report.skipped)} file(s) without readable text (images, scans,"
+                f" unsupported formats): {', '.join(report.skipped[:5])}",
             )
         if report.added or report.updated or report.removed:
             await self.audit.record(
@@ -489,6 +558,8 @@ class Instance:
                 out += await self._google_calendar(data, missing)
             elif pack == "general":
                 out += general_tools(NoteStore(self.options.state_root, self.scope))
+            elif pack == "documents":
+                out += documents_tools(self.read_document, self._transcribe)
             elif pack == "coding":
                 roots = self.options.workspaces
                 name = next((a.workspace for a in self.spec.agents.values() if a.workspace), None)
@@ -507,28 +578,130 @@ class Instance:
                 except ExecutorError as exc:
                     self._warn("executor_error", f"workspaces.{name}.executor", str(exc))
                     continue  # no shell rather than an unconfined one
-                unenforced = isinstance(executor, ContainerExecutor) and (
-                    executor.allow_hosts and not executor.egress_proxy
-                )
-                if unenforced:
-                    self._warn(
-                        "egress_proxy_missing",
-                        f"workspaces.{name}.executor",
-                        "allow_hosts needs an egress_proxy that enforces it; the container"
-                        " gets no network",
-                    )
+                if isinstance(executor, ContainerExecutor):
+                    await self._attach_egress(executor, f"workspaces.{name}.executor")
                 self.executor = self.options.executor or executor
                 out += coding_tools(self.workspace, self.executor, bash_timeout_s=timeout or 120.0)
             else:
                 self._warn(
                     "unavailable_pack", "tools.packs", f"tool pack {pack!r} is not built yet"
                 )
+        out += await self._python_tools(data)
+        return out
+
+    async def _python_tools(self, data: dict[str, Any]) -> list[Tool]:
+        """Pack extensions: in-process, or each call in a container
+        (``tools.config.python.isolation: "container"``)."""
+        config = ((data.get("tools") or {}).get("config") or {}).get("python") or {}
+        where = "tools.config.python"
+        isolation = str(config.get("isolation") or "none")
+        executor: ContainerExecutor | None = None
+        timeout = 30.0
+        if self.spec.tools.python and isolation == "container":
+            try:
+                built, limit = executor_from_spec({**config, "type": "container"})
+            except ExecutorError as exc:
+                self._warn("executor_error", where, f"{exc}; Python extensions are off")
+                return []  # never fall back to running them unconfined
+            assert isinstance(built, ContainerExecutor)
+            executor, timeout = built, limit or timeout
+            await self._attach_egress(executor, where)
+        elif isolation not in ("none", "container"):
+            self._warn("executor_error", where, "isolation must be none or container")
+            return []
+        out: list[Tool] = []
         for i, ref in enumerate(self.spec.tools.python):
             try:
-                out.append(python_tools.load(ref))
+                if executor is not None:
+                    out.append(python_sandbox.isolated(ref, executor, timeout))
+                else:
+                    out.append(python_tools.load(ref))
             except python_tools.PythonToolError as exc:
                 self._warn("python_tool_error", f"tools.python[{i}]", str(exc))
         return out
+
+    async def _attach_egress(self, executor: ContainerExecutor, where: str) -> None:
+        """Give a container executor its way out: the builtin proxy (per-command credentials
+        bound to ``allow_hosts``), an operator's proxy, or none (no network)."""
+        if not executor.allow_hosts:
+            return
+        if executor.egress_proxy == BUILTIN:
+            executor.proxy = await self._egress()
+            if executor.proxy is None:
+                executor.egress_proxy = None
+                self._warn("egress_proxy_missing", where,
+                           "the builtin egress proxy needs DIF_EGRESS_ADVERTISE (the address"
+                           " containers reach it at); the container gets no network")  # fmt: skip
+        elif not executor.egress_proxy:
+            self._warn("egress_proxy_missing", where,
+                       "allow_hosts needs an egress_proxy that enforces it; the container"
+                       " gets no network")  # fmt: skip
+
+    async def _egress(self) -> EgressProxy | None:
+        if self.egress is not None:
+            return self.egress
+        proxy = self.options.egress_proxy
+        if proxy is None:
+            advertise = os.environ.get("DIF_EGRESS_ADVERTISE")
+            if not advertise:
+                return None
+            host, _, port = os.environ.get("DIF_EGRESS_LISTEN", "0.0.0.0:3128").rpartition(":")
+            proxy = EgressProxy(advertise, listen_host=host or "0.0.0.0", listen_port=int(port))
+        proxy.on_decision = self._egress_decision
+        if proxy._server is None:
+            await proxy.start()
+            self._stack.push_async_callback(proxy.close)
+        self.egress = proxy
+        return proxy
+
+    async def _egress_decision(
+        self, label: str, host: str, port: int, allowed: bool, reason: str
+    ) -> None:
+        await self.audit.record(
+            self.scope, f"sandbox:{label}", "egress", f"{host}:{port}",
+            {"allowed": allowed, "reason": reason},
+        )  # fmt: skip
+
+    def _file_sources(self, data: dict[str, Any], missing: set[str]) -> None:
+        """The folders and buckets this solution reads: its file triggers' sources and the
+        documents pack's ``storage``."""
+        wanted: dict[str, Any] = {
+            name: raw.get("source")
+            for name, raw in (data.get("triggers") or {}).items()
+            if isinstance(raw, dict) and raw.get("type") == "file"
+        }
+        storage = ((data.get("tools") or {}).get("config") or {}).get("documents") or {}
+        if "documents" in self.spec.tools.packs and storage.get("storage") is not None:
+            wanted[DOCUMENTS_STORAGE] = storage["storage"]
+        for name, raw in wanted.items():
+            if _secret_refs(raw) & missing:
+                self.file_source_errors[name] = "a secret is not set"
+                continue
+            try:
+                creds = raw.get("credentials") if isinstance(raw, dict) else None
+                resolved = self.secrets.resolve(creds) if creds is not None else None
+                self.file_sources[name] = build_source(
+                    raw, resolved, s3_client=self.options.s3_client
+                )
+            except Exception as exc:  # one broken source must not stop the instance
+                self.file_source_errors[name] = str(exc)
+        if DOCUMENTS_STORAGE in self.file_source_errors:
+            self._warn("file_source_error", "tools.config.documents.storage",
+                       self.file_source_errors[DOCUMENTS_STORAGE])  # fmt: skip
+
+    async def read_document(self, uri: str) -> bytes:
+        """The bytes of a document in one of this solution's own sources; anything else is
+        refused."""
+        for source in self.file_sources.values():
+            key = source.key(uri)
+            if key:
+                return await source.read(key)
+        raise PermissionError(f"{uri} is not in this solution's document sources")
+
+    async def _transcribe(self, data: bytes, media_type: str) -> str:
+        from ..documents.ocr import transcribe
+
+        return await transcribe(self, data, media_type)
 
     async def _google_calendar(self, data: dict[str, Any], missing: set[str]) -> list[Tool]:
         raw = (data.get("tools", {}).get("config") or {}).get(GOOGLE_CALENDAR) or {}
@@ -695,7 +868,7 @@ class AgentRuntime:
         )
 
     async def send(
-        self, session: Session, text: str, *, names: list[str] | None = None
+        self, session: Session, text: str, *, names: list[str] | None = None, route: bool = False
     ) -> AsyncIterator[Event]:
         """Run one user turn; every event is persisted (redacted) and yielded.
 
@@ -729,6 +902,18 @@ class AgentRuntime:
         )
         span_token = _current_span.set(root) if root else None
         try:
+            routed = await short_circuit(self, session, safe_text) if route else None
+            if routed is not None:  # a trivial message the router answered: no main agent
+                for event in routed:
+                    await inst.store.append(event)
+                    if isinstance(event, TurnEnded):
+                        await record_episode(inst, self.name, session)
+                    yield event
+                return
+            compacted = await compact_if_needed(self, session)
+            if compacted is not None:
+                await inst.store.append(compacted)
+                yield compacted
             async for event in self._run(session, safe_text, meter, started, full):
                 if root is not None and isinstance(event, TurnEnded):
                     root.set(dif__turn_reason=event.reason, dif__cost_usd=meter.total.cost_usd,

@@ -7,7 +7,7 @@ from collections.abc import Iterable
 
 from pydantic import BaseModel, Field
 
-from .events import Event, MessageAdded, SessionStarted
+from .events import ContextCompacted, Event, MessageAdded, SessionStarted
 from .messages import Message
 from .scope import Scope
 
@@ -43,6 +43,18 @@ class Session(BaseModel):
         self.messages.append(message)
         return self.stamp(MessageAdded(scope=self.scope, session_id=self.id, message=message))
 
+    def compact(
+        self, summary: str, replaced: int, tokens_before: int, tokens_after: int
+    ) -> ContextCompacted:
+        """Replace the oldest ``replaced`` messages with a summary."""
+        self.messages = [summary_message(summary), *self.messages[replaced:]]
+        return self.stamp(
+            ContextCompacted(
+                scope=self.scope, session_id=self.id, summary=summary, replaced=replaced,
+                tokens_before=tokens_before, tokens_after=tokens_after,
+            )
+        )  # fmt: skip
+
     @classmethod
     def from_events(cls, events: Iterable[Event]) -> Session:
         """Rebuild a session by replaying its log (resume after a crash or restart)."""
@@ -65,8 +77,20 @@ class Session(BaseModel):
                 raise ValueError("log mixes events from different sessions or tenants")
             elif isinstance(event, MessageAdded):
                 session.messages.append(event.message)
+            elif isinstance(event, ContextCompacted):
+                session.messages = [
+                    summary_message(event.summary),
+                    *session.messages[event.replaced :],
+                ]
             last_seq = max(last_seq, event.seq)
         if session is None:
             raise ValueError("empty log")
         session.next_seq = last_seq + 1
         return session
+
+
+SUMMARY_HEADER = "[Summary of the earlier conversation]"
+
+
+def summary_message(summary: str) -> Message:
+    return Message.user(f"{SUMMARY_HEADER}\n{summary}")

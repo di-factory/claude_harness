@@ -11,12 +11,14 @@ Job kinds:
   rules first) and runs a follow-up turn so the agent tells the contact; applies
   ``hitl.on_timeout`` when nobody decides in time.
 - ``retention``: the daily purge.
+- ``file_scan``: polls a ``file`` trigger's folder or bucket and fires it once per new file
+  (by its ``dedupe_key``); ``batch_run``: fans a ``batch`` trigger out, one firing per item.
 
 REST/web channels answer inline (the reply is in the HTTP response); everything else is
 acknowledged at once and processed by the worker.
 
-M2 scope: triggers run agents. Triggers that start a workflow, or that carry a ``when``
-condition, need the M3 workflow engine and CEL; they are reported, never half-run.
+A trigger that cannot run here (a missing source, a bad schedule) is reported as a warning
+and left off, never half-run.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ import json
 import logging
 import re
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -36,7 +39,7 @@ import httpx2
 from ..channels import ChannelAdapter, ChannelError, Envelope, Inbound, Unauthorized, build_adapter
 from ..core import cel
 from ..core.events import MessageAdded, TurnEnded
-from ..core.messages import Message, Role, ToolUseBlock
+from ..core.messages import Message, Role, ToolStatus, ToolUseBlock
 from ..feedback import ALL_AGENTS
 from ..governance import is_opt_out, purge
 from ..hitl import InboxApprover, InboxItem
@@ -48,6 +51,8 @@ from ..spec.loader import duration_days
 from ..spec.schema import Trigger
 from ..tools.registry import Effect
 from ..triggers import CronError, next_fire
+from ..triggers import files as file_sources
+from ..verify.output import review_output, wants_review
 from ..workflows import Job, JobQueue, Worker
 from ..workflows.engine import WorkflowEngine
 from ..workflows.render import render as render_value
@@ -93,6 +98,7 @@ class Headless:
     _http: httpx2.AsyncClient | None = None
     engine: WorkflowEngine = field(init=False)
     _public_url: str | None = None
+    file_sources: dict[str, file_sources.FileSource] = field(default_factory=dict)
 
     # --- construction ----------------------------------------------------------------
 
@@ -116,6 +122,7 @@ class Headless:
         http_client, public_url = self._http, self._public_url
         self.instance = instance
         self.adapters, self.triggers, self.issues, self._agents = {}, {}, [], {}
+        self.file_sources = {}
         instance.notify = self.notify
         instance.emit = self.emit
         instance.options.approver = InboxApprover(instance.inbox, self._approval_filed)
@@ -134,6 +141,8 @@ class Headless:
                 self._warn("channel_unavailable", f"channels.{name}", f"{exc}")
         for name, trig in spec.triggers.items():
             why = self._unsupported(trig)
+            if why is None and trig.type == "file":
+                why = self._file_source(name, trig)
             if why:
                 self._warn("trigger_unavailable", f"triggers.{name}", why)
             else:
@@ -157,8 +166,12 @@ class Headless:
 
     def _unsupported(self, trig: Trigger) -> str | None:
         spec = self.instance.spec
-        if trig.type in {"file", "batch"}:
-            return f"{trig.type} triggers need a storage connector (not available yet)"
+        if trig.type == "batch" and trig.source is not None:
+            tool = _batch_tool(trig.source)
+            if not tool or self.instance.tools.get(tool) is None:
+                return f"batch source tool {tool!r} is not available"
+            if self.instance.tools.get(tool).effect is not Effect.READ:  # type: ignore[union-attr]
+                return f"batch source {tool} must be a read tool"
         if trig.workflow and trig.workflow not in spec.workflows:
             return f"unknown workflow {trig.workflow!r}"
         if not trig.workflow:
@@ -182,6 +195,14 @@ class Headless:
                 return str(exc)
         return None
 
+    def _file_source(self, name: str, trig: Trigger) -> str | None:
+        source = self.instance.file_sources.get(name)
+        if source is None:
+            why = self.instance.file_source_errors.get(name, "not configured")
+            return f"file source: {why}"
+        self.file_sources[name] = source
+        return None
+
     def agent(self, name: str) -> AgentRuntime:
         if name not in self._agents:
             self._agents[name] = self.instance.agent(name)
@@ -203,6 +224,9 @@ class Headless:
             "memory_extract": self._job_memory_extract,
             "knowledge_sync": self._job_knowledge_sync,
             "source_sync": self._job_source_sync,
+            "file_scan": self._job_file_scan,
+            "output_review": self._job_output_review,
+            "batch_run": lambda job: self.run_batch(job.payload["trigger"]),
         }
 
     def worker(self, **kw: Any) -> Worker:
@@ -212,8 +236,13 @@ class Headless:
         """Seed recurring work: the next firing of every schedule, and today's purge."""
         now = self.queue.clock()
         for name, trig in self.triggers.items():
-            if trig.type == "schedule":
+            if trig.type == "schedule" or (trig.type == "batch" and trig.cron):
                 await self._schedule_next(name, trig, now)
+            if name in self.file_sources:
+                await self.queue.enqueue(
+                    self.scope, "file_scan", {"trigger": name},
+                    dedupe_key=f"file_scan:{name}:{int(now)}",
+                )  # fmt: skip
         if any(t.type == "relative" for t in self.triggers.values()):
             await self.scan_relative()
         for corpus in self.instance.spec.knowledge.corpora:
@@ -283,7 +312,7 @@ class Headless:
             session = await agent.new_session(contact_key=env.contact_key)
             await inst.store.bind(self.scope, session.id, env.channel, env.contact_key)
 
-        texts, reason = await answer(agent.send(session, env.text, names=env.names))
+        texts, reason = await answer(agent.send(session, env.text, names=env.names, route=True))
         escalated = await inst.store.state(self.scope, session.id) == "escalated"
         if inst.spec.models and "memory_extraction" in inst.spec.models.roles:
             await self.queue.enqueue(
@@ -311,6 +340,12 @@ class Headless:
             )
             await self.notify(item, f"Turn ended with {reason} ({agent_name})")
             reply = reply or FALLBACK
+        elif reply and wants_review(inst, session.id, len(session.messages)):
+            await self.queue.enqueue(
+                self.scope, "output_review",
+                {"agent": agent.name, "session": session.id, "upto": len(session.messages)},
+                dedupe_key=f"review:{session.id}:{len(session.messages)}",
+            )  # fmt: skip
         return TurnResult(reply, reason, session.id, escalated)
 
     async def _hold_for_person(self, session: Any, env: Envelope) -> TurnResult:
@@ -328,8 +363,8 @@ class Headless:
 
     async def send(self, channel: str, contact_key: str, text: str, session_id: str | None) -> None:
         adapter = self.adapters.get(channel)
-        if adapter is None or adapter.inline_reply:
-            return
+        if adapter is None or (adapter.inline_reply and not getattr(adapter, "outbound", False)):
+            return  # REST/web replies travel in the HTTP response; voice can place a call
         message_id = await adapter.send(contact_key, text)
         await self.instance.audit.record(
             self.scope, "system", "message_out", channel,
@@ -364,9 +399,10 @@ class Headless:
     async def _schedule_next(self, name: str, trig: Trigger, after: float) -> None:
         tz = self.instance.spec.tenant.timezone if self.instance.spec.tenant else "UTC"
         at = next_fire(trig.cron or "", after, tz)
+        kind = "batch_run" if trig.type == "batch" else "trigger"
         await self.queue.enqueue(
-            self.scope, "trigger", {"trigger": name, "event": {"fired_at": at}},
-            run_at=at, dedupe_key=f"trigger:{name}:{int(at)}",
+            self.scope, kind, {"trigger": name, "event": {"fired_at": at}},
+            run_at=at, dedupe_key=f"{kind}:{name}:{int(at)}",
         )  # fmt: skip
 
     async def _sync_next(self, corpus: str, after: float) -> None:
@@ -401,6 +437,173 @@ class Headless:
         )  # fmt: skip
         items = [i for i in await fetch() if i.get("start")]
         await self.upsert_items(source, items, replace=True)
+
+    # --- file and batch triggers ------------------------------------------------------
+
+    async def _seen(self, trigger: str, key: str, *, mark: bool) -> bool:
+        """Whether a trigger has seen ``key``; with ``mark``, records it (True if it was new
+        and is now recorded, so a concurrent scan cannot claim it too)."""
+        scope = self.scope
+        if not mark:
+            row = await self.instance.db.fetchone(
+                "SELECT 1 AS hit FROM trigger_seen WHERE tenant_id = ? AND instance_id = ?"
+                " AND trigger_name = ? AND seen_key = ?",
+                (scope.tenant_id, scope.instance_id, trigger, key),
+            )
+            return row is not None
+        inserted = await self.instance.db.execute(
+            "INSERT INTO trigger_seen (tenant_id, instance_id, trigger_name, seen_key, seen_at)"
+            " VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING",
+            (scope.tenant_id, scope.instance_id, trigger, key, self.queue.clock()),
+        )
+        return bool(inserted)
+
+    async def _job_file_scan(self, job: Job) -> None:
+        name = job.payload["trigger"]
+        trig, source = self.triggers.get(name), self.file_sources.get(name)
+        if trig is None or source is None:
+            return  # the trigger was removed since this job was queued
+        options = trig.source if isinstance(trig.source, dict) else {}
+        if not job.payload.get("once"):
+            every = duration_days(str(options.get("poll") or "1m")) * DAY
+            at = max(job.run_at, self.queue.clock()) + every
+            await self.queue.enqueue(
+                self.scope, "file_scan", {"trigger": name}, run_at=at,
+                dedupe_key=f"file_scan:{name}:{int(at)}",
+            )  # fmt: skip
+        await self.scan_files(name)
+
+    async def scan_files(self, name: str) -> int:
+        """Read the new files of a file trigger and fire it once per new dedupe value.
+        Returns how many firings were queued."""
+        trig, source = self.triggers[name], self.file_sources[name]
+        options = trig.source if isinstance(trig.source, dict) else {}
+        max_bytes = int(options.get("max_bytes") or file_sources.DEFAULT_MAX_BYTES)
+        inline = int(options.get("inline_bytes") or file_sources.DEFAULT_INLINE_BYTES)
+        audit, actor = self.instance.audit, f"trigger:{name}"
+        fired = read = 0
+        for ref in await source.list():
+            if read >= file_sources.SCAN_LIMIT:
+                break  # the rest wait for the next scan
+            version = f"obj:{ref.key}@{ref.version}"
+            if not file_sources.matches(ref.key, trig.match) or await self._seen(
+                name, version, mark=False
+            ):
+                continue
+            if ref.size > max_bytes:
+                await audit.record(self.scope, actor, "file_skipped", ref.key,
+                                   {"reason": "too large", "size": ref.size})  # fmt: skip
+                await self._seen(name, version, mark=True)
+                continue
+            read += 1
+            data = await source.read(ref.key)
+            digest = hashlib.sha256(data).hexdigest()
+            event = file_sources.file_event(source, ref, data, digest, inline)
+            value = file_sources.dotted(event, trig.dedupe_key or "file.sha256")
+            dedupe = _dedupe_value(value if value is not None else digest)
+            if not await self._seen(name, f"key:{dedupe}", mark=False):
+                await self.queue.enqueue(
+                    self.scope, "trigger", {"trigger": name, "event": event},
+                    dedupe_key=f"file:{name}:{dedupe}",
+                )  # fmt: skip
+                await self._seen(name, f"key:{dedupe}", mark=True)
+                await audit.record(self.scope, actor, "file_received", ref.key,
+                                   {"sha256": digest, "size": len(data)})  # fmt: skip
+                fired += 1
+            else:
+                await audit.record(self.scope, actor, "file_duplicate", ref.key,
+                                   {"sha256": digest})  # fmt: skip
+            await self._seen(name, version, mark=True)
+        return fired
+
+    async def read_file(self, uri: str) -> bytes:
+        """The bytes of a file a file trigger announced (by its ``uri``)."""
+        return await self.instance.read_document(uri)
+
+    async def run_batch(self, name: str, items: list[Any] | None = None) -> dict[str, Any]:
+        """Fan a batch trigger out: one firing per item (from its source tool, or the
+        ``items`` given), skipping items whose ``dedupe_key`` value was seen before."""
+        trig = self.triggers.get(name)
+        if trig is None or trig.type != "batch":
+            raise KeyError(f"{name!r} is not an available batch trigger")
+        if items is None:
+            if trig.source is None:
+                raise ValueError(f"batch trigger {name} has no source; push its items")
+            items = await self._batch_items(name, trig)
+        options = trig.source if isinstance(trig.source, dict) else {}
+        limit = int(options.get("max_items") or BATCH_MAX_ITEMS)
+        batch_id = uuid.uuid4().hex[:12]
+        queued = skipped = 0
+        for index, item in enumerate(items[:limit]):
+            event = {"item": item, "batch": {"id": batch_id, "index": index,
+                                             "total": min(len(items), limit)}}  # fmt: skip
+            if trig.dedupe_key:
+                value = file_sources.dotted(event, trig.dedupe_key)
+                if value is None:
+                    skipped += 1
+                    continue
+                key = _dedupe_value(value)
+                if await self._seen(name, f"key:{key}", mark=False):
+                    skipped += 1
+                    continue
+                job_key = f"batch:{name}:{key}"
+            else:
+                job_key = f"batch:{name}:{batch_id}:{index}"
+            await self.queue.enqueue(
+                self.scope, "trigger", {"trigger": name, "event": event}, dedupe_key=job_key
+            )
+            if trig.dedupe_key:
+                await self._seen(name, f"key:{key}", mark=True)
+            queued += 1
+        summary = {"batch": batch_id, "items": len(items), "queued": queued, "skipped": skipped,
+                   "truncated": max(0, len(items) - limit)}  # fmt: skip
+        await self.instance.audit.record(
+            self.scope, f"trigger:{name}", "batch_started", name, summary
+        )
+        return summary
+
+    async def _batch_items(self, name: str, trig: Trigger) -> list[Any]:
+        inst = self.instance
+        tool_name = _batch_tool(trig.source) or ""
+        tool = inst.tools.get(tool_name)
+        if tool is None or tool.effect is not Effect.READ:
+            raise ValueError(f"batch source {tool_name!r} is not an available read tool")
+        options = trig.source if isinstance(trig.source, dict) else {}
+        ctx = {"var": inst.spec.values, "event": {}, "input": {}}
+        args = render_value(options.get("args") or {}, ctx)
+        decision = inst.policy.decide(tool_name, tool.effect, args, None)
+        if decision.verdict is not Verdict.ALLOW:
+            raise ValueError(f"batch source {tool_name} is not allowed ({decision.verdict})")
+        call = ToolUseBlock(id=f"batch_{name}_{uuid.uuid4().hex[:8]}", name=tool_name, input=args)
+        result = await inst.tools.execute(call)
+        await inst.audit.record(
+            self.scope, f"trigger:{name}", "tool_call", tool_name,
+            {"status": str(result.status), "effect": str(tool.effect)},
+        )  # fmt: skip
+        if result.status is not ToolStatus.OK:
+            raise ValueError(f"batch source {tool_name} {result.status}: {result.error}")
+        content: Any = result.content
+        if isinstance(content, str):
+            try:
+                content = json.loads(content)
+            except ValueError:
+                raise ValueError(f"batch source {tool_name} did not return JSON") from None
+        path = options.get("items")
+        found = file_sources.dotted(content, str(path)) if path else content
+        if isinstance(found, dict) and not path and isinstance(found.get("items"), list):
+            found = found["items"]
+        if not isinstance(found, list):
+            raise ValueError(f"batch source {tool_name} did not return a list of items")
+        return found
+
+    async def _job_output_review(self, job: Job) -> None:
+        name = job.payload["agent"]
+        if name not in self.instance.spec.agents:
+            return
+        agent = self.agent(name)
+        session = await agent.resume(job.payload["session"])
+        session.messages = session.messages[: int(job.payload["upto"])]  # the answer sent
+        await review_output(agent, session)
 
     async def _job_knowledge_sync(self, job: Job) -> None:
         corpus = job.payload["corpus"]
@@ -894,6 +1097,22 @@ def _epoch(value: Any) -> float:
     if isinstance(value, (int, float)):
         return float(value)
     return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+
+
+BATCH_MAX_ITEMS = 1000
+
+
+def _batch_tool(source: Any) -> str | None:
+    if isinstance(source, str):
+        return source
+    if isinstance(source, dict) and isinstance(source.get("tool"), str):
+        return str(source["tool"])
+    return None
+
+
+def _dedupe_value(value: Any) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, sort_keys=True, default=str)
+    return text if len(text) <= 128 else hashlib.sha256(text.encode()).hexdigest()
 
 
 def _signed_seconds(offset: str) -> float:

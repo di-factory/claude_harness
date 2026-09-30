@@ -28,11 +28,15 @@ PACK_NAMESPACES: dict[str, set[str]] = {
     "documents": {"documents"},
     "connectors/google-calendar": {"calendar"},
 }
+EMBEDDING_PROVIDERS = {"openai", "openai-compatible"}
 OPERATOR_PURPOSES = {"hitl", "founder", "outbound"}
 AWS_REGION_PREFIX = {"mx": "mx-", "us": "us-", "eu": "eu-"}
 
 _VAR_TEMPLATE = re.compile(r"\{\{\s*var\.([A-Za-z0-9_]+)\s*\}\}")
 _VAR_CEL = re.compile(r"\bvar\.([A-Za-z0-9_]+)")
+
+_DIALABLE = re.compile(r"^(\+[1-9]\d{6,14}|sip:[^\s@]+@[^\s]+)$")
+_DOTTED = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
 
 
 def _strings(obj: Any) -> Iterator[str]:
@@ -207,11 +211,22 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
     router = spec.policies.router or {}
     if router.get("model_role") and router["model_role"] not in roles:
         err("unknown_model_role", "policies.router", "router model role not defined")
+    embedding = spec.models.roles.get("embedding") if spec.models else None
+    if embedding is not None and embedding.provider not in EMBEDDING_PROVIDERS:
+        err("invalid_embedding_provider", "models.roles.embedding",
+            f"{embedding.provider} has no embeddings API here; use an OpenAI-compatible"
+            " endpoint (OpenAI, a self-hosted model, a gateway)")  # fmt: skip
 
     # --- channels, triggers, workflows ------------------------------------------
     for cname, ch in channels.items():
         if ch.entry_agent and ch.entry_agent not in agents:
             err("unknown_agent", f"channels.{cname}", f"entry agent {ch.entry_agent!r} not defined")
+        if ch.voice is not None and ch.type != "voice":
+            err("invalid_voice", f"channels.{cname}.voice", "voice settings need a voice channel")
+        transfer = (ch.voice or {}).get("transfer_to")
+        if isinstance(transfer, str) and "{{" not in transfer and not _DIALABLE.match(transfer):
+            err("invalid_voice", f"channels.{cname}.voice.transfer_to",
+                "transfer_to is a phone number (+525512345678) or a sip: address")  # fmt: skip
     for cname, corpus_cfg in corpora.items():
         where = f"knowledge.corpora.{cname}"
         cron = (corpus_cfg.get("sync") or {}).get("schedule")
@@ -237,6 +252,20 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
             err("unknown_workflow", where, f"started_by unknown workflow {trig.started_by!r}")
         if trig.type == "file" and not trig.dedupe_key:
             err("missing_dedupe", where, "file triggers need a dedupe_key")
+        if trig.dedupe_key and not _DOTTED.match(trig.dedupe_key):
+            err("invalid_dedupe_key", where, "dedupe_key is a field path such as file.sha256")
+        if trig.type == "file" and (why := _file_source_issue(trig.source)):
+            err("invalid_source", where, why)
+        if trig.type == "batch":
+            tool = trig.source if isinstance(trig.source, str) else None
+            if isinstance(trig.source, dict):
+                tool = trig.source.get("tool")
+            if trig.source is not None and not isinstance(tool, str):
+                err("invalid_source", where, "a batch source names a read tool")
+            elif tool and tool.split(".", 1)[0] not in namespaces:
+                err("unknown_tool_namespace", where, f"tool {tool!r} has no provider namespace")
+            if trig.cron and trig.source is None:
+                err("missing_source", where, "a scheduled batch needs a source tool")
         if trig.type == "schedule" and not trig.cron:
             err("missing_cron", where, "schedule triggers need a cron expression")
         if trig.channel is not None:
@@ -245,6 +274,33 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
                 err("unknown_channel", where, f"delivers to unknown channel {trig.channel!r}")
             elif not trig.to and not target.address:
                 err("no_recipient", where, f"channel {trig.channel!r} has no address; set 'to'")
+
+    verifier = spec.policies.verification.verifier or {}
+    if verifier:
+        mode = verifier.get("mode", "critical_only")
+        rate = verifier.get("sample_rate")
+        where = "policies.verification.verifier"
+        if mode not in ("always", "critical_only", "sampled"):
+            err("invalid_verifier", where, "mode must be always, critical_only or sampled")
+        elif mode == "sampled" and not (
+            isinstance(rate, (int, float)) and not isinstance(rate, bool) and 0 < rate <= 1
+        ):
+            err("invalid_verifier", where, "sampled mode needs a sample_rate above 0, up to 1")
+        elif mode == "critical_only" and "output" in (verifier.get("applies_to") or []):
+            err("invalid_verifier", where, "answers have no critical checks; use sampled or always")
+
+    isolation = spec.tools.config.get("python") or {}
+    if isolation:
+        where = "tools.config.python"
+        mode = isolation.get("isolation", "none")
+        if mode not in ("none", "container"):
+            err("invalid_isolation", where, "isolation must be none or container")
+        elif mode == "container" and not isolation.get("image"):
+            err("invalid_isolation", where, "container isolation needs an image with python3")
+
+    storage = (spec.tools.config.get("documents") or {}).get("storage")
+    if storage is not None and (why := _file_source_issue(storage)):
+        err("invalid_source", "tools.config.documents.storage", why)
 
     for wname, wf in workflows.items():
         ids = [s.id for s in wf.steps]
@@ -356,6 +412,16 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
             err("unresolved_variable", f"{{{{var.{v}}}}}", f"variable {v!r} has no value")
 
     return issues
+
+
+def _file_source_issue(source: Any) -> str | None:
+    src = source if isinstance(source, dict) else {}
+    needs = {"folder": "path", "s3": "bucket"}.get(str(src.get("type")))
+    if needs is None:
+        return "a file source has type folder or s3"
+    if not src.get(needs):
+        return f"{src.get('type')} sources need a {needs}"
+    return None
 
 
 def _check_step(

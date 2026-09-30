@@ -37,6 +37,15 @@ class ProviderMessage:
     refusal_category: str | None = None
 
 
+@dataclass(frozen=True)
+class Embeddings:
+    """Vectors for a batch of texts (the ``embedding`` model role)."""
+
+    vectors: list[list[float]]
+    model: str
+    input_tokens: int = 0
+
+
 def wire_name(name: str) -> str:
     """Provider APIs forbid dots in tool names: ``cal.find`` -> ``cal__find``."""
     return name.replace(".", "__")

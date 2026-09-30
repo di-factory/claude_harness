@@ -69,6 +69,17 @@ class TurnEnded(_EventBase):
     usage: Usage
 
 
+class ContextCompacted(_EventBase):
+    """The oldest ``replaced`` messages were summarised into ``summary`` (the session's
+    history is now the summary followed by the rest). Replaying applies it the same way."""
+
+    type: Literal["context_compacted"] = "context_compacted"
+    summary: str
+    replaced: int
+    tokens_before: int
+    tokens_after: int
+
+
 class ErrorEvent(_EventBase):
     type: Literal["error"] = "error"
     message: str
@@ -81,6 +92,7 @@ Event = Annotated[
     | ToolCallStarted
     | ToolCallFinished
     | TurnEnded
+    | ContextCompacted
     | ErrorEvent,
     Field(discriminator="type"),
 ]

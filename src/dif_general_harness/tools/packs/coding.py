@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from ..egress import EgressProxy
 from ..registry import Effect, Tool, tool
 
 SECRET_FILES = [
@@ -179,6 +180,9 @@ class ExecutorError(ValueError):
     pass
 
 
+BUILTIN = "builtin"  # egress_proxy: the harness's own proxy
+
+
 Spawn = Callable[[list[str], float, list[str]], Awaitable[CommandResult]]
 
 
@@ -222,8 +226,11 @@ class ContainerExecutor:
     read-only with a small ``/tmp``; all capabilities are dropped and privileges cannot be
     raised; CPU, memory and process count are capped; the container is killed on timeout.
     Network is off (``--network none``) unless ``egress_proxy`` is set: then the container
-    joins ``proxy_network`` and all traffic goes through the proxy, which must enforce
-    ``allow_hosts``. The harness never passes its own environment or secrets in.
+    joins ``proxy_network`` (an internal network with no route out) and all traffic goes
+    through the proxy. With ``egress_proxy: "builtin"`` that is the harness's own proxy
+    (``tools/egress.py``), which gives each command credentials bound to ``allow_hosts``;
+    another value is the URL of a proxy the operator runs, which must enforce them itself.
+    The harness never passes its own environment or secrets in.
     """
 
     image: str
@@ -236,33 +243,55 @@ class ContainerExecutor:
     egress_proxy: str | None = None
     proxy_network: str = "dif-egress"
     spawn: Spawn | None = None  # tests: replaces running the container runtime
+    proxy: EgressProxy | None = None  # the builtin proxy, set by the instance
 
-    def argv(self, command: str, cwd: Path, name: str) -> list[str]:
+    def argv(
+        self, command: str, cwd: Path, name: str, *, proxy_url: str | None = None,
+        env: dict[str, str] | None = None, read_only: bool = False,
+    ) -> list[str]:  # fmt: skip
+        mount = f"type=bind,source={cwd},target=/workspace" + (",readonly" if read_only else "")
         args = [
             self.runtime, "run", "--rm", "--name", name, "--init",
             "--cpus", f"{self.cpu:g}", "--memory", _memory(self.memory),
             "--pids-limit", str(self.pids), "--user", self.user or _owner(cwd),
             "--cap-drop", "ALL", "--security-opt", "no-new-privileges",
             "--read-only", "--tmpfs", "/tmp:rw,size=256m",
-            "--mount", f"type=bind,source={cwd},target=/workspace",
+            "--mount", mount,
             "--workdir", "/workspace",
             "--env", "HOME=/workspace", "--env", "LANG=C.UTF-8",
         ]  # fmt: skip
-        if self.egress_proxy:
+        url = proxy_url or (self.egress_proxy if self.egress_proxy != BUILTIN else None)
+        if url and self.allow_hosts:
             args += ["--network", self.proxy_network]
             for var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
-                args += ["--env", f"{var}={self.egress_proxy}"]
+                args += ["--env", f"{var}={url}"]
             args += ["--env", "DIF_ALLOW_HOSTS=" + ",".join(self.allow_hosts)]
         else:
             args += ["--network", "none"]
+        for key, value in (env or {}).items():
+            args += ["--env", f"{key}={value}"]
         # the image's own entrypoint never runs: the command is exactly what the tool asked
         return [*args, "--entrypoint", "bash", self.image, "-c", command]
 
     async def run(self, command: str, cwd: Path, timeout_s: float) -> CommandResult:
+        return await self.run_with(command, cwd, timeout_s)
+
+    async def run_with(
+        self, command: str, cwd: Path, timeout_s: float, *,
+        env: dict[str, str] | None = None, read_only: bool = False,
+    ) -> CommandResult:  # fmt: skip
         name = f"dif-exec-{os.urandom(6).hex()}"
-        argv = self.argv(command, cwd, name)
-        kill = [self.runtime, "kill", name]
-        return await (self.spawn or _spawn)(argv, timeout_s, kill)
+        token = None
+        if self.proxy is not None and self.allow_hosts:
+            token = self.proxy.grant(self.allow_hosts, name)  # this command's allowance only
+        try:
+            url = self.proxy.url_for(token) if self.proxy is not None and token else None
+            argv = self.argv(command, cwd, name, proxy_url=url, env=env, read_only=read_only)
+            kill = [self.runtime, "kill", name]
+            return await (self.spawn or _spawn)(argv, timeout_s, kill)
+        finally:
+            if token is not None and self.proxy is not None:
+                self.proxy.revoke(token)
 
 
 def executor_from_spec(config: dict[str, object] | None) -> tuple[Executor | None, float | None]:

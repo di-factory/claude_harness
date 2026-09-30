@@ -38,6 +38,29 @@ PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
     ),
     (
         "pyme-appointment-agent",
+        "invalid_voice",
+        lambda d: d["channels"].update(
+            phone={
+                "type": "voice",
+                "credentials": {"$secret": "twilio"},
+                "voice": {"transfer_to": "the front desk"},
+            }
+        ),
+    ),
+    (
+        "pyme-appointment-agent",
+        "invalid_embedding_provider",
+        lambda d: d["models"]["roles"].update(
+            embedding={"provider": "anthropic", "model": "claude-haiku-4-5"}
+        ),
+    ),
+    (
+        "pyme-appointment-agent",
+        "invalid_isolation",
+        lambda d: d["tools"]["config"].update(python={"isolation": "container"}),
+    ),
+    (
+        "pyme-appointment-agent",
         "missing_file",
         lambda d: d["tools"].update(python=["extensions.nope:best_slot"]),
     ),
@@ -58,6 +81,38 @@ PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
         "pyme-receipt-processing",
         "missing_dedupe",
         lambda d: d["triggers"]["new-document"].pop("dedupe_key"),
+    ),
+    (
+        "pyme-receipt-processing",
+        "invalid_dedupe_key",
+        lambda d: d["triggers"]["new-document"].update(dedupe_key="{{file.sha256}}"),
+    ),
+    (
+        "pyme-receipt-processing",
+        "invalid_source",
+        lambda d: d["triggers"]["new-document"]["source"].update(type="ftp"),
+    ),
+    (
+        "pyme-receipt-processing",
+        "invalid_source",
+        lambda d: d["tools"]["config"]["documents"]["storage"].pop("bucket"),
+    ),
+    (
+        "conversational-rag",
+        "invalid_verifier",
+        lambda d: d["policies"]["verification"]["verifier"].pop("sample_rate"),
+    ),
+    (
+        "conversational-rag",
+        "invalid_verifier",
+        lambda d: d["policies"]["verification"]["verifier"].update(mode="critical_only"),
+    ),
+    (
+        "pyme-receipt-processing",
+        "missing_source",
+        lambda d: d["triggers"].update(
+            nightly={"type": "batch", "cron": "0 2 * * *", "workflow": "send-report"}
+        ),
     ),
     (
         "pyme-appointment-agent",

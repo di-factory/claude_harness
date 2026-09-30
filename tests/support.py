@@ -162,6 +162,9 @@ class Env:
         self.provider = FakeProvider(script)
         self.sent: list[httpx2.Request] = []
         self.clock = Clock()
+        self.s3_client: Any = None  # a fake S3 client for file triggers
+        self.workspaces: dict[str, Path] = {}
+        self.egress: Any = None  # an EgressProxy (tests: on a free local port)
 
     def outbound(self) -> httpx2.AsyncClient:
         def handle(request: httpx2.Request) -> httpx2.Response:
@@ -199,6 +202,9 @@ class Env:
             database=database,
             http_client=self.outbound(),
             telemetry=self.telemetry,
+            s3_client=self.s3_client,
+            workspaces=self.workspaces,
+            egress_proxy=self.egress,
         )
         inst = await Instance.open(resolved, options)
         headless = await Headless.build(

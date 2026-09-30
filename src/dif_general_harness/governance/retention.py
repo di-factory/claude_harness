@@ -45,6 +45,12 @@ async def purge(
                 "DELETE FROM audit WHERE tenant_id = ? AND instance_id = ? AND ts < ?",
                 (*key, cutoff),
             )
+        if "documents" in retention:  # what file and batch triggers remember having seen
+            cutoff = now - duration_days(retention["documents"]) * DAY
+            removed["trigger_seen"] = await conn.execute(
+                "DELETE FROM trigger_seen WHERE tenant_id = ? AND instance_id = ? AND seen_at < ?",
+                (*key, cutoff),
+            )
         removed["jobs"] = await conn.execute(
             "DELETE FROM jobs WHERE tenant_id = ? AND instance_id = ?"
             " AND status IN ('done', 'cancelled') AND updated_at < ?",

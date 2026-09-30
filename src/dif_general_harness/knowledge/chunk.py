@@ -6,8 +6,9 @@
 ("Billing > Refunds") so a search can match the heading and a citation can name it.
 ``paragraph`` chunking ignores headings and only groups paragraphs.
 
-Formats read here: Markdown, plain text, HTML and CSV (as text). Anything else (PDF, DOCX,
-images) needs the ``documents`` pack and is reported, not guessed at.
+Formats read here: Markdown, plain text, HTML and CSV (as text). File sources also index
+the text of PDF, DOCX and XLSX files (``documents.extract``); scans and images need OCR and
+are reported as skipped, not guessed at.
 """
 
 from __future__ import annotations

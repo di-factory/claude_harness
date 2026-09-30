@@ -3,12 +3,13 @@
 Routes:
 - ``GET /healthz``: liveness and config version; ``GET /readyz``: the database answers.
 - ``POST /channels/{name}``: inbound messages. Gateway and Telegram requests are verified
-  and queued (acknowledged at once); REST/web channels answer inline.
+  and queued (acknowledged at once); REST/web channels answer inline, and voice answers
+  inline with TwiML (speak, listen, transfer).
 - ``POST /hooks/{path}``: webhook triggers, verified with their shared secret
   (``X-Hub-Signature-256`` or a bearer token), deduplicated by delivery id.
 - ``/admin/*``: the inbox (list, decide), sessions (view, reply as a person), consent,
-  audit verification, spend and job counts. Bearer ``admin_token``; without one the admin
-  API is off.
+  audit verification, spend and job counts, running file and batch triggers. Bearer
+  ``admin_token``; without one the admin API is off.
 
 The worker (queue lanes) runs inside the same process by default: one container per
 instance (ARCHITECTURE §3.20).
@@ -140,6 +141,11 @@ def create_app(
             return Response(json.dumps(shake.body), media_type="application/json")
         except ChannelError as exc:
             raise HTTPException(400, str(exc)) from None
+        adapter = headless.adapters[name]
+        respond = getattr(adapter, "respond", None)
+        if results is not None and respond is not None:  # voice: TwiML, not JSON
+            content, media_type = respond(_inbound(request, await request.body()), results)
+            return Response(content, media_type=media_type)
         if results is not None:
             body = [
                 {"reply": r.reply, "session": r.session_id, "status": r.reason} for r in results
@@ -147,7 +153,6 @@ def create_app(
             return Response(
                 json.dumps({"replies": body}, ensure_ascii=False), media_type="application/json"
             )
-        adapter = headless.adapters[name]
         if adapter.config.type == "gateway":  # an empty TwiML answer: we reply asynchronously
             return Response("<Response/>", media_type="application/xml")
         return Response("{}", media_type="application/json")
@@ -354,6 +359,23 @@ def create_app(
             raise HTTPException(400, "an event needs a name")
         woken = await headless.emit(name, dict(body.get("data") or {}))
         return {"woken": woken}
+
+    @app.post("/admin/triggers/{name}/run", dependencies=[Depends(admin)])
+    async def run_trigger(name: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Run a file trigger's scan now, or a batch trigger now (``{"items": [...]}`` pushes
+        the items instead of calling its source tool)."""
+        trig = headless.triggers.get(name)
+        if trig is None or trig.type not in ("file", "batch"):
+            raise HTTPException(404, "no file or batch trigger by that name")
+        if trig.type == "file":
+            return {"queued": await headless.scan_files(name)}
+        given = (body or {}).get("items")
+        if given is not None and not isinstance(given, list):
+            raise HTTPException(400, "items must be a list")
+        try:
+            return await headless.run_batch(name, given)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
 
     @app.post("/admin/sources/{source}/items", dependencies=[Depends(admin)])
     async def items(source: str, body: dict[str, Any]) -> dict[str, Any]:

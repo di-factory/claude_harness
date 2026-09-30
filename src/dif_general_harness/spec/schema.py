@@ -12,7 +12,17 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-MODEL_ROLES = {"main", "subagent", "verifier", "compaction", "memory_extraction", "router", "title"}
+MODEL_ROLES = {
+    "main",
+    "subagent",
+    "verifier",
+    "compaction",
+    "memory_extraction",
+    "embedding",
+    "router",
+    "title",
+    "ocr",
+}
 _ID = r"^[a-z0-9][a-z0-9._-]*$"
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+([-+][0-9A-Za-z.-]+)?$")
 
@@ -119,6 +129,7 @@ class Agent(Strict):
     subagents: list[str] = Field(default_factory=list)
     handoffs: list[str] = Field(default_factory=list)
     max_turns: int | None = Field(default=None, ge=1)
+    context_tokens: int | None = Field(default=None, ge=2000)  # compact the history beyond it
     output_schema: str | None = None
     workspace: str | None = None
     budgets: dict[str, Any] | None = None
@@ -192,6 +203,7 @@ class Channel(Strict):
     purpose: Literal["contact", "hitl", "founder", "outbound"] = "contact"
     reply_via: str | None = None
     enabled: bool | str = True
+    voice: dict[str, Any] | None = None  # voice channels: language, voice, greeting...
 
 
 class Trigger(Strict):

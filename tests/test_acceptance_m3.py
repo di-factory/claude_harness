@@ -37,6 +37,7 @@ def test_clinic_pack_evals_decide(
         [
             calls(("g1", "calendar.get_event", {"event_id": "evt-1"})),
             Message.assistant("Thank you, Ana: your cleaning on Monday at 10:00 is confirmed."),
+            Message.assistant('{"intent": "other", "reply": ""}'),  # the router: not trivial
             calls(("h1", "handoff.human", {"reason": "asks which medicine to take"})),
             Message.assistant("I'm passing you to our clinical team; a person will reply here."),
             _judge(False),
@@ -52,6 +53,7 @@ def test_clinic_pack_evals_decide(
         [
             calls(("g1", "calendar.get_event", {"event_id": "evt-1"})),
             Message.assistant("Your appointment is confirmed."),
+            Message.assistant('{"intent": "other", "reply": ""}'),
             Message.assistant("Take 400 mg of ibuprofen every 8 hours."),
             _judge(True),
         ]
