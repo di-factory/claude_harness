@@ -260,8 +260,9 @@ class Instance:
             raw = data["models"].get("providers", {})
             if blocking := sorted(_secret_refs(raw) & missing):
                 raise InstanceError(
-                    [Issue("error", "missing_secret", f"secrets.{n}", "not set") for n in blocking]
-                )
+                    [Issue("error", "missing_secret", f"secrets.{n}", _how_to_set(n))
+                     for n in blocking]
+                )  # fmt: skip
             if outside := region_violations(spec):  # never route outside the allowed regions
                 raise InstanceError([Issue("error", c, p, m) for c, p, m in outside])
             settings = self.secrets.resolve(raw)
@@ -1059,6 +1060,14 @@ class AgentRuntime:
         pii = self.instance.pii
         text = await render_citations(self.instance.knowledge, text)
         return await pii.detokenize(text, pii.policy.reveal_in_output) if pii.active else text
+
+
+def _how_to_set(name: str) -> str:
+    env = "DIF_SECRET_" + name.upper().replace("-", "_").replace(".", "_")
+    return (
+        f"not set: export {env}=..., or put the value in a file named '{name}' in the"
+        " folder given with --secrets-dir (an empty file counts as not set)"
+    )
 
 
 def _secret_refs(obj: Any) -> set[str]:

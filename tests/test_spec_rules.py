@@ -216,6 +216,7 @@ def test_planted_pack_errors_are_caught(
 
 INSTANCE_MUTATIONS: list[tuple[str, Mutator]] = [
     ("missing_value", lambda d: d["values"].pop("business_name")),
+    ("model_not_set", lambda d: d["values"].pop("main_model")),
     ("unknown_value", lambda d: d["values"].update(nope=1)),
     ("invalid_value", lambda d: d["values"].update(reminder_hours=500)),
     ("invalid_value", lambda d: d["values"].update(reminder_hours="soon")),

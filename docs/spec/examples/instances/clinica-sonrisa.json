@@ -19,6 +19,8 @@
   },
   "values": {
     "business_name": "Clínica Sonrisa",
+    "main_model": "claude-sonnet-5-5",
+    "fast_model": "claude-haiku-4-5",
     "business_hours": {
       "mon-fri": "09:00-19:00",
       "sat": "09:00-14:00"

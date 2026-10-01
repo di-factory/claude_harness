@@ -19,14 +19,36 @@ class RoutingError(ValueError):
     pass
 
 
+def check_anthropic_key(key: Any, settings: dict[str, Any]) -> None:
+    """Refuse, at start, Anthropic credentials that cannot run the harness, with the fix,
+    rather than failing on the first message."""
+    if not isinstance(key, str) or settings.get("base_url"):
+        return  # a gateway decides what it accepts
+    if key.startswith("sk-ant-oat"):
+        raise RoutingError(
+            "the anthropic secret is a Claude subscription (OAuth) token; subscriptions cannot"
+            " run applications. Create an API key at console.anthropic.com (API Keys); it starts"
+            " with sk-ant-api"
+        )
+    workspace_key = key.startswith("sk-ant-api") or not key.startswith("sk-ant-")
+    if not workspace_key and not settings.get("workspace_id"):
+        raise RoutingError(
+            "the anthropic key is not scoped to a workspace (it does not start with"
+            " sk-ant-api). Create the key inside a workspace at console.anthropic.com, or"
+            " set models.providers.anthropic.workspace_id"
+        )
+
+
 def _anthropic(role: ModelRoleConfig, settings: dict[str, Any]) -> ModelProvider:
     from ..providers.anthropic import AnthropicProvider
 
+    check_anthropic_key(settings.get("api_key"), settings)
     return AnthropicProvider(
         role.model,
         api_key=settings.get("api_key"),
         base_url=settings.get("base_url"),
         effort=role.effort,
+        workspace_id=settings.get("workspace_id"),
     )
 
 

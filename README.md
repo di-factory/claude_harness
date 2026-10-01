@@ -130,6 +130,9 @@ No time goals: each milestone is done when its acceptance gate passes, and ships
 
 ## Getting started
 
+**New here?** Follow [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md): a clean server to a
+live WhatsApp agent, phase by phase, with checkpoints and the common mistakes.
+
 Available now (M1):
 
 ```bash
@@ -145,6 +148,9 @@ uv run dif-general-harness build --packs docs/spec/examples --out instances \
     --request "appointment reminders for a dental clinic on WhatsApp"
 #   (add --answers answers.yaml for a non-interactive build; outputs <id>.json,
 #    <id>.answers.yaml and <id>.summary.md for approval)
+
+# a new client from an example (copies the files the instance references too)
+uv run dif-general-harness spec copy docs/spec/examples/instances/clinica-sonrisa.json clients/demo
 
 # run an instance locally (secrets: DIF_SECRET_<NAME> env vars or --secrets-dir)
 export DIF_SECRET_ANTHROPIC=...
@@ -180,6 +186,7 @@ uv tool install git+https://github.com/di-factory/claude_harness@v1.0.0
 
 | Document | Contents |
 |---|---|
+| [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) | Step by step from a clean server to a live agent, and the common setup mistakes |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Technical design: framing, modules, all subsystems, stack, layout, roadmap, decisions |
 | [`docs/PRD.md`](docs/PRD.md) | Product requirements: goals, personas, user stories, requirements, metrics, milestones, risks |
 | [`docs/spec/SOLUTION_SPEC.md`](docs/spec/SOLUTION_SPEC.md) | Solution spec v1 draft: format, merge rules, validation, and paper tests on 6 example packs ([`docs/spec/examples/`](docs/spec/examples/)) |

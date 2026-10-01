@@ -293,7 +293,11 @@ async def test_open_failures(examples: Path, tmp_path: Path) -> None:
     with pytest.raises(InstanceError, match="only instances run"):
         await Instance.open(load_pack(examples / "service-desk-cell"), no_secrets)
     # placeholder model ids are refused before any call is made
-    with pytest.raises(RoutingError, match="not set"):
+    path = examples / "instances" / "clinica-sonrisa.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    del data["values"]["main_model"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises((InstanceError, RoutingError), match="no model chosen"):
         await Instance.open(
             _clinic(examples),
             RuntimeOptions(state_root=tmp_path, secrets=EnvSecrets({"DIF_SECRET_ANTHROPIC": "k"})),

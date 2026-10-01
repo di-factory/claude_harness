@@ -14,6 +14,7 @@ uv run ruff check src tests && uv run ruff format --check src tests
 uv run mypy                               # strict
 uv run dif-general-harness spec validate docs/spec/examples/dev-cell
 uv run dif-general-harness spec resolve docs/spec/examples/instances/clinica-sonrisa.json
+uv run dif-general-harness spec copy INSTANCE.json clients/NAME [--id ID]   # with its files
 uv run dif-general-harness build --request "..." [--answers FILE] --packs docs/spec/examples
 uv run dif-general-harness run|console|serve INSTANCE.json --packs DIR
 uv run dif-general-harness eval INSTANCE.json --packs DIR   # fresh instance per case; drift
@@ -29,6 +30,9 @@ Tests start a throwaway local Postgres (unix socket, `tests/conftest.py`) and ru
 storage tests on SQLite and Postgres; they skip Postgres when it is not installed.
 
 All four checks must pass before every commit.
+
+Setting up a server or a first client: `docs/GETTING_STARTED.md` (phases, checkpoints and the
+setup mistakes the harness now catches early). Keep it in step with the CLI.
 
 ## Layout
 

@@ -183,6 +183,11 @@ both lists (`model_region_violation`, `model_region_unknown`), the runtime refus
 route elsewhere, and later layers can only narrow the lists; `governance.regions.data`
 cannot change once set.
 
+An instance must name a real model for every role; a placeholder left by the pack
+(`<main-model-id>`) fails validation (`model_not_set`). Anthropic credentials are checked at
+start: a subscription (OAuth) token is refused, and a key that is not scoped to a workspace
+needs `models.providers.anthropic.workspace_id`.
+
 The roles are `main`, `subagent`, `verifier`, `compaction`,
 `memory_extraction`, `router`, `title`, `ocr` (a vision model for the documents pack) and
 `embedding` (hybrid retrieval; an OpenAI-compatible endpoint). Agents pick a role; they never

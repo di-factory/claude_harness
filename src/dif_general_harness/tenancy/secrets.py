@@ -50,7 +50,8 @@ class EnvSecrets:
         return self.prefix + re.sub(r"[-.]", "_", _check(name)).upper()
 
     def get(self, name: str) -> str | None:
-        return self.environ.get(self.key(name))
+        value = self.environ.get(self.key(name))
+        return value.strip() if value is not None else None  # a pasted newline is no part of it
 
 
 class FileSecrets:
@@ -59,7 +60,7 @@ class FileSecrets:
 
     def get(self, name: str) -> str | None:
         path = self.directory / _check(name)
-        return path.read_text(encoding="utf-8").rstrip("\r\n") if path.is_file() else None
+        return path.read_text(encoding="utf-8").strip() if path.is_file() else None
 
 
 class SecretResolver:

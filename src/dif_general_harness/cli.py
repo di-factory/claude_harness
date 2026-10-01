@@ -21,6 +21,7 @@ import asyncio
 import dataclasses
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -652,6 +653,12 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
             action="append",
             help="folder containing packs (repeatable); default: next to the instance",
         )
+    copy = spec_sub.add_parser(
+        "copy", help="copy an instance with the files it references (a new client from an example)"
+    )
+    copy.add_argument("path", type=Path, help="instance JSON to copy")
+    copy.add_argument("dest", type=Path, help="new folder; the copy is <dest>/instance.json")
+    copy.add_argument("--id", help="new solution id (default: keep the original's)")
     _add_run(sub, "run")
     _add_run(sub, "console")
     _add_run(sub, "eval")
@@ -767,6 +774,8 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
         return asyncio.run(_fleet(args))
     if args.group in {"approve", "deploy"}:
         return _approve_or_deploy(args)
+    if args.group == "spec" and args.command == "copy":
+        return _copy_instance(args.path, args.dest, args.id)
 
     try:
         resolved = _load(args.path, args.packs)
@@ -799,6 +808,58 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
         f"({errors} errors, {warnings} warnings, config {resolved.version_hash})"
     )
     return 0 if resolved.ok else 1
+
+
+def _copy_instance(source: Path, dest: Path, new_id: str | None) -> int:
+    """Copy an instance JSON and every local file or folder it names by a relative path
+    (template overrides, prompts, knowledge folders), keeping their layout, so the copy
+    validates exactly like the original."""
+    try:
+        data = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"cannot read {source}: {exc}", file=sys.stderr)
+        return 2
+    if data.get("kind") != "instance":
+        print(f"{source} is not an instance spec", file=sys.stderr)
+        return 2
+    if (dest / "instance.json").exists():
+        print(f"{dest / 'instance.json'} already exists; choose another folder", file=sys.stderr)
+        return 2
+    base = source.parent.resolve()
+    copied: list[str] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            for v in value.values():
+                walk(v)
+        elif isinstance(value, list):
+            for v in value:
+                walk(v)
+        elif isinstance(value, str) and value and "{{" not in value and "://" not in value:
+            rel = Path(value)
+            if rel.is_absolute() or ".." in rel.parts or len(value) > 300:
+                return
+            found = (base / rel).resolve()
+            if found.is_relative_to(base) and found.exists() and found != base:
+                target = dest / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if found.is_dir():
+                    shutil.copytree(found, target, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(found, target)
+                copied.append(value)
+
+    walk(data)
+    if new_id:
+        data.setdefault("solution", {})["id"] = new_id
+    dest.mkdir(parents=True, exist_ok=True)
+    out = dest / "instance.json"
+    out.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"wrote {out}")
+    for name in sorted(set(copied)):
+        print(f"  copied {name}")
+    print(f"next: dif-general-harness spec validate {out} --packs <folder with the packs>")
+    return 0
 
 
 if __name__ == "__main__":
