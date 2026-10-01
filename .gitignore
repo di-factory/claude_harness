@@ -16,3 +16,9 @@ deploy/build/
 .terraform/
 *.tfstate
 *.tfstate.*
+
+# local secrets: never commit
+.env
+.env.*
+*.env
+secrets/
