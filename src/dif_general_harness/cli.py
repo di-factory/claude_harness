@@ -62,7 +62,7 @@ from .runtime import (
 from .runtime.routing import check_anthropic_key
 from .spec import PackCatalog, ResolvedSpec, SpecError, load_instance, load_pack
 from .store.db import connect
-from .tenancy import FileSecrets, default_secrets_dir, local_backend
+from .tenancy import FileSecrets, default_secrets_dir, load_env_file, local_backend
 
 
 def _load(path: Path, packs: list[Path] | None) -> ResolvedSpec:
@@ -653,6 +653,7 @@ async def _costs(args: argparse.Namespace, resolved: ResolvedSpec) -> int:
 
 def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None) -> int:
     """``provider`` replaces the spec's models (tests and offline demos)."""
+    load_env_file(Path(".env"))  # e.g. DIF_SECRET_ANTHROPIC=...; never committed (.gitignore)
     parser = argparse.ArgumentParser(prog="dif-general-harness")
     sub = parser.add_subparsers(dest="group", required=True)
     spec = sub.add_parser("spec", help="work with solution specs")

@@ -11,6 +11,7 @@ from .secrets import (
     SecretResolver,
     backend_from_env,
     default_secrets_dir,
+    load_env_file,
     local_backend,
 )
 
@@ -28,5 +29,6 @@ __all__ = [
     "backend_from_env",
     "config_hash",
     "default_secrets_dir",
+    "load_env_file",
     "local_backend",
 ]
