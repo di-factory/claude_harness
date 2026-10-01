@@ -21,12 +21,21 @@ import asyncio
 import dataclasses
 import json
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
 from typing import Any
 
-from .constructor import EvalStore, RecordingApprover, build, load_answers, match, run_suites
+from .constructor import (
+    EvalStore,
+    RecordingApprover,
+    build,
+    load_answers,
+    match,
+    questionnaire,
+    run_suites,
+)
 from .constructor.deploy import (
     DeployError,
     approve,
@@ -50,9 +59,10 @@ from .runtime import (
     RuntimeOptions,
     scope_for,
 )
+from .runtime.routing import check_anthropic_key
 from .spec import PackCatalog, ResolvedSpec, SpecError, load_instance, load_pack
 from .store.db import connect
-from .tenancy import FileSecrets, backend_from_env
+from .tenancy import FileSecrets, default_secrets_dir, local_backend
 
 
 def _load(path: Path, packs: list[Path] | None) -> ResolvedSpec:
@@ -95,7 +105,11 @@ def _add_run(sub: argparse._SubParsersAction[argparse.ArgumentParser], name: str
         cmd.add_argument("--lanes", type=int, default=4, help="concurrent worker lanes")
     cmd.add_argument("--session", help="resume a session id")
     cmd.add_argument("--state", type=Path, default=Path(".dif/state"), help="state folder")
-    cmd.add_argument("--secrets-dir", type=Path, help="one file per secret; default: env vars")
+    cmd.add_argument(
+        "--secrets-dir",
+        type=Path,
+        help="one file per secret; default: DIF_SECRET_<NAME> variables, then ~/.dif/secrets",
+    )
     cmd.add_argument(
         "--workspace", action="append", default=[], metavar="NAME=DIR", help="local workspace"
     )
@@ -117,7 +131,7 @@ def _options(
         workspaces[name] = Path(folder)
     return RuntimeOptions(
         state_root=args.state,
-        secrets=FileSecrets(args.secrets_dir) if args.secrets_dir else backend_from_env(),
+        secrets=FileSecrets(args.secrets_dir) if args.secrets_dir else local_backend(),
         approver=AutoApprover() if getattr(args, "yes", False) else approver,
         workspaces=workspaces,
         provider=provider,
@@ -372,7 +386,10 @@ def _build(args: argparse.Namespace) -> int:
             print("No confident match; pass --pack explicitly.", file=sys.stderr)
             return 3
     try:
-        answers = load_answers(args.answers) if args.answers else None
+        answers: dict[str, Any] | None = None
+        for path in args.answers or []:
+            given = {k: v for k, v in load_answers(path).items() if v not in (None, "")}
+            answers = {**(answers or {}), **given}  # later files win; blanks never erase
     except (OSError, ValueError) as exc:
         print(f"cannot read answers: {exc}", file=sys.stderr)
         return 2
@@ -652,6 +669,12 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
             action="append",
             help="folder containing packs (repeatable); default: next to the instance",
         )
+    copy = spec_sub.add_parser(
+        "copy", help="copy an instance with the files it references (a new client from an example)"
+    )
+    copy.add_argument("path", type=Path, help="instance JSON to copy")
+    copy.add_argument("dest", type=Path, help="new folder; the copy is <dest>/instance.json")
+    copy.add_argument("--id", help="new solution id (default: keep the original's)")
     _add_run(sub, "run")
     _add_run(sub, "console")
     _add_run(sub, "eval")
@@ -720,9 +743,39 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
     build_cmd = sub.add_parser("build", help="constructor: interview and build an instance")
     build_cmd.add_argument("--request", help="what the client needs, in plain words")
     build_cmd.add_argument("--pack", action="append", help="pack id (skip matching)")
-    build_cmd.add_argument("--answers", type=Path, help="answers file (YAML/JSON): no prompts")
+    build_cmd.add_argument(
+        "--answers", type=Path, action="append",
+        help="answers file (YAML/JSON), repeatable (client's and Di-Factory's): no prompts",
+    )  # fmt: skip
     build_cmd.add_argument("--out", type=Path, default=Path("instances"), help="output folder")
     build_cmd.add_argument("--packs", type=Path, action="append", help="folder containing packs")
+
+    form = sub.add_parser(
+        "questionnaire", help="constructor: a fill-in questionnaire for a client (build --answers)"
+    )
+    form.add_argument("--pack", action="append", required=True, help="pack id (repeatable)")
+    form.add_argument("--packs", type=Path, action="append", help="folder containing packs")
+    form.add_argument(
+        "--for", dest="audience", choices=["client", "difactory", "all"], default="all",
+        help="client: the business owner's questions; difactory: models and ids; all (default)",
+    )  # fmt: skip
+    form.add_argument("--out", type=Path, help="write it here (default: print it)")
+
+    secrets_cmd = sub.add_parser("secrets", help="store and check secrets for local runs")
+    secrets_sub = secrets_cmd.add_subparsers(dest="command", required=True)
+    s_set = secrets_sub.add_parser("set", help="store one secret as a file (asks for the value)")
+    s_set.add_argument("name", help="the secret's name, e.g. anthropic")
+    s_set.add_argument("--dir", type=Path, help="default: DIF_SECRETS_DIR or ~/.dif/secrets")
+    s_set.add_argument(
+        "--from-env-file", type=Path, metavar="FILE",
+        help="take it from a .env file (DIF_SECRET_<NAME>=... or <NAME>=...)",
+    )  # fmt: skip
+    s_check = secrets_sub.add_parser(
+        "check", help="which secrets an instance needs, and which are set"
+    )
+    s_check.add_argument("path", type=Path, help="instance JSON")
+    s_check.add_argument("--packs", type=Path, action="append", help="folder containing packs")
+    s_check.add_argument("--dir", type=Path, help="default: DIF_SECRETS_DIR or ~/.dif/secrets")
 
     keys = sub.add_parser("keys", help="approver keys (Ed25519)")
     keys_sub = keys.add_subparsers(dest="command", required=True)
@@ -754,6 +807,18 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
 
     if args.group == "build":
         return _build(args)
+    if args.group == "questionnaire":
+        text = questionnaire(PackCatalog(roots=args.packs or _default_roots()), args.pack,
+                             args.audience)  # fmt: skip
+        if args.out:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(text, encoding="utf-8")
+            print(f"wrote {args.out}: fill it in, then run build --answers {args.out}")
+        else:
+            print(text, end="")
+        return 0
+    if args.group == "secrets":
+        return _secrets(args)
     if args.group == "keys":
         path, public = new_key(args.out, args.name)
         print(f"private key: {path} (keep it secret; only {args.name} uses it)")
@@ -767,6 +832,8 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
         return asyncio.run(_fleet(args))
     if args.group in {"approve", "deploy"}:
         return _approve_or_deploy(args)
+    if args.group == "spec" and args.command == "copy":
+        return _copy_instance(args.path, args.dest, args.id)
 
     try:
         resolved = _load(args.path, args.packs)
@@ -799,6 +866,133 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
         f"({errors} errors, {warnings} warnings, config {resolved.version_hash})"
     )
     return 0 if resolved.ok else 1
+
+
+def _secret_value(args: argparse.Namespace) -> str:
+    if args.from_env_file:
+        wanted = {f"DIF_SECRET_{args.name.upper().replace('-', '_').replace('.', '_')}",
+                  args.name, args.name.upper()}  # fmt: skip
+        for line in args.from_env_file.read_text(encoding="utf-8").splitlines():
+            key, sep, value = line.strip().removeprefix("export ").partition("=")
+            if sep and key.strip() in wanted:
+                return str(value).strip().strip("'\"")
+        raise ValueError(f"{args.from_env_file} has no {' or '.join(sorted(wanted))} line")
+    if not sys.stdin.isatty():
+        return sys.stdin.read()
+    import getpass
+
+    return getpass.getpass(f"Value for {args.name} (paste it, then Enter; nothing is shown): ")
+
+
+def _describe_secret(name: str, value: str) -> str:
+    shown = value[:10] if value.startswith("sk-") else value[:3]
+    return f"{name}: {len(value)} characters, starts with {shown}..."
+
+
+def _secrets(args: argparse.Namespace) -> int:
+    folder = args.dir or default_secrets_dir()
+    if args.command == "set":
+        try:
+            value = _secret_value(args).strip()
+        except (OSError, ValueError) as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        if not value:
+            print("error: nothing was received. If pasting shows nothing, paste and press Enter"
+                  " anyway; or use --from-env-file, or pipe it: pbpaste | ssh ... secrets set"
+                  f" {args.name}", file=sys.stderr)  # fmt: skip
+            return 2
+        if args.name == "anthropic":
+            try:
+                check_anthropic_key(value, {})
+            except RoutingError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
+        folder.mkdir(parents=True, exist_ok=True)
+        folder.chmod(0o700)
+        target = folder / args.name
+        target.write_text(value, encoding="utf-8")
+        target.chmod(0o600)
+        print(f"saved {_describe_secret(args.name, value)} in {target}")
+        return 0
+    try:
+        resolved = _load(args.path, args.packs)
+    except SpecError as exc:
+        for issue in exc.issues:
+            print(issue, file=sys.stderr)
+        return 2
+    env = local_backend() if args.dir is None else None
+    files = FileSecrets(folder)
+    missing = 0
+    print(f"secrets for {resolved.spec.solution.id} (files in {folder}):")
+    for name, decl in sorted(resolved.spec.secrets.items()):
+        value = (env.get(name) if env is not None else None) or files.get(name) or ""
+        if not value:
+            missing += 1
+            print(f"  ✗ {name}: not set ({decl.description}). Run: dif-general-harness secrets"
+                  f" set {name}")  # fmt: skip
+            continue
+        problem = ""
+        if name == "anthropic":
+            try:
+                check_anthropic_key(value, {})
+            except RoutingError as exc:
+                problem = f"  ⚠ {exc}"
+        print(f"  ✓ {_describe_secret(name, value)}{problem}")
+    print("all set" if not missing else f"{missing} not set (the parts that use them stay off)")
+    return 0 if not missing else 1
+
+
+def _copy_instance(source: Path, dest: Path, new_id: str | None) -> int:
+    """Copy an instance JSON and every local file or folder it names by a relative path
+    (template overrides, prompts, knowledge folders), keeping their layout, so the copy
+    validates exactly like the original."""
+    try:
+        data = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        print(f"cannot read {source}: {exc}", file=sys.stderr)
+        return 2
+    if data.get("kind") != "instance":
+        print(f"{source} is not an instance spec", file=sys.stderr)
+        return 2
+    if (dest / "instance.json").exists():
+        print(f"{dest / 'instance.json'} already exists; choose another folder", file=sys.stderr)
+        return 2
+    base = source.parent.resolve()
+    copied: list[str] = []
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            for v in value.values():
+                walk(v)
+        elif isinstance(value, list):
+            for v in value:
+                walk(v)
+        elif isinstance(value, str) and value and "{{" not in value and "://" not in value:
+            rel = Path(value)
+            if rel.is_absolute() or ".." in rel.parts or len(value) > 300:
+                return
+            found = (base / rel).resolve()
+            if found.is_relative_to(base) and found.exists() and found != base:
+                target = dest / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if found.is_dir():
+                    shutil.copytree(found, target, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(found, target)
+                copied.append(value)
+
+    walk(data)
+    if new_id:
+        data.setdefault("solution", {})["id"] = new_id
+    dest.mkdir(parents=True, exist_ok=True)
+    out = dest / "instance.json"
+    out.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"wrote {out}")
+    for name in sorted(set(copied)):
+        print(f"  copied {name}")
+    print(f"next: dif-general-harness spec validate {out} --packs <folder with the packs>")
+    return 0
 
 
 if __name__ == "__main__":

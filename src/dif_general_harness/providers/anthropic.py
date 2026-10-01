@@ -159,9 +159,13 @@ class AnthropicProvider:
         fallbacks: bool = True,
         prompt_cache: bool = True,
         max_json_retries: int = 2,
+        workspace_id: str | None = None,
     ) -> None:
         self.model = model
-        self.client = client or anthropic.AsyncAnthropic(api_key=api_key, base_url=base_url)
+        headers = {"anthropic-workspace-id": workspace_id} if workspace_id else None
+        self.client = client or anthropic.AsyncAnthropic(
+            api_key=api_key, base_url=base_url, default_headers=headers
+        )
         self.effort = effort
         self.max_tokens = max_tokens
         # server-side fallbacks exist only on the direct Claude API

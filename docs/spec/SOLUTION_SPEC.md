@@ -183,6 +183,11 @@ both lists (`model_region_violation`, `model_region_unknown`), the runtime refus
 route elsewhere, and later layers can only narrow the lists; `governance.regions.data`
 cannot change once set.
 
+An instance must name a real model for every role; a placeholder left by the pack
+(`<main-model-id>`) fails validation (`model_not_set`). Anthropic credentials are checked at
+start: a subscription (OAuth) token is refused, and a key that is not scoped to a workspace
+needs `models.providers.anthropic.workspace_id`.
+
 The roles are `main`, `subagent`, `verifier`, `compaction`,
 `memory_extraction`, `router`, `title`, `ocr` (a vision model for the documents pack) and
 `embedding` (hybrid retrieval; an OpenAI-compatible endpoint). Agents pick a role; they never
@@ -280,6 +285,11 @@ Agents reach a corpus through the generated `knowledge.search_<corpus>` tool.
 - With `cite: true`, passages carry `kb:<id>` markers; a `citations` check
   (`min_citations`, `claims_must_cite`) runs on answers that used them. A failing answer
   gets one rewrite, then "not found". Contacts see `[1]` and a Sources list.
+- `questionnaire` (optional) lists business questions the client answers at onboarding:
+  `[{"id": "about", "question": "What does the clinic do?", "heading": "What is the clinic
+  about?", "required": true, "example": "..."}]`. `dif-general-harness questionnaire` writes
+  them (with the pack's variables) as a fill-in answers file; `build` turns the answers into
+  the client's own FAQ file for that corpus, which replaces the pack's sources.
 - Sources are synced when the instance opens and on `sync.schedule`:
   - `file` (a file or a folder), and absolute paths;
   - `s3` (`bucket`, `prefix`, `region`, `credentials`), or `"s3://bucket/prefix"`;

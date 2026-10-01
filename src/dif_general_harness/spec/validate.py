@@ -35,6 +35,10 @@ AWS_REGION_PREFIX = {"mx": "mx-", "us": "us-", "eu": "eu-"}
 _VAR_TEMPLATE = re.compile(r"\{\{\s*var\.([A-Za-z0-9_]+)\s*\}\}")
 _VAR_CEL = re.compile(r"\bvar\.([A-Za-z0-9_]+)")
 
+_MOVED = (
+    " (paths are relative to the spec file that names them; to start a client from an"
+    " example, use `dif-general-harness spec copy`, which copies the files too)"
+)
 _DIALABLE = re.compile(r"^(\+[1-9]\d{6,14}|sip:[^\s@]+@[^\s]+)$")
 _DOTTED = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
 
@@ -118,7 +122,7 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
                 continue
             f = Path(ref)
             if not f.exists():
-                err("missing_file", f"agents.{name}.{key}", f"file not found: {ref}")
+                err("missing_file", f"agents.{name}.{key}", f"file not found: {ref}{_MOVED}")
             elif key == "prompt":
                 texts.append(f.read_text(encoding="utf-8"))
     for cname, ch in channels.items():
@@ -128,7 +132,7 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
                 err(
                     "missing_file",
                     f"channels.{cname}.templates.{tname}",
-                    f"file not found: {tpl.file}",
+                    f"file not found: {tpl.file}{_MOVED}",
                 )
             else:
                 texts.append(f.read_text(encoding="utf-8"))
@@ -211,6 +215,12 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
     router = spec.policies.router or {}
     if router.get("model_role") and router["model_role"] not in roles:
         err("unknown_model_role", "policies.router", "router model role not defined")
+    if spec.kind == "instance" and spec.models:
+        for rname, role in spec.models.roles.items():
+            if not role.model or role.model.startswith(("<", "{{")):
+                err("model_not_set", f"models.roles.{rname}",
+                    f"no model chosen ({role.model!r}); set the pack's model variable in this"
+                    " instance's values, e.g. \"main_model\": \"claude-sonnet-5-5\"")  # fmt: skip
     embedding = spec.models.roles.get("embedding") if spec.models else None
     if embedding is not None and embedding.provider not in EMBEDDING_PROVIDERS:
         err("invalid_embedding_provider", "models.roles.embedding",
@@ -235,6 +245,18 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
                 Cron.parse(cron)
             except CronError as exc:
                 err("invalid_sync_schedule", f"{where}.sync.schedule", str(exc))
+        items = corpus_cfg.get("questionnaire")
+        if items is not None:
+            ids = [i.get("id") for i in items] if isinstance(items, list) else []
+            bad = not isinstance(items, list) or any(
+                not isinstance(i, dict) or not i.get("question")
+                or not re.fullmatch(r"[a-z][a-z0-9_]{0,40}", str(i.get("id") or ""))
+                for i in items
+            )  # fmt: skip
+            if bad or len(ids) != len(set(ids)):
+                err("invalid_questionnaire", f"{where}.questionnaire",
+                    "a list of {id (lowercase), question, heading?, required?, example?}"
+                    " with unique ids")  # fmt: skip
         not_found = (corpus_cfg.get("retrieval") or {}).get("not_found")
         if not_found is not None and not_found not in ("say_so", "handoff"):
             err("invalid_not_found", f"{where}.retrieval", "not_found must be say_so or handoff")

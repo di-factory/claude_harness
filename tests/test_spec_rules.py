@@ -70,6 +70,18 @@ PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
         lambda d: d["knowledge"]["corpora"]["docs"]["sync"].update(schedule="every 4 hours"),
     ),
     (
+        "pyme-appointment-agent",
+        "invalid_questionnaire",
+        lambda d: d["knowledge"]["corpora"]["clinic_faq"]["questionnaire"].append(
+            {"id": "about", "question": "Again?"}
+        ),
+    ),
+    (
+        "pyme-appointment-agent",
+        "invalid_questionnaire",
+        lambda d: d["knowledge"]["corpora"]["clinic_faq"]["questionnaire"].append({"id": "x"}),
+    ),
+    (
         "conversational-rag",
         "invalid_not_found",
         lambda d: d["knowledge"]["corpora"]["docs"]["retrieval"].update(not_found="guess"),
@@ -216,6 +228,7 @@ def test_planted_pack_errors_are_caught(
 
 INSTANCE_MUTATIONS: list[tuple[str, Mutator]] = [
     ("missing_value", lambda d: d["values"].pop("business_name")),
+    ("model_not_set", lambda d: d["values"].pop("main_model")),
     ("unknown_value", lambda d: d["values"].update(nope=1)),
     ("invalid_value", lambda d: d["values"].update(reminder_hours=500)),
     ("invalid_value", lambda d: d["values"].update(reminder_hours="soon")),

@@ -45,11 +45,21 @@ CLINIC = {
         "main_model": "claude-opus-5-5",
         "fast_model": "claude-haiku-4-5",
     },
+    "knowledge": {
+        "clinic_faq": {
+            "about": "Clínica dental familiar en Coyoacán, abierta desde 2012.",
+            "services": "Limpieza (45 min), resinas (1 h), ortodoncia y blanqueamiento.",
+            "location": "Av. Universidad 123, Col. Del Valle, CDMX.",
+        }
+    },
 }
 
 
 def _flat(answers: dict[str, Any]) -> dict[str, Any]:
-    return {f"{s}.{k}": v for s, sub in answers.items() for k, v in sub.items()}
+    flat = {f"{s}.{k}": v for s, sub in answers.items() if s != "knowledge" for k, v in sub.items()}
+    for corpus, items in answers.get("knowledge", {}).items():
+        flat |= {f"knowledge.{corpus}.{k}": v for k, v in items.items()}
+    return flat
 
 
 def _q(kind: str, **kw: Any) -> Question:
@@ -218,6 +228,11 @@ def test_build_writes_a_valid_instance(examples: Path, tmp_path: Path) -> None:
     assert spec["solution"]["locale"] == "es-MX"
     assert spec["values"]["business_hours"] == {"mon-fri": "09:00-19:00", "sat": "09:00-14:00"}
     assert spec["values"]["reminder_hours"] == 24  # the pack default, written explicitly
+    # the business answers became the client's FAQ, which replaces the pack's example
+    [source] = spec["knowledge"]["corpora"]["clinic_faq"]["sources"]
+    faq = (result.spec_path.parent / source["path"]).read_text()
+    assert "## What is the clinic about?\nClínica dental familiar" in faq
+    assert "## Which services do you offer?" in faq and "How much" not in faq  # unanswered
 
     summary = result.summary_path.read_text()
     assert "## Secrets the client stores in their own vault" in summary
@@ -228,7 +243,7 @@ def test_build_writes_a_valid_instance(examples: Path, tmp_path: Path) -> None:
     again = build(
         catalog,
         ["pyme-appointment-agent"],
-        tmp_path / "again",
+        tmp_path / "out",
         answers=load_answers(result.answers_path),
     )
     assert json.loads(again.spec_path.read_text()) == spec
