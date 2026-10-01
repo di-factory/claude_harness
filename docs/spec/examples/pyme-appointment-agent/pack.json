@@ -4,7 +4,7 @@
   "kind": "pack",
   "solution": {
     "id": "pyme-appointment-agent",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "name": "Appointment Agent",
     "lob": "pyme",
     "description": "Confirms, reminds and reschedules appointments for clinics and practices over WhatsApp/SMS.",
@@ -299,6 +299,12 @@
           "provider_template_id": "{{var.tpl_nudge_id}}"
         }
       }
+    },
+    "web": {
+      "type": "web",
+      "public": true,
+      "entry_agent": "receptionist",
+      "session_window": "24h"
     }
   },
   "triggers": {

@@ -49,6 +49,11 @@ PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
     ),
     (
         "pyme-appointment-agent",
+        "invalid_public",
+        lambda d: d["channels"]["whatsapp"].update(public=True),
+    ),
+    (
+        "pyme-appointment-agent",
         "invalid_embedding_provider",
         lambda d: d["models"]["roles"].update(
             embedding={"provider": "anthropic", "model": "claude-haiku-4-5"}
@@ -287,6 +292,15 @@ def test_null_cannot_remove_safety_settings(examples: Path, overlay: dict[str, A
     resolved = load_instance(path, PackCatalog(roots=[examples]))
     assert "safety_weakened" in {i.code for i in resolved.issues if i.severity == "error"}
     assert resolved.spec.governance.consent.required is True
+
+
+def test_a_later_layer_cannot_open_a_channel_to_the_public(examples: Path) -> None:
+    pack = examples / "pyme-appointment-agent" / "pack.json"
+    _edit(pack, lambda d: d["channels"]["web"].update(public=False))
+    path = examples / "instances" / "clinica-sonrisa.json"
+    _edit(path, lambda d: d.update(channels={"web": {"public": True}}))
+    resolved = load_instance(path, PackCatalog(roots=[examples]))
+    assert "safety_weakened" in {i.code for i in resolved.issues if i.severity == "error"}
 
 
 def test_budget_raise_allowed_with_reason(examples: Path) -> None:

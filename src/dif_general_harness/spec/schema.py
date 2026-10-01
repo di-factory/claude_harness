@@ -204,6 +204,7 @@ class Channel(Strict):
     reply_via: str | None = None
     enabled: bool | str = True
     voice: dict[str, Any] | None = None  # voice channels: language, voice, greeting...
+    public: bool = False  # web channels only: anyone with the link may chat (rate-limited)
 
 
 class Trigger(Strict):

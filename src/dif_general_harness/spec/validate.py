@@ -231,6 +231,9 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
     for cname, ch in channels.items():
         if ch.entry_agent and ch.entry_agent not in agents:
             err("unknown_agent", f"channels.{cname}", f"entry agent {ch.entry_agent!r} not defined")
+        if ch.public and ch.type != "web":
+            err("invalid_public", f"channels.{cname}.public",
+                "only a web channel can be public (the others verify their provider)")  # fmt: skip
         if ch.voice is not None and ch.type != "voice":
             err("invalid_voice", f"channels.{cname}.voice", "voice settings need a voice channel")
         transfer = (ch.voice or {}).get("transfer_to")

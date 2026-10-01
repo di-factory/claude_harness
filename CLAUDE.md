@@ -105,7 +105,8 @@ v1.0: M0 to M4 are done; the last gate is `tests/test_acceptance_m4.py` (one-com
 plan and rollback, costs by tenant and vendor, eval-gated fleet rollouts, regions and the
 sandbox). After v1.0 the listed gaps were closed (decisions 58–64): context compaction and
 the intent router, file and batch triggers, the documents pack, sampled verification, the
-egress proxy and isolated extensions, hybrid retrieval with S3/Drive/web sources, and voice.
+egress proxy and isolated extensions, hybrid retrieval with S3/Drive/web sources, and voice;
+then the web chat page and the setup's advisers (pack advisor, business consultant; 65–66).
 Next: GCP and Azure profiles.
 Known gaps: streaming (speech-to-speech) voice, knowledge connectors beyond files, S3,
 Drive and web pages (SharePoint, Notion... push through the admin API), pgvector for very

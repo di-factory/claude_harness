@@ -52,6 +52,7 @@ class Inbound:
     url: str
     headers: Mapping[str, str]  # lower-case names
     body: bytes
+    client: str = ""  # the peer address (behind the proxy: X-Forwarded-For is used instead)
 
     def form(self) -> dict[str, str]:
         from urllib.parse import parse_qsl
