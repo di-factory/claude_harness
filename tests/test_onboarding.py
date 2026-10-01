@@ -88,8 +88,8 @@ def test_secrets_set_refuses_what_cannot_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     args = ["secrets", "set", "anthropic", "--dir", str(tmp_path)]
-    monkeypatch.setattr("sys.stdin", io.StringIO("sk-ant-usr-abc\n"))
-    assert main(args) == 2 and "not scoped to a workspace" in capsys.readouterr().err
+    monkeypatch.setattr("sys.stdin", io.StringIO("sk-ant-oat01-abc\n"))
+    assert main(args) == 2 and "subscription (OAuth) token" in capsys.readouterr().err
     monkeypatch.setattr("sys.stdin", io.StringIO("\n"))
     assert main(args) == 2 and "nothing was received" in capsys.readouterr().err
     assert not (tmp_path / "anthropic").exists()

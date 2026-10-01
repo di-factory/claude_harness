@@ -7,8 +7,8 @@ The "Common mistakes" section at the end lists what goes wrong and the exact fix
 ## Before you start
 
 - **An Anthropic API key**, created inside a workspace at
-  [console.anthropic.com](https://console.anthropic.com) → API Keys. It starts with
-  `sk-ant-api`. A Claude subscription (Pro or Max) cannot run applications; set a monthly
+  [console.anthropic.com](https://console.anthropic.com) → API Keys (pick the workspace
+  first). A Claude subscription (Pro or Max) cannot run applications; set a monthly
   spend limit on the key's workspace. For real clients, **the client creates the key** in
   their own workspace and pays for their usage.
 - **Never paste a secret into a chat, a ticket or a commit.** Secrets go only into the
@@ -183,5 +183,5 @@ docker compose -f deploy/build/<id>/docker-compose.yml restart
 | `nothing was received` | The terminal paste never reached the hidden prompt | `--from-env-file ~/.env`, or pipe it from your Mac (Phase 5) |
 | "No tengo esa información" and a handoff | The FAQ does not cover the question: the agent never invents | Answer it in the questionnaire and run `build` again |
 | `subscription (OAuth) token` | A Claude Pro/Max login token was used | Create an API key at console.anthropic.com |
-| `not scoped to a workspace` | The key does not start with `sk-ant-api` | Create the key inside a workspace (or set `models.providers.anthropic.workspace_id`) |
+| `not tied to a workspace` | The key belongs to no workspace (its text alone does not tell) | Create the key inside a workspace (or set `models.providers.anthropic.workspace_id`) |
 | `git push` asks for a password and fails | GitHub refuses account passwords for git | `gh auth login` (browser) or a personal access token |

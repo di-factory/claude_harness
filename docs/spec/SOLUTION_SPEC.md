@@ -185,8 +185,9 @@ cannot change once set.
 
 An instance must name a real model for every role; a placeholder left by the pack
 (`<main-model-id>`) fails validation (`model_not_set`). Anthropic credentials are checked at
-start: a subscription (OAuth) token is refused, and a key that is not scoped to a workspace
-needs `models.providers.anthropic.workspace_id`.
+start: a subscription (OAuth) token is refused. A key that the API reports as not tied to a
+workspace gets the fix on its first call: a key created in a workspace, or
+`models.providers.anthropic.workspace_id`.
 
 The roles are `main`, `subagent`, `verifier`, `compaction`,
 `memory_extraction`, `router`, `title`, `ocr` (a vision model for the documents pack) and

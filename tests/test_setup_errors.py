@@ -9,7 +9,9 @@ from pathlib import Path
 import pytest
 
 from dif_general_harness.cli import main
-from dif_general_harness.providers.anthropic import AnthropicProvider
+from dif_general_harness.core.messages import Message
+from dif_general_harness.providers.anthropic import AnthropicProvider, ProviderSetupError
+from dif_general_harness.providers.base import ModelRequest
 from dif_general_harness.runtime import Instance, RuntimeOptions
 from dif_general_harness.runtime.instance import InstanceError
 from dif_general_harness.runtime.routing import RoutingError, check_anthropic_key
@@ -78,10 +80,35 @@ def test_secret_files_forgive_whitespace_and_empty_means_unset(tmp_path: Path) -
 def test_anthropic_credentials_are_checked_at_start() -> None:
     with pytest.raises(RoutingError, match="subscription"):
         check_anthropic_key("sk-ant-oat01-xyz", {})
-    with pytest.raises(RoutingError, match="workspace"):
-        check_anthropic_key("sk-ant-usr-xyz", {})
-    check_anthropic_key("sk-ant-usr-xyz", {"workspace_id": "wrkspc_1"})  # scoped explicitly
+    check_anthropic_key("sk-ant-usr-xyz", {})  # some of these are tied to a workspace: try it
     check_anthropic_key("sk-ant-api03-xyz", {})
     check_anthropic_key("sk-ant-oat01-xyz", {"base_url": "https://gateway.internal"})
     provider = AnthropicProvider("claude-haiku-4-5", api_key="k", workspace_id="wrkspc_1")
     assert provider.client.default_headers["anthropic-workspace-id"] == "wrkspc_1"
+
+
+async def test_a_key_without_a_workspace_gets_the_fix() -> None:
+    import anthropic
+    import httpx2 as httpx
+
+    message = "This API key is not scoped to a workspace, so this request must include..."
+    refused = anthropic.BadRequestError(
+        message, response=httpx.Response(400, request=httpx.Request("POST", "https://x")),
+        body=None,
+    )  # fmt: skip
+
+    class Messages:
+        def stream(self, **kw: object) -> object:
+            raise refused
+
+    class Client:
+        messages = Messages()
+
+        class beta:
+            messages = Messages()
+
+    provider = AnthropicProvider("claude-haiku-4-5", client=Client())  # type: ignore[arg-type]
+    request = ModelRequest(system="", messages=[Message.user("hola")])
+    with pytest.raises(ProviderSetupError, match="inside a workspace"):
+        async for _ in provider.stream(request):
+            pass

@@ -142,6 +142,16 @@ def _usage(u: Any) -> Usage:
     )
 
 
+WORKSPACE_HINT = (
+    "this Anthropic key is not tied to a workspace. Create a key inside a workspace at"
+    " console.anthropic.com (API Keys), or set models.providers.anthropic.workspace_id"
+)
+
+
+class ProviderSetupError(RuntimeError):
+    """The provider refused the credentials or settings; the message says how to fix them."""
+
+
 class AnthropicProvider:
     """Streams one Messages API call per loop turn."""
 
@@ -212,6 +222,10 @@ class AnthropicProvider:
                 attempt += 1
                 if attempt > self.max_json_retries:
                     raise
+            except anthropic.BadRequestError as exc:
+                if "workspace" in str(exc).lower():
+                    raise ProviderSetupError(WORKSPACE_HINT) from exc
+                raise
         details = getattr(final, "stop_details", None)
         yield ProviderMessage(
             message=Message(
