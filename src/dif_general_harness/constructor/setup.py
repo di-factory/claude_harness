@@ -3,7 +3,9 @@
 ``./setup.sh`` installs the tools and runs ``dif-general-harness setup``, which:
 
 1. stores the model API key once (``~/.dif/secrets``), refusing tokens that cannot work;
-2. asks what the client needs and picks the pack;
+2. asks what the client needs; a small model recommends the pack, says what it covers and
+   names the needs no pack covers (those go to the client's summary as Di-Factory design
+   work); without the model it falls back to word matching;
 3. runs the pack's questionnaire, the client's business included, with Di-Factory's
    defaults filled in (models; anything Di-Factory does not know yet is marked ``pending``);
 4. builds and validates the instance, and sends it one real test question;
@@ -17,16 +19,23 @@ is kept in ``<instance>.answers.yaml``, so a correction is "edit, run build agai
 
 from __future__ import annotations
 
+import asyncio
 import getpass
 import json
+import re
 import secrets
+import tempfile
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..core.messages import Message
+from ..providers.base import ModelProvider, ModelRequest, ProviderMessage
+from ..spec.errors import SpecError
 from ..spec.loader import PackCatalog, load_instance
 from ..tenancy import FileSecrets, default_secrets_dir, local_backend
-from .build import BuildResult, build
+from .build import BuildResult, _extends, build
 from .catalog import match
 from .deploy import REPO_ROOT, approve, check_approval, new_key, plan_docker, stage
 from .interview import Question
@@ -35,6 +44,66 @@ Ask = Callable[[str], str]
 DIFACTORY_DEFAULTS = {"main_model": "claude-sonnet-5-5", "fast_model": "claude-haiku-4-5"}
 TEST_QUESTION = {"es": "¿De qué se trata este negocio?", "en": "What is this business about?"}
 ONLINE_MARKER = Path(".dif") / "online"
+ADVISOR_MODEL = "claude-haiku-4-5"
+# what a draft instance lacks only because nobody answered yet; anything else is a conflict
+_UNANSWERED = {"missing_value", "invalid_value", "model_not_set", "unresolved_variable",
+               "missing_file"}  # fmt: skip
+Advisor = Callable[[str], ModelProvider]  # the API key -> a model to ask
+
+
+@dataclass
+class Advice:
+    packs: list[str]
+    covered: list[str] = field(default_factory=list)
+    gaps: list[str] = field(default_factory=list)
+    why: str = ""
+
+
+_ADVISOR_SYSTEM = """You help Di-Factory pick a solution pack for a client.
+Each pack is one ready-made product. One client instance runs ONE pack; recommend a second
+pack only when the client clearly needs it too (it becomes a second instance).
+Never claim a pack does something its description does not say.
+Answer with JSON only:
+{"packs": ["<pack id>", ...], "covered": ["<need the packs cover>", ...],
+ "gaps": ["<need no pack covers>", ...], "why": "<one sentence>"}
+"packs" may be empty when nothing fits. Write covered, gaps and why in the request's language."""
+
+
+def _pack_card(data: dict[str, Any]) -> str:
+    sol = data["solution"]
+    agents = "; ".join(
+        f"{name}: {a.get('description') or ''}" for name, a in data.get("agents", {}).items()
+    )
+    return (f"- {sol['id']} ({sol.get('name') or sol['id']}): {sol.get('description') or ''}"
+            f" Agents: {agents}")  # fmt: skip
+
+
+def parse_advice(text: str, known: set[str]) -> Advice | None:
+    """The advisor's JSON, keeping only packs that exist; None when it is not usable."""
+    found = re.search(r"\{.*\}", text, re.S)
+    if not found:
+        return None
+    try:
+        raw = json.loads(found.group(0))
+    except ValueError:
+        return None
+    if not isinstance(raw, dict):
+        return None
+
+    def strings(key: str) -> list[str]:
+        value = raw.get(key)
+        return [str(v) for v in value if str(v).strip()] if isinstance(value, list) else []
+
+    packs = [p for p in dict.fromkeys(strings("packs")) if p in known]
+    return Advice(packs, strings("covered"), strings("gaps"), str(raw.get("why") or ""))
+
+
+def parse_choice(text: str, count: int) -> list[int] | None:
+    """'1', '1,2', '1 and 2', '1 y 2' -> [0, 1]; None when a number is out of range."""
+    numbers = [int(n) for n in re.findall(r"\d+", text)]
+    if not numbers or any(not 1 <= n <= count for n in numbers):
+        return None
+    return [n - 1 for n in dict.fromkeys(numbers)]
 
 
 def _say(text: str = "") -> None:
@@ -61,6 +130,7 @@ class Setup:
         run: Callable[[list[str]], int] | None = None,
         public_url: str | None = None,
         root: Path = REPO_ROOT,
+        advisor: Advisor | None = None,
     ) -> None:
         self.root = root  # where deploy/build and .dif live (the repository)
         self.catalog = PackCatalog(roots=packs)
@@ -71,6 +141,9 @@ class Setup:
         self.run = run  # the CLI's main, to send the test message
         self.public_url = public_url
         self.pending: list[str] = []
+        self.advisor = advisor  # None: word matching only (tests, or no key)
+        self.key: str | None = None
+        self.gaps: list[str] = []
 
     # --- 1. the key ---------------------------------------------------------------------
 
@@ -102,28 +175,104 @@ class Setup:
             path = folder / "anthropic"
             path.write_text(value, encoding="utf-8")
             path.chmod(0o600)
-            _say(f"Saved in {path} (only you can read it). It is reused on every login.")
+            _say(f"Saved in {path}: {len(value)} characters, starts with {value[:10]}"
+                 " (only you can read it). It is reused on every login.")  # fmt: skip
             found = value
+        self.key = found
         return True
 
     # --- 2. the pack --------------------------------------------------------------------
 
-    def choose_pack(self) -> str | None:
+    def advise(self, request: str, packs: dict[str, dict[str, Any]]) -> Advice | None:
+        """Ask the small model which packs fit; None when it cannot answer."""
+        if self.advisor is None or not self.key or not request.strip():
+            return None
+        try:
+            model = self.advisor(self.key)
+        except Exception:  # e.g. the SDK is missing: word matching still works
+            return None
+        cards = "\n".join(_pack_card(packs[pid]) for pid in sorted(packs))
+        model_request = ModelRequest(
+            system=_ADVISOR_SYSTEM,
+            messages=[Message.user(f"Packs:\n{cards}\n\nThe client's need: {request}")],
+            model_role="fast",
+            max_tokens=1024,
+        )
+
+        async def ask() -> str:
+            final = ""
+            async for event in model.stream(model_request):
+                if isinstance(event, ProviderMessage):
+                    final = event.message.text()
+            return final
+
+        try:
+            text = asyncio.run(asyncio.wait_for(ask(), timeout=60))
+        except Exception as exc:  # any failure: fall back to word matching
+            _say(f"(The advisor model did not answer: {type(exc).__name__}. Using word matching.)")
+            return None
+        return parse_advice(text, set(packs))
+
+    def conflicts(self, pack_ids: list[str]) -> list[str]:
+        """Why these packs cannot run together in one instance (empty: they can)."""
+        if len(pack_ids) < 2:
+            return []
+        first = self.catalog.find(pack_ids[0]).data["solution"]
+        draft = {
+            "spec_version": "1", "kind": "instance",
+            "solution": {"id": "draft", "version": "1.0.0", "lob": first["lob"]},
+            "extends": [_extends(self.catalog, p) for p in pack_ids],
+            "tenant": {"id": "draft", "name": "draft"}, "values": {},
+        }  # fmt: skip
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "draft.json"
+            path.write_text(json.dumps(draft), encoding="utf-8")
+            try:
+                issues = load_instance(path, self.catalog).issues
+            except SpecError as exc:
+                issues = exc.issues
+        found = [i for i in issues if i.severity == "error" and i.code not in _UNANSWERED]
+        return list(dict.fromkeys(f"{i.code}: {i.message}" for i in found))
+
+    def choose_pack(self) -> list[str] | None:
         _step(2, "What does the client need?")
         packs = {layer.data["solution"]["id"]: layer.data for layer in self.catalog.latest()}
         request = self.ask("In a sentence (e.g. 'WhatsApp appointments for a dental clinic'): ")
-        found = [m.pack_id for m in match(self.catalog, request)] if request.strip() else []
-        options = found or sorted(packs)
-        if not found:
-            _say("No pack matched those words; these are all the packs:")
+        advice = self.advise(request, packs)
+        if advice is None:
+            found = [m.pack_id for m in match(self.catalog, request)] if request.strip() else []
+            advice = Advice(found[:1])
+        else:
+            if advice.why:
+                _say(f"\n{advice.why}")
+            if advice.covered:
+                _say("Covered: " + "; ".join(advice.covered))
+            if advice.gaps:
+                _say("Not covered by any pack yet (noted as Di-Factory design work): "
+                     + "; ".join(advice.gaps))  # fmt: skip
+        self.gaps = advice.gaps
+        options = advice.packs + sorted(p for p in packs if p not in advice.packs)
+        _say("\nPacks (★ recommended). One instance runs one pack; another need can be a"
+             " second client instance later:")  # fmt: skip
         for i, pid in enumerate(options, 1):
             sol = packs[pid]["solution"]
-            _say(f"  {i}. {sol.get('name') or pid}: {sol.get('description', '')[:90]}")
-        choice = self.ask(f"Which one? [1-{len(options)}, Enter = 1] ").strip() or "1"
-        if not choice.isdigit() or not 1 <= int(choice) <= len(options):
-            _say("Not a valid choice.")
-            return None
-        return options[int(choice) - 1]
+            star = "★" if pid in advice.packs else " "
+            _say(f" {star}{i}. {sol.get('name') or pid}: {(sol.get('description') or '')[:90]}")
+        default = "1"  # the first recommendation (or the first pack)
+        while True:
+            answer = self.ask(f"Which one? [1-{len(options)}, Enter = {default}] ")
+            picked = parse_choice(answer.strip() or default, len(options))
+            if picked is None:
+                _say(f"Type a number from 1 to {len(options)} (or several: 1,2).")
+                continue
+            chosen = [options[i] for i in picked]
+            problems = self.conflicts(chosen)
+            if not problems:
+                return chosen
+            _say("These packs cannot run together in one instance yet:")
+            for problem in problems[:5]:
+                _say(f"  - {problem}")
+            _say("Choose one now; the other can be a second client instance (run setup again).")
 
     # --- 3. the questionnaire -----------------------------------------------------------
 
@@ -146,13 +295,18 @@ class Setup:
             return "pending"  # Di-Factory fills it in later (adjust --set)
         return answer
 
-    def questionnaire(self, pack_id: str) -> BuildResult:
+    def questionnaire(self, pack_ids: list[str]) -> BuildResult:
         _step(3, "Questionnaire (the client's business, then a few settings)")
         _say("Answer in the client's language. Enter keeps a default; Di-Factory's own"
              " settings already have sensible defaults.")  # fmt: skip
-        variables = self.catalog.find(pack_id).data.get("variables", {})
+        variables = {k for p in pack_ids for k in self.catalog.find(p).data.get("variables", {})}
         defaults = {f"values.{k}": v for k, v in DIFACTORY_DEFAULTS.items() if k in variables}
-        return build(self.catalog, [pack_id], self.out, answers=defaults, ask=self._question)
+        result = build(self.catalog, pack_ids, self.out, answers=defaults, ask=self._question)
+        if self.gaps:
+            with result.summary_path.open("a", encoding="utf-8") as summary:
+                summary.write("\n## Needs not covered yet (Di-Factory design work)\n\n")
+                summary.writelines(f"- {gap}\n" for gap in self.gaps)
+        return result
 
     # --- 4. try it ----------------------------------------------------------------------
 
@@ -205,8 +359,6 @@ class Setup:
         approvers_path.parent.mkdir(parents=True, exist_ok=True)
         approvers_path.write_text(json.dumps(approvers, indent=2) + "\n", encoding="utf-8")
         _say("Jag signs exactly this solution (any later change needs a new signature).")
-        import tempfile
-
         with tempfile.TemporaryDirectory() as tmp:
             staged = stage(instance, self.catalog, Path(tmp) / "solution")
             record = approve(staged, Path(tmp) / "solution", "docker", key, "jag")
@@ -274,10 +426,10 @@ class Setup:
             self.try_it(reused)
             self.go_online(reused)
             return 0
-        pack_id = self.choose_pack()
-        if pack_id is None:
+        pack_ids = self.choose_pack()
+        if pack_ids is None:
             return 2
-        result = self.questionnaire(pack_id)
+        result = self.questionnaire(pack_ids)
         if not result.ok:
             _say("\nNot ready yet:")
             for problem in result.problems:
@@ -285,14 +437,17 @@ class Setup:
             for issue in result.resolved.issues if result.resolved else []:
                 if issue.severity == "error":
                     _say(f"  - {issue}")
-            _say(f"Edit {result.answers_path} and run: dif-general-harness build --pack"
-                 f" {pack_id} --answers {result.answers_path} --out {self.out}")  # fmt: skip
+            chosen = " ".join(f"--pack {p}" for p in pack_ids)
+            _say(f"Edit {result.answers_path} and run: dif-general-harness build {chosen}"
+                 f" --answers {result.answers_path} --out {self.out}")  # fmt: skip
             return 1
         self.try_it(result)
         self.go_online(result)
         _say("\nDone. Chat with it any time:")
         packs = " ".join(f"--packs {p}" for p in self.packs)
         _say(f"  uv run dif-general-harness console {result.spec_path} {packs}")
+        if self.gaps:
+            _say("Not covered yet (in the summary, for Di-Factory): " + "; ".join(self.gaps))
         return 0
 
 
@@ -300,8 +455,21 @@ def default_packs() -> list[Path]:
     return [REPO_ROOT / "docs" / "spec" / "examples"]
 
 
-def run_setup(args: Any, run: Callable[[list[str]], int] | None = None) -> int:
-    setup = Setup(args.packs or default_packs(), args.out, run=run, public_url=args.public_url)
+def anthropic_advisor(key: str) -> ModelProvider:
+    from ..providers.anthropic import AnthropicProvider
+
+    return AnthropicProvider(ADVISOR_MODEL, api_key=key, max_tokens=1024, prompt_cache=False)
+
+
+def run_setup(
+    args: Any,
+    run: Callable[[list[str]], int] | None = None,
+    advisor: Advisor | None = anthropic_advisor,
+) -> int:
+    setup = Setup(
+        args.packs or default_packs(), args.out, run=run, public_url=args.public_url,
+        advisor=advisor,
+    )  # fmt: skip
     try:
         return setup.run_all()
     except (KeyboardInterrupt, EOFError):

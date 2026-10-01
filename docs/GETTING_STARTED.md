@@ -12,7 +12,12 @@ git clone https://github.com/di-factory/claude_harness.git && cd claude_harness
 It installs what is missing (Docker, Caddy, uv), then guides you through:
 
 1. the Anthropic API key, stored once in `~/.dif/secrets`;
-2. what the client needs, which picks the pack;
+2. what the client needs, in a sentence: a small model (Haiku, a fraction of a cent) recommends
+   the pack (★), says what it covers and names what no pack covers yet; those gaps go into
+   the client's summary as Di-Factory design work. Enter takes the recommendation; without
+   the model it falls back to word matching. One instance runs one pack: when you pick
+   several (`1,2`), it checks first whether they can share an instance and, if not, asks you
+   to choose one (the other can be a second client: run the setup again);
 3. the questionnaire: the client's business (what they do, services, prices, address,
    policies) and a few settings, with Di-Factory's defaults filled in;
 4. the build, and one real test question to the new agent;
@@ -209,4 +214,5 @@ docker compose -f deploy/build/<id>/docker-compose.yml restart
 | "No tengo esa información" and a handoff | The FAQ does not cover the question: the agent never invents | Answer it in the questionnaire and run `build` again |
 | `subscription (OAuth) token` | A Claude Pro/Max login token was used | Create an API key at console.anthropic.com |
 | `not tied to a workspace` | The key belongs to no workspace (its text alone does not tell) | Create the key inside a workspace (or set `models.providers.anthropic.workspace_id`) |
+| `cannot run together in one instance yet` | Each pack sets its own tools, budgets and consent; two in one instance would loosen one of them | One pack per instance; set up the other need as a second client |
 | `git push` asks for a password and fails | GitHub refuses account passwords for git | `gh auth login` (browser) or a personal access token |
