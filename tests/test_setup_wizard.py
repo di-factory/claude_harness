@@ -11,7 +11,7 @@ import pytest
 from dif_general_harness.cli import main
 from dif_general_harness.constructor import pack_questions
 from dif_general_harness.constructor.deploy import check_approval
-from dif_general_harness.constructor.setup import Setup
+from dif_general_harness.constructor.setup import Setup, parse_choice
 from dif_general_harness.core.messages import Message
 from dif_general_harness.providers import FakeProvider
 from dif_general_harness.spec import PackCatalog
@@ -128,3 +128,60 @@ def test_subscription_tokens_are_refused(
     assert setup.model_key()
     assert "subscription (OAuth) token" in capsys.readouterr().out
     assert (home / ".dif" / "secrets" / "anthropic").read_text() == KEY
+
+
+def test_choices_accept_several_numbers() -> None:
+    assert parse_choice("1 and 2", 3) == [0, 1]
+    assert parse_choice("1 y 3", 3) == [0, 2] and parse_choice("2,2", 3) == [1]
+    assert parse_choice("4", 3) is None and parse_choice("one", 3) is None
+
+
+def test_the_advisor_recommends_and_names_the_gaps(
+    examples: Path, tmp_path: Path, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    secrets = home / ".dif" / "secrets"
+    secrets.mkdir(parents=True)
+    (secrets / "anthropic").write_text(KEY)
+    advice = {
+        "packs": [PACK, "no-such-pack"],
+        "covered": ["citas por WhatsApp"],
+        "gaps": ["cobros", "notas de terapia"],
+        "why": "La agenda es lo central.",
+    }
+    advisor = FakeProvider([Message.assistant("Here it is:\n" + json.dumps(advice))])
+    keys: list[str] = []
+
+    def factory(key: str) -> FakeProvider:
+        keys.append(key)
+        return advisor
+
+    replies = iter([
+        "", "terapeuta: citas, pagos y notas",  # keep the key; the need
+        "1 and 2",  # two packs that cannot share one instance...
+        "",  # ...so Enter takes the recommendation
+        *_replies(examples),
+    ])  # fmt: skip
+    setup = Setup([examples], tmp_path / "clients", ask=lambda _: next(replies), advisor=factory)
+    assert setup.run_all() == 0
+    out = capsys.readouterr().out
+    assert keys == [KEY] and advisor.requests[0].model_role == "fast"
+    assert PACK in advisor.requests[0].messages[0].text()  # it saw the catalog
+    assert "Not covered by any pack yet (noted as Di-Factory design work): cobros" in out
+    assert " ★1. " in out and "no-such-pack" not in out  # invented packs are dropped
+    assert "cannot run together in one instance yet" in out and "safety_weakened" in out
+    summary = tmp_path / "clients" / "clinica-sonrisa-pyme-appointment-agent.summary.md"
+    text = summary.read_text()
+    assert "## Needs not covered yet (Di-Factory design work)" in text
+    assert "- notas de terapia" in text
+
+
+def test_without_the_advisor_word_matching_still_works(
+    examples: Path, tmp_path: Path, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    broken = FakeProvider([RuntimeError("offline")])
+    setup = Setup([examples], tmp_path, ask=lambda _: "", advisor=lambda _: broken)
+    setup.key = KEY
+    replies = iter(["dental appointments on WhatsApp", ""])
+    setup.ask = lambda _: next(replies)
+    assert setup.choose_pack() == [PACK]
+    assert "did not answer: RuntimeError" in capsys.readouterr().out
