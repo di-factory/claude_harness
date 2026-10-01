@@ -1,8 +1,33 @@
 # Getting started: from a clean server to a live WhatsApp agent
 
-A step-by-step path on one Linux server (an AWS EC2 machine), using the example dental
-clinic as a stand-in client. Each phase ends with a checkpoint; don't move on until it holds.
-The "Common mistakes" section at the end lists what goes wrong and the exact fix.
+## The fast way: one command
+
+On a fresh Ubuntu server (an AWS EC2 machine with ports 80 and 443 open, see Phase 1):
+
+```bash
+git clone https://github.com/di-factory/claude_harness.git && cd claude_harness
+./setup.sh
+```
+
+It installs what is missing (Docker, Caddy, uv), then guides you through:
+
+1. the Anthropic API key, stored once in `~/.dif/secrets`;
+2. what the client needs, which picks the pack;
+3. the questionnaire: the client's business (what they do, services, prices, address,
+   policies) and a few settings, with Di-Factory's defaults filled in;
+4. the build, and one real test question to the new agent;
+5. on request, going online: it signs the solution (Jag's key, created on first use),
+   deploys it with Docker and serves it over HTTPS at `<public-ip>.sslip.io`, then prints
+   the WhatsApp webhook and the admin commands.
+
+Run it again at any time: it reuses the key and offers the clients already set up. Every
+answer is kept in `clients/<id>.answers.yaml`, so a correction is "edit, run build again".
+
+## The step-by-step way
+
+The same path, one piece at a time, using the example dental clinic as a stand-in client.
+Each phase ends with a checkpoint; don't move on until it holds. The "Common mistakes"
+section at the end lists what goes wrong and the exact fix.
 
 ## Before you start
 

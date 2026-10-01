@@ -320,7 +320,11 @@ def _approve_or_deploy(args: argparse.Namespace) -> int:
             target,
             approvers,
         )
-        plan = plan_docker(staged, out) if target == "docker" else plan_aws(staged, out)
+        plan = (
+            plan_docker(staged, out, public_url=getattr(args, "public_url", None))
+            if target == "docker"
+            else plan_aws(staged, out)
+        )
     except (DeployError, SpecError, OSError, ValueError) as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 3
@@ -751,6 +755,16 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
     build_cmd.add_argument("--out", type=Path, default=Path("instances"), help="output folder")
     build_cmd.add_argument("--packs", type=Path, action="append", help="folder containing packs")
 
+    setup = sub.add_parser(
+        "setup", help="guided setup: key, questionnaire, build, test, and optionally online"
+    )
+    setup.add_argument("--packs", type=Path, action="append", help="folder containing packs")
+    setup.add_argument("--out", type=Path, default=Path("clients"), help="where clients go")
+    setup.add_argument(
+        "--public-url", default=os.environ.get("DIF_PUBLIC_URL"),
+        help="https address to serve it at (setup.sh finds it from the server's public IP)",
+    )  # fmt: skip
+
     form = sub.add_parser(
         "questionnaire", help="constructor: a fill-in questionnaire for a client (build --answers)"
     )
@@ -804,10 +818,18 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
             cmd.add_argument("--approvers", type=Path, default=Path(".dif/approvers.json"))
             cmd.add_argument("--out", type=Path, help="default: deploy/build/<instance-id>")
             cmd.add_argument("--run", action="store_true", help="run the deploy commands too")
+            cmd.add_argument(
+                "--public-url",
+                help="docker: the HTTPS address a proxy serves; the app then listens on 127.0.0.1",
+            )
     args = parser.parse_args(argv)
 
     if args.group == "build":
         return _build(args)
+    if args.group == "setup":
+        from .constructor.setup import run_setup
+
+        return run_setup(args, run=lambda argv: main(argv, provider=provider))
     if args.group == "questionnaire":
         text = questionnaire(PackCatalog(roots=args.packs or _default_roots()), args.pack,
                              args.audience)  # fmt: skip
