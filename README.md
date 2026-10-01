@@ -130,8 +130,9 @@ No time goals: each milestone is done when its acceptance gate passes, and ships
 
 ## Getting started
 
-**New here?** Follow [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md): a clean server to a
-live WhatsApp agent, phase by phase, with checkpoints and the common mistakes.
+**New here?** On a fresh Ubuntu server: `git clone … && cd claude_harness && ./setup.sh`. It
+installs everything, runs the client questionnaire, tests the agent and can put it online over
+HTTPS. [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) explains each step.
 
 Available now (M1):
 

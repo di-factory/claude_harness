@@ -197,7 +197,11 @@ def release_tag(staged: ResolvedSpec, out: Path) -> str:
     return f"{staged.spec.solution.version}-{digest}"
 
 
-def plan_docker(staged: ResolvedSpec, out: Path, *, image: str | None = None) -> DeployPlan:
+def plan_docker(
+    staged: ResolvedSpec, out: Path, *, image: str | None = None, public_url: str | None = None
+) -> DeployPlan:
+    """With ``public_url`` (the HTTPS address a proxy such as Caddy serves), the service
+    checks provider signatures against it and listens on 127.0.0.1 only, behind the proxy."""
     sol = staged.spec.solution
     image = image or f"dif/{sol.id}:{release_tag(staged, out)}"
     secrets = required_secrets(staged)
@@ -218,9 +222,10 @@ def plan_docker(staged: ResolvedSpec, out: Path, *, image: str | None = None) ->
                     "DIF_SECRETS_BACKEND": "file",
                     "DIF_SECRETS_DIR": "/run/dif-secrets",
                     "DIF_DATABASE_URL": "postgresql://dif:dif@db:5432/dif",
+                    **({"DIF_PUBLIC_URL": public_url} if public_url else {}),
                 },
                 "volumes": ["./secrets:/run/dif-secrets:ro"],
-                "ports": ["8080:8080"],
+                "ports": ["127.0.0.1:8080:8080" if public_url else "8080:8080"],
                 "depends_on": {"db": {"condition": "service_healthy"}},
                 "restart": "unless-stopped",
             },
