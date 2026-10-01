@@ -18,7 +18,7 @@ from __future__ import annotations
 import os
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -143,6 +143,27 @@ class ChainSecrets:
             if value:
                 return value
         return None
+
+
+def load_env_file(path: Path, environ: MutableMapping[str, str] | None = None) -> list[str]:
+    """``KEY=VALUE`` lines of a ``.env`` file into the environment (``export`` and quotes
+    allowed, comments skipped). Variables already set win. Returns the names it set."""
+    env = os.environ if environ is None else environ
+    if not path.is_file():
+        return []
+    loaded = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, sep, value = line.removeprefix("export ").partition("=")
+        key, value = key.strip(), value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        if sep and key.isidentifier() and key not in env:
+            env[key] = value
+            loaded.append(key)
+    return loaded
 
 
 def default_secrets_dir(environ: Mapping[str, str] | None = None) -> Path:

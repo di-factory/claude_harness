@@ -88,8 +88,8 @@ def test_secrets_set_refuses_what_cannot_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     args = ["secrets", "set", "anthropic", "--dir", str(tmp_path)]
-    monkeypatch.setattr("sys.stdin", io.StringIO("sk-ant-usr-abc\n"))
-    assert main(args) == 2 and "not scoped to a workspace" in capsys.readouterr().err
+    monkeypatch.setattr("sys.stdin", io.StringIO("sk-ant-oat01-abc\n"))
+    assert main(args) == 2 and "subscription (OAuth) token" in capsys.readouterr().err
     monkeypatch.setattr("sys.stdin", io.StringIO("\n"))
     assert main(args) == 2 and "nothing was received" in capsys.readouterr().err
     assert not (tmp_path / "anthropic").exists()
@@ -105,3 +105,19 @@ def test_local_runs_find_stored_secrets_after_a_new_login(tmp_path: Path) -> Non
     env = {"DIF_SECRETS_DIR": str(tmp_path), "DIF_SECRET_ANTHROPIC": "from-env"}
     assert local_backend(env).get("anthropic") == "from-env"  # a variable still wins
     assert local_backend({"DIF_SECRETS_DIR": str(tmp_path)}).get("twilio") is None
+
+
+def test_a_dotenv_file_in_the_project_is_read(tmp_path: Path) -> None:
+    from dif_general_harness.tenancy import load_env_file
+
+    (tmp_path / ".env").write_text(
+        "# keys\nexport DIF_SECRET_ANTHROPIC='sk-ant-api03-x'\nDIF_SECRET_TWILIO=AC1:tok\n"
+        "DIF_SECRET_LLM=from-file\nnot a line\n"
+    )
+    env = {"DIF_SECRET_LLM": "already-set"}
+    loaded = load_env_file(tmp_path / ".env", env)
+    assert loaded == ["DIF_SECRET_ANTHROPIC", "DIF_SECRET_TWILIO"]
+    assert (
+        env["DIF_SECRET_ANTHROPIC"] == "sk-ant-api03-x" and env["DIF_SECRET_LLM"] == "already-set"
+    )
+    assert load_env_file(tmp_path / "missing.env", env) == []
