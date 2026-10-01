@@ -5,6 +5,7 @@ Routes:
 - ``POST /channels/{name}``: inbound messages. Gateway and Telegram requests are verified
   and queued (acknowledged at once); REST/web channels answer inline, and voice answers
   inline with TwiML (speak, listen, transfer).
+- ``GET /``: the business's landing page (from its FAQ) with the chat, when it has a web chat;
 - ``GET /chat`` (or ``/chat/{name}``): the web chat page of a ``web`` channel;
   ``GET /channels/{name}/outbox``: replies that arrived later (a person, a reminder).
 - ``POST /hooks/{path}``: webhook triggers, verified with their shared secret
@@ -31,6 +32,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from ..channels import ChannelError, Handshake, Inbound, RateLimited, Unauthorized, WebChannel
+from ..channels.landing import render_landing
 from ..channels.web_page import render_chat
 from ..observability import quality
 from ..runtime import Instance
@@ -170,6 +172,12 @@ def create_app(
         if name is None or name not in webs:
             raise HTTPException(404, "no web chat here")
         return name, webs[name]
+
+    @app.get("/")
+    async def landing() -> Response:
+        name, _ = web_channel(None)
+        page = render_landing(current().spec, current().resolved.data, name)
+        return Response(page, media_type="text/html; charset=utf-8")
 
     @app.get("/chat")
     @app.get("/chat/{name}")

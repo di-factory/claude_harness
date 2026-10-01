@@ -73,7 +73,8 @@ for _ in $(seq 1 60); do
     say "Online: https://$host"
     cat <<EOF
   Health:      https://$host/healthz
-  Web chat:    https://$host/chat   (link it from the client's website)
+  Landing:     https://$host/        (the business's page, built from its answers, with the chat)
+  Web chat:    https://$host/chat   (or link it from the client's own website)
   WhatsApp:    in Twilio, set "When a message comes in" to https://$host/channels/whatsapp (POST)
                then: uv run dif-general-harness secrets set twilio   (ACxxxx:auth_token)
                and run ./setup.sh again to copy it in

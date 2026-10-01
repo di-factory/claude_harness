@@ -194,11 +194,14 @@ curl https://<ip-with-dashes>.sslip.io/healthz
 
 **✅** `/healthz` answers from your browser.
 
-## Phase 8: The web chat
+## Phase 8: The landing page and the web chat
 
-Packs with a `web` channel (the appointment pack has one) serve a chat page at
-`https://<ip-with-dashes>.sslip.io/chat`: open it on your phone, or link it from the client's
-website ("Chat with us"). The appointment pack's chat is public: anyone with the link can
+Packs with a `web` channel (the appointment pack has one) also serve a landing page for the
+business at `https://<ip-with-dashes>.sslip.io/`: its name, what it does, its services,
+prices, location, policies and hours (all from the questionnaire, so it says nothing the
+agent would not), a WhatsApp button, and the chat in a panel. The chat alone is at `/chat`:
+open it on your phone, or link it from the client's own website ("Chat with us"). To change
+the page, change the answers and rebuild. The appointment pack's chat is public: anyone with the link can
 chat, each browser keeps its own conversation, messages are rate-limited, and the daily
 budget caps the spend. When the agent hands a conversation to a person, the person answers
 from the inbox (`/admin/sessions/<id>/reply`) and the reply appears in the visitor's page.

@@ -352,7 +352,10 @@ and capped at 2,000 characters, and the budgets still bound the spend. Only a `w
 can be public (`invalid_public`), and only the layer that declares the channel may make it
 public: a later layer cannot open an existing channel (`safety_weakened`). Replies that come
 later (a person from the inbox, a reminder) reach the page through
-`GET /channels/<name>/outbox`.
+`GET /channels/<name>/outbox`. An instance with a `web` channel also serves a landing page
+at `/`, built only from its own FAQ files (the first section introduces the business, the
+others become cards), `values.business_hours` and a gateway channel's number (a WhatsApp
+button).
 
 A `voice` channel (Twilio Programmable Voice; point the number's voice webhook at
 `/channels/<name>`) holds phone conversations with the same agents. Twilio recognizes the
