@@ -5,7 +5,7 @@ and deploy arrive in v2 (M2); the LLM-driven constructor agent pack and the Open
 build on these same functions.
 """
 
-from .build import BuildResult, build, pack_questions
+from .build import BuildResult, build, pack_questions, questionnaire
 from .catalog import PackMatch, match
 from .evals import EvalReport, EvalStore, RecordingApprover, run_suites
 from .interview import AnswerError, Question, interview, load_answers, parse, questions
@@ -24,6 +24,7 @@ __all__ = [
     "match",
     "pack_questions",
     "parse",
+    "questionnaire",
     "questions",
     "run_suites",
 ]

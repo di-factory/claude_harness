@@ -143,6 +143,11 @@ uv run pytest -q                                   # offline: no API keys needed
 uv run dif-general-harness spec validate docs/spec/examples/pyme-appointment-agent
 uv run dif-general-harness spec resolve docs/spec/examples/instances/clinica-sonrisa.json
 
+# onboarding: a questionnaire per side; the client's business answers become its FAQ
+uv run dif-general-harness questionnaire --pack pyme-appointment-agent --packs docs/spec/examples \
+    --for client --out client.yaml
+uv run dif-general-harness secrets set anthropic        # stored in ~/.dif/secrets
+
 # constructor v1: match a pack, interview, write + validate the instance spec
 uv run dif-general-harness build --packs docs/spec/examples --out instances \
     --request "appointment reminders for a dental clinic on WhatsApp"

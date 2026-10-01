@@ -285,6 +285,11 @@ Agents reach a corpus through the generated `knowledge.search_<corpus>` tool.
 - With `cite: true`, passages carry `kb:<id>` markers; a `citations` check
   (`min_citations`, `claims_must_cite`) runs on answers that used them. A failing answer
   gets one rewrite, then "not found". Contacts see `[1]` and a Sources list.
+- `questionnaire` (optional) lists business questions the client answers at onboarding:
+  `[{"id": "about", "question": "What does the clinic do?", "heading": "What is the clinic
+  about?", "required": true, "example": "..."}]`. `dif-general-harness questionnaire` writes
+  them (with the pack's variables) as a fill-in answers file; `build` turns the answers into
+  the client's own FAQ file for that corpus, which replaces the pack's sources.
 - Sources are synced when the instance opens and on `sync.schedule`:
   - `file` (a file or a folder), and absolute paths;
   - `s3` (`bucket`, `prefix`, `region`, `credentials`), or `"s3://bucket/prefix"`;

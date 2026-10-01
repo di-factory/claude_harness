@@ -70,6 +70,18 @@ PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
         lambda d: d["knowledge"]["corpora"]["docs"]["sync"].update(schedule="every 4 hours"),
     ),
     (
+        "pyme-appointment-agent",
+        "invalid_questionnaire",
+        lambda d: d["knowledge"]["corpora"]["clinic_faq"]["questionnaire"].append(
+            {"id": "about", "question": "Again?"}
+        ),
+    ),
+    (
+        "pyme-appointment-agent",
+        "invalid_questionnaire",
+        lambda d: d["knowledge"]["corpora"]["clinic_faq"]["questionnaire"].append({"id": "x"}),
+    ),
+    (
         "conversational-rag",
         "invalid_not_found",
         lambda d: d["knowledge"]["corpora"]["docs"]["retrieval"].update(not_found="guess"),

@@ -15,7 +15,9 @@ uv run mypy                               # strict
 uv run dif-general-harness spec validate docs/spec/examples/dev-cell
 uv run dif-general-harness spec resolve docs/spec/examples/instances/clinica-sonrisa.json
 uv run dif-general-harness spec copy INSTANCE.json clients/NAME [--id ID]   # with its files
-uv run dif-general-harness build --request "..." [--answers FILE] --packs docs/spec/examples
+uv run dif-general-harness questionnaire --pack ID --for client|difactory --out FILE  # onboarding
+uv run dif-general-harness build --request "..." [--answers FILE ...] --packs docs/spec/examples
+uv run dif-general-harness secrets set NAME | secrets check INSTANCE.json   # ~/.dif/secrets
 uv run dif-general-harness run|console|serve INSTANCE.json --packs DIR
 uv run dif-general-harness eval INSTANCE.json --packs DIR   # fresh instance per case; drift
 uv run dif-general-harness keys new jag | approve ... | deploy ... --target docker|aws

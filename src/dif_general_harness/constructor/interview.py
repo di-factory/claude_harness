@@ -7,6 +7,11 @@ when they are required, using their description. Placeholder defaults such as
 Besides the pack's variables, every instance needs a few facts of its own (tenant id and
 name, time zone, locale, instance id); those are the ``BASE`` questions.
 
+Packs can also ask about the **business** (``knowledge.corpora.<corpus>.questionnaire``):
+what it does, services and prices, location, policies. Those answers become the client's
+own FAQ for that corpus (see ``build``), so an agent knows the business from day one
+instead of handing every question to a person.
+
 Answers come from a person (``ask`` callback) or from an answers file (YAML or JSON), so the
 same interview runs interactively or in CI, and adjusting a live instance is "change the
 answers, rebuild".
@@ -49,6 +54,7 @@ class Question:
     options: list[Any] | None = None
     minimum: float | None = None
     maximum: float | None = None
+    heading: str | None = None  # business questions: the FAQ heading for the answer
 
     @property
     def name(self) -> str:
@@ -100,6 +106,30 @@ BASE = [
 ]
 
 
+def business_questions(corpora: dict[str, Any]) -> list[Question]:
+    """``knowledge.corpora.<corpus>.questionnaire`` items, as ``knowledge.<corpus>.<id>``."""
+    out: list[Question] = []
+    for corpus, cfg in corpora.items():
+        items = (cfg or {}).get("questionnaire") if isinstance(cfg, dict) else None
+        for n, item in enumerate(items or []):
+            if not isinstance(item, dict) or not item.get("id") or not item.get("question"):
+                continue  # validation reports it
+            out.append(
+                Question(
+                    key=f"knowledge.{corpus}.{item['id']}",
+                    text=str(item["question"]),
+                    kind="text",
+                    required=bool(item.get("required", False)),
+                    answered_by="client",
+                    group="business",
+                    order=n,
+                    example=item.get("example"),
+                    heading=item.get("heading"),
+                )
+            )
+    return out
+
+
 def questions(variables: dict[str, Variable]) -> list[Question]:
     out: list[Question] = []
     for name, var in variables.items():
@@ -139,8 +169,10 @@ def parse(q: Question, raw: Any) -> Any:
             raise AnswerError("an answer is required")
         return None
     kind = q.kind
-    if kind in {"string", "file"}:
+    if kind == "text":  # free text, possibly several lines (business answers)
         value: Any = str(raw).strip()
+    elif kind in {"string", "file"}:
+        value = str(raw).strip()
         if kind == "file" and not Path(value).exists():
             raise AnswerError(f"file {value} does not exist")
     elif kind == "id":
@@ -223,6 +255,10 @@ def load_answers(path: Path) -> dict[str, Any]:
         if key in {"tenant", "solution", "values"} and isinstance(value, dict):
             for sub, v in value.items():
                 flat[f"{key}.{sub}"] = v
+        elif key == "knowledge" and isinstance(value, dict):
+            for corpus, items in value.items():
+                for item, v in (items or {}).items() if isinstance(items, dict) else []:
+                    flat[f"knowledge.{corpus}.{item}"] = v
         else:
             flat[str(key)] = value
     return flat

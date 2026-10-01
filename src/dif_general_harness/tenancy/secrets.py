@@ -131,6 +131,35 @@ class AwsSecretsManager:
         return value
 
 
+class ChainSecrets:
+    """The first backend that has a value wins (environment first, then files)."""
+
+    def __init__(self, backends: list[SecretBackend]) -> None:
+        self.backends = backends
+
+    def get(self, name: str) -> str | None:
+        for backend in self.backends:
+            value = backend.get(name)
+            if value:
+                return value
+        return None
+
+
+def default_secrets_dir(environ: Mapping[str, str] | None = None) -> Path:
+    """Where local runs keep secret files: ``DIF_SECRETS_DIR``, else ``~/.dif/secrets``."""
+    env = os.environ if environ is None else environ
+    return Path(env.get("DIF_SECRETS_DIR") or Path.home() / ".dif" / "secrets")
+
+
+def local_backend(environ: Mapping[str, str] | None = None) -> SecretBackend:
+    """For command-line runs: ``DIF_SECRET_<NAME>`` variables, then the secrets folder, so a
+    key stored once with ``dif-general-harness secrets set`` survives every new login."""
+    env = os.environ if environ is None else environ
+    if env.get("DIF_SECRETS_BACKEND", "env") != "env":
+        return backend_from_env(env)
+    return ChainSecrets([EnvSecrets(env), FileSecrets(default_secrets_dir(env))])
+
+
 def backend_from_env(environ: Mapping[str, str] | None = None) -> SecretBackend:
     """``DIF_SECRETS_BACKEND``: ``env`` (default), ``file`` (``DIF_SECRETS_DIR``) or
     ``aws-secrets-manager`` (``DIF_SECRETS_PREFIX``, ``AWS_REGION``)."""

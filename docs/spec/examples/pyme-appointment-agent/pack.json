@@ -229,6 +229,29 @@
             "path": "knowledge/faq.md"
           }
         ],
+        "questionnaire": [
+          { "id": "about", "heading": "What is the clinic about?", "required": true,
+            "question": "What does the clinic do? Two or three sentences a patient would understand.",
+            "example": "A family dental clinic in Coyoacán with 3 dentists, open since 2012." },
+          { "id": "services", "heading": "Which services do you offer?", "required": true,
+            "question": "Which services do you offer, and roughly how long does each take?",
+            "example": "Cleaning (45 min), fillings (1 h), extractions, orthodontics, whitening." },
+          { "id": "prices", "heading": "How much do services cost?",
+            "question": "Prices you are happy to share by chat (or 'only in person').",
+            "example": "Cleaning $600 MXN; first consultation free." },
+          { "id": "location", "heading": "Where are you located?", "required": true,
+            "question": "Address, how to get there and parking.",
+            "example": "Av. Universidad 123, Col. Del Valle, CDMX. Parking in front." },
+          { "id": "payment", "heading": "Which payment methods do you accept?",
+            "question": "Payment methods, insurance and installments.",
+            "example": "Cash, debit and credit cards; 6 months without interest on orthodontics." },
+          { "id": "policies", "heading": "What is your cancellation policy?",
+            "question": "Cancellation, lateness and rescheduling rules.",
+            "example": "Cancel up to 24 h before at no cost; after 15 min late we reschedule." },
+          { "id": "emergencies", "heading": "What should I do in an emergency?",
+            "question": "What should a patient with an emergency do (phone, hours, nearest service)?",
+            "example": "Call 55 1234 5678; outside hours go to the nearest emergency room." }
+        ],
         "chunking": "layout",
         "retrieval": {
           "mode": "hybrid",

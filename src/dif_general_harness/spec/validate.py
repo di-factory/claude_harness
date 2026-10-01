@@ -245,6 +245,18 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
                 Cron.parse(cron)
             except CronError as exc:
                 err("invalid_sync_schedule", f"{where}.sync.schedule", str(exc))
+        items = corpus_cfg.get("questionnaire")
+        if items is not None:
+            ids = [i.get("id") for i in items] if isinstance(items, list) else []
+            bad = not isinstance(items, list) or any(
+                not isinstance(i, dict) or not i.get("question")
+                or not re.fullmatch(r"[a-z][a-z0-9_]{0,40}", str(i.get("id") or ""))
+                for i in items
+            )  # fmt: skip
+            if bad or len(ids) != len(set(ids)):
+                err("invalid_questionnaire", f"{where}.questionnaire",
+                    "a list of {id (lowercase), question, heading?, required?, example?}"
+                    " with unique ids")  # fmt: skip
         not_found = (corpus_cfg.get("retrieval") or {}).get("not_found")
         if not_found is not None and not_found not in ("say_so", "handoff"):
             err("invalid_not_found", f"{where}.retrieval", "not_found must be say_so or handoff")
