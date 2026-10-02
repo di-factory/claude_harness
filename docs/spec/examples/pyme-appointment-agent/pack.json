@@ -4,7 +4,7 @@
   "kind": "pack",
   "solution": {
     "id": "pyme-appointment-agent",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "name": "Appointment Agent",
     "lob": "pyme",
     "description": "Confirms, reminds and reschedules appointments for clinics and practices over WhatsApp/SMS.",
@@ -230,6 +230,7 @@
   "knowledge": {
     "corpora": {
       "clinic_faq": {
+        "description": "the business's own FAQ: what it does, services, prices, location, payment, policies",
         "sources": [
           {
             "type": "file",
@@ -237,8 +238,8 @@
           }
         ],
         "questionnaire": [
-          { "id": "about", "heading": "What is the clinic about?", "required": true,
-            "question": "What does the clinic do? Two or three sentences a patient would understand.",
+          { "id": "about", "heading": "What is the business about?", "required": true,
+            "question": "What does the business do? Two or three sentences a patient would understand.",
             "example": "A family dental clinic in Coyoacán with 3 dentists, open since 2012." },
           { "id": "services", "heading": "Which services do you offer?", "required": true,
             "question": "Which services do you offer, and roughly how long does each take?",

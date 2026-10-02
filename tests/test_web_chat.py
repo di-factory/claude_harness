@@ -96,6 +96,9 @@ def test_the_page_cannot_be_broken_by_the_business_name() -> None:
     page = render_chat("web", "</script><b>Hi</b>", locale="es-MX", public=True)
     assert "</script><b>" not in page and "&lt;/script&gt;" in page
     assert "Escribe tu mensaje" in page and '<html lang="es">' in page
+    # replies are shown as Markdown, but only after every character is escaped
+    assert 'if (kind === "bot") div.innerHTML = markdown(text)' in page
+    assert "const line = esc(raw.trim())" in page and 'text.split("\\n")' in page
 
 
 async def test_the_landing_page_opens_the_chat(tmp_path: Path) -> None:

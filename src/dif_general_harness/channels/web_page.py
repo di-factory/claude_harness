@@ -32,7 +32,7 @@ TEXTS = {
     },
 }
 
-_PAGE = """<!doctype html>
+_PAGE = r"""<!doctype html>
 <html lang="__LANG__">
 <head>
 <meta charset="utf-8">
@@ -57,6 +57,7 @@ border-radius:8px;padding:6px 10px;font:inherit;font-size:13px;cursor:pointer}
 #log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
 .msg{max-width:85%;padding:10px 13px;border-radius:14px;white-space:pre-wrap;
 overflow-wrap:anywhere}
+.bot{white-space:normal}.bot ul{margin:4px 0;padding-left:20px}.bot li{margin:2px 0}
 .bot{align-self:flex-start;background:var(--bot);border-bottom-left-radius:4px}
 .me{align-self:flex-end;background:var(--me);color:var(--me-ink);border-bottom-right-radius:4px}
 .info{align-self:center;color:var(--muted);font-size:13px;text-align:center}
@@ -100,9 +101,29 @@ function headers() {
   if (!CFG.public && code) h.Authorization = "Bearer " + code;
   return h;
 }
+function esc(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+function inline(s) {  // on escaped text: **bold**, *italic*
+  return s.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, "$1<em>$2</em>");
+}
+function markdown(text) {  // the agent's replies: paragraphs, lists, bold; nothing else
+  const out = []; let list = null;
+  for (const raw of text.split("\n")) {
+    const line = esc(raw.trim()); const item = line.match(/^(?:[-*•]|\d+[.)])\s+(.*)$/);
+    if (item) { if (!list) { list = []; out.push(list); } list.push(inline(item[1])); continue; }
+    list = null; out.push(line ? inline(line.replace(/^#{1,6}\s+/, "")) : "");
+  }
+  return out.map((b) => Array.isArray(b) ? "<ul>" + b.map((i) => "<li>" + i + "</li>").join("")
+    + "</ul>" : b).join("<br>").replace(/(<br>){3,}/g, "<br><br>")
+    .replace(/<br>(<ul>)/g, "$1").replace(/(<\/ul>)<br>/g, "$1");
+}
 function add(kind, text) {
   const div = document.createElement("div");
-  div.className = "msg " + kind; div.textContent = text;
+  div.className = "msg " + kind;
+  if (kind === "bot") div.innerHTML = markdown(text); else div.textContent = text;
   $("log").appendChild(div); $("log").scrollTop = $("log").scrollHeight;
   return div;
 }
