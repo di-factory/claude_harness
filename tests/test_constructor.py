@@ -231,7 +231,7 @@ def test_build_writes_a_valid_instance(examples: Path, tmp_path: Path) -> None:
     # the business answers became the client's FAQ, which replaces the pack's example
     [source] = spec["knowledge"]["corpora"]["clinic_faq"]["sources"]
     faq = (result.spec_path.parent / source["path"]).read_text()
-    assert "## What is the clinic about?\nClínica dental familiar" in faq
+    assert "## What is the business about?\nClínica dental familiar" in faq
     assert "## Which services do you offer?" in faq and "How much" not in faq  # unanswered
 
     summary = result.summary_path.read_text()
