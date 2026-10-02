@@ -92,6 +92,9 @@ def test_secrets_set_refuses_what_cannot_work(
     assert main(args) == 2 and "subscription (OAuth) token" in capsys.readouterr().err
     monkeypatch.setattr("sys.stdin", io.StringIO("\n"))
     assert main(args) == 2 and "nothing was received" in capsys.readouterr().err
+    twice = "sk-ant-api03-" + "k" * 90
+    monkeypatch.setattr("sys.stdin", io.StringIO(twice * 2 + "\n"))
+    assert main(args) == 2 and "holds 2 keys one after another" in capsys.readouterr().err
     assert not (tmp_path / "anthropic").exists()
     monkeypatch.setattr("sys.stdin", io.StringIO("ACxx:token\n"))
     assert main(["secrets", "set", "twilio", "--dir", str(tmp_path)]) == 0
