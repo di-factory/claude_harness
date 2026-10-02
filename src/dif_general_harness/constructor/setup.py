@@ -73,6 +73,11 @@ Answer with JSON only:
 "packs" may be empty when nothing fits. Write covered, gaps and why in the request's language."""
 
 
+_GAPS_SYSTEM = """The client chose these solution packs. Name the client's needs that these
+packs do not cover, judging only from the packs' descriptions; a need a chosen pack covers is
+not a gap. Write them in the request's language.
+Answer with JSON only: {"gaps": ["...", "..."]}"""
+
 _CONSULTANT_FOLLOW_UP = """You are a senior business consultant helping a small business set up
 the assistant that will answer its customers. The business answers a questionnaire; its
 answers become the assistant's FAQ, and the assistant never says anything the FAQ does not.
@@ -282,6 +287,23 @@ class Setup:
         )  # fmt: skip
         return parse_advice(text, set(packs)) if text is not None else None
 
+    def gaps_for(self, chosen: list[str], packs: dict[str, dict[str, Any]]) -> list[str]:
+        """The advisor's gaps were for the packs it recommended; another choice covers other
+        needs. Ask again for the chosen packs; without an answer, record no gaps rather than
+        wrong ones."""
+        cards = "\n".join(_pack_card(packs[pid]) for pid in chosen)
+        text = self._ask_model(
+            self.advisor, "advisor model", _GAPS_SYSTEM,
+            f"Chosen packs:\n{cards}\n\nThe client's need: {self.request}",
+            role="fast", max_tokens=600,
+        )  # fmt: skip
+        raw = _json_object(text or "") or {}
+        gaps = raw.get("gaps")
+        found = [str(g) for g in gaps if str(g).strip()] if isinstance(gaps, list) else []
+        if found:
+            _say("With that choice, not covered yet: " + "; ".join(found))
+        return found
+
     def conflicts(self, pack_ids: list[str]) -> list[str]:
         """Why these packs cannot run together in one instance (empty: they can)."""
         if len(pack_ids) < 2:
@@ -343,6 +365,8 @@ class Setup:
             chosen = [options[i] for i in picked]
             problems = self.conflicts(chosen)
             if not problems:
+                if advice.packs and set(chosen) != set(advice.packs):
+                    self.gaps = self.gaps_for(chosen, packs)
                 return chosen
             _say("These packs cannot run together in one instance yet:")
             for problem in problems[:5]:

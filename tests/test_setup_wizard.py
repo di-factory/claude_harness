@@ -263,3 +263,36 @@ def test_files_left_by_an_earlier_run_give_the_fix_not_a_traceback(
     out = capsys.readouterr().out
     assert "Cannot write /deploy/build/x/secrets/README.md" in out and "sudo chown -R" in out
     assert not (tmp_path / "repo" / ".dif" / "online").exists()  # setup.sh starts nothing
+
+
+def test_gaps_follow_the_pack_actually_chosen(
+    examples: Path, tmp_path: Path, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    advice = {"packs": ["service-desk-cell"], "covered": ["tickets"],
+              "gaps": ["Appointment scheduling via chat"], "why": "A help desk."}  # fmt: skip
+    advisor = FakeProvider([
+        Message.assistant(json.dumps(advice)),
+        Message.assistant('{"gaps": ["Online payments"]}'),  # asked again for the choice
+    ])  # fmt: skip
+    setup = Setup([examples], tmp_path, ask=lambda _: "", advisor=lambda _: advisor)
+    setup.key = KEY
+    options = [
+        "service-desk-cell",
+        *sorted(
+            p
+            for p in [
+                "conversational-rag",
+                "dev-cell",
+                "opc-c-suite",
+                PACK,
+                "pyme-receipt-processing",
+            ]
+        ),
+    ]
+    order = iter(["a clothing shop that books fittings", str(options.index(PACK) + 1)])
+    setup.ask = lambda _: next(order)
+    assert setup.choose_pack() == [PACK]
+    assert setup.gaps == ["Online payments"]  # not the gaps of the pack it recommended
+    assert "Chosen packs:" in advisor.requests[1].messages[0].text()
+    assert PACK in advisor.requests[1].messages[0].text()
+    assert "With that choice, not covered yet: Online payments" in capsys.readouterr().out
