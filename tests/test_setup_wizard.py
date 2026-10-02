@@ -241,3 +241,25 @@ def test_the_consultant_asks_follow_ups_and_recommends(
     summary = (folder / "clinica-sonrisa-pyme-appointment-agent.summary.md").read_text()
     assert "## The business consultant's recommendations" in summary
     assert "- Define a cancellation fee." in summary
+
+
+def test_files_left_by_an_earlier_run_give_the_fix_not_a_traceback(
+    examples: Path, tmp_path: Path, home: Path, monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:  # fmt: skip
+    clients = tmp_path / "clients"
+    replies = iter(["dental appointments on WhatsApp", "1", *_replies(examples)])
+    setup = Setup([examples], clients, ask=lambda _: next(replies), ask_secret=lambda _: KEY,
+                  public_url="https://3-148-79-116.sslip.io", root=tmp_path / "repo")  # fmt: skip
+    setup.model_key()
+    result = setup.questionnaire(setup.choose_pack() or [])
+
+    def locked(*_: Any, **__: Any) -> Any:
+        raise PermissionError(13, "Permission denied", "/deploy/build/x/secrets/README.md")
+
+    monkeypatch.setattr("dif_general_harness.constructor.setup.plan_docker", locked)
+    setup.ask = lambda _: "y"
+    assert setup.go_online(result) is None
+    out = capsys.readouterr().out
+    assert "Cannot write /deploy/build/x/secrets/README.md" in out and "sudo chown -R" in out
+    assert not (tmp_path / "repo" / ".dif" / "online").exists()  # setup.sh starts nothing

@@ -479,6 +479,15 @@ class Setup:
         folder.mkdir(parents=True, exist_ok=True)
         staged = stage(instance, self.catalog, folder / "solution")
         check_approval(record, folder / "solution", "docker", approvers)
+        try:
+            return self._stage_files(staged, folder, host)
+        except PermissionError as exc:
+            _say(f"Cannot write {exc.filename}: it belongs to the container's user from an"
+                 f" earlier run. Fix: sudo chown -R $USER {folder / 'secrets'}  then run"
+                 " ./setup.sh again.")  # fmt: skip
+            return None
+
+    def _stage_files(self, staged: Any, folder: Path, host: str) -> Path:
         plan = plan_docker(staged, folder, public_url=self.public_url)
         store = folder / "secrets"
         mine = local_backend()
