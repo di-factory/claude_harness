@@ -30,10 +30,10 @@ if have apt-get; then
 else
   echo "Not an apt system: install Docker, the compose plugin and Caddy yourself; continuing."
 fi
-if ! have uv; then
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  export PATH="$HOME/.local/bin:$PATH"
-fi
+export PATH="$HOME/.local/bin:$PATH"
+have uv || curl -LsSf https://astral.sh/uv/install.sh | sh
+# later logins find uv too (the installer does not always manage it)
+grep -qs 'HOME/.local/bin' ~/.bashrc || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 uv sync -q
 echo "ok"
 
