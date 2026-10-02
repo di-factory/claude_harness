@@ -360,7 +360,7 @@ padding-bottom:56px}.band{margin:0 16px 64px;padding:32px 24px}}
 <body>
 <nav><div class="wrap">
 <a class="brand" href="#">__LOGO__<span class="name">__NAME__</span></a>
-<a class="btn primary small" href="__CHAT_URL__" data-chat>__CHAT__</a>
+<a class="btn primary small" href="__CHAT_URL__">__CHAT__</a>
 </div></nav>
 <header class="hero"><div class="wrap">
 <div>
@@ -368,7 +368,7 @@ __EYEBROW__
 <h1>__NAME__</h1>
 <div class="intro">__INTRO__</div>
 <div class="actions">
-<a class="btn primary" href="__CHAT_URL__" data-chat>__CHAT__</a>
+<a class="btn primary" href="__CHAT_URL__">__CHAT__</a>
 __WHATSAPP__
 </div>
 </div>
@@ -377,7 +377,7 @@ __FACTS__
 <main><div class="wrap"><div class="grid">__CARDS__</div></div></main>
 <section class="band">
 <div><h2>__BAND__</h2><p>__BAND_SUB__</p></div>
-<a class="btn" href="__CHAT_URL__" data-chat>__CHAT__</a>
+<a class="btn" href="__CHAT_URL__">__CHAT__</a>
 </section>
 <footer><div class="wrap"><span>© __NAME__</span><span>__NOTE__</span></div></footer>
 <a id="bubble" class="btn primary" href="__CHAT_URL__" data-chat>__CHAT__</a>
@@ -405,8 +405,8 @@ function hide() {
   panel.classList.remove("open");
   bubble.textContent = "__CHAT__";
 }
-// Every chat button opens the chat; only the floating button also closes it. Phones open
-// the chat as its own page (the link itself).
+// The page's chat buttons are plain links to the chat page. The floating button opens the
+// chat in a panel on wide screens (and closes it); on phones it is a plain link too.
 document.querySelectorAll("[data-chat]").forEach((a) => a.addEventListener("click", (e) => {
   if (window.innerWidth < 700) return;
   e.preventDefault();

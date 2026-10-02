@@ -18,6 +18,7 @@ TEXTS = {
         "person": "Una persona del equipo te responderá aquí.",
         "note": "Asistente automático; una persona revisa cuando hace falta.",
         "new": "Nueva conversación",
+        "home": "Volver al sitio",
     },
     "en": {
         "hello": "Hi! How can I help you?",
@@ -30,6 +31,7 @@ TEXTS = {
         "person": "A person from the team will answer here.",
         "note": "Automated assistant; a person reviews when needed.",
         "new": "New conversation",
+        "home": "Back to the site",
     },
 }
 
@@ -52,6 +54,8 @@ flex-direction:column;
 background:var(--panel);border-left:1px solid var(--line);border-right:1px solid var(--line)}
 header{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;
 align-items:center;justify-content:space-between;gap:12px}
+#home{font-size:20px;line-height:1;text-decoration:none;color:var(--muted);padding:4px 6px;
+border-radius:8px}#home:hover{color:var(--ink);background:var(--line)}
 header h1{font-size:17px;margin:0;font-weight:600;flex:1;min-width:0;overflow:hidden;
 text-overflow:ellipsis;white-space:nowrap}
 .mark{height:30px;width:auto;max-width:90px;object-fit:contain;border-radius:6px}
@@ -76,7 +80,8 @@ footer{padding:0 16px 10px;color:var(--muted);font-size:12px;text-align:center}
 </head>
 <body>
 <div class="app">
-<header><h1>__TITLE__</h1><button id="new" type="button"></button></header>
+<header><a id="home" href="/" target="_top" aria-label="__HOME__">←</a>
+<h1>__TITLE__</h1><button id="new" type="button"></button></header>
 <div id="log" aria-live="polite"></div>
 <form id="form"><textarea id="text" rows="1" maxlength="2000"></textarea>
 <button id="send" type="submit"></button></form>
@@ -137,6 +142,7 @@ function remember(kind, text) {
   const h = history(); h.push([kind, text]); store.set(KEY + "-log", JSON.stringify(h.slice(-100)));
 }
 function say(kind, text) { add(kind, text); remember(kind, text); }
+if (window.top !== window) $("home").style.display = "none";  // inside the site's panel
 $("send").textContent = T.send; $("text").placeholder = T.placeholder;
 $("note").textContent = T.note; $("new").textContent = T.new;
 const past = history();
@@ -215,7 +221,8 @@ def render_chat(
             "</style>\n" + brand + (f'<link rel="icon" href="{icon}">' if icon else "") + "</head>",
             1,
         )
-        .replace("<header><h1>", f"<header>{mark}<h1>", 1)
+        .replace("<h1>__TITLE__", f"{mark}<h1>__TITLE__", 1)
+        .replace("__HOME__", html.escape(texts["home"]))
         .replace("__TITLE__", html.escape(title))
         .replace("__CONFIG__", script)
     )
