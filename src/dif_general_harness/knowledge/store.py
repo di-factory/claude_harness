@@ -192,9 +192,9 @@ class KnowledgeBase:
                 doc_id = uuid.uuid4().hex[:12]
                 await conn.execute(
                     "INSERT INTO knowledge_docs (id, tenant_id, instance_id, corpus, uri, origin,"
-                    " title, hash, version, updated_at, source_version)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)",
-                    (doc_id, *scope, uri, origin, title, digest, now, source_version),
+                    " title, hash, version, updated_at, source_version, body)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)",
+                    (doc_id, *scope, uri, origin, title, digest, now, source_version, text),
                 )
             else:
                 doc_id = str(row["id"])
@@ -202,8 +202,17 @@ class KnowledgeBase:
                 await conn.execute("DELETE FROM knowledge_vectors WHERE doc_id = ?", (doc_id,))
                 await conn.execute(
                     "UPDATE knowledge_docs SET title = ?, hash = ?, version = ?, updated_at = ?,"
-                    " origin = ?, source_version = ? WHERE id = ?",
-                    (title, digest, int(row["version"]) + 1, now, origin, source_version, doc_id),
+                    " origin = ?, source_version = ?, body = ? WHERE id = ?",
+                    (
+                        title,
+                        digest,
+                        int(row["version"]) + 1,
+                        now,
+                        origin,
+                        source_version,
+                        text,
+                        doc_id,
+                    ),
                 )
             for n, c in enumerate(chunks):
                 await conn.execute(
@@ -216,6 +225,46 @@ class KnowledgeBase:
         if embed and self.hybrid(corpus):
             await self.embed_missing(corpus)
         return doc_id, "added" if row is None else "updated"
+
+    async def _owner_kept(self, corpus: str, uri: str, release: str) -> bool:
+        row = await self.db.fetchone(
+            "SELECT origin, source_version FROM knowledge_docs"
+            " WHERE tenant_id = ? AND instance_id = ? AND corpus = ? AND uri = ?",
+            (self.scope.tenant_id, self.scope.instance_id, corpus, uri),
+        )
+        return row is not None and row["origin"] == "owner" and row["source_version"] == release
+
+    async def override(self, corpus: str, uri: str, text: str) -> tuple[str, str]:
+        """The business owner's own version of a document. It stands across restarts and
+        syncs until its source file changes (a new release from Di-Factory, built from the
+        answers), which then wins: keep the answers in step with what the owner changes."""
+        row = await self.db.fetchone(
+            "SELECT source_version FROM knowledge_docs"
+            " WHERE tenant_id = ? AND instance_id = ? AND corpus = ? AND uri = ?",
+            (self.scope.tenant_id, self.scope.instance_id, corpus, uri),
+        )
+        release = row["source_version"] if row is not None else None
+        return await self.put(corpus, uri, text, origin="owner", source_version=release)
+
+    async def document(self, corpus: str, uri: str) -> dict[str, Any] | None:
+        """One document with its text (older rows: rebuilt from their chunks)."""
+        self._check(corpus)
+        row = await self.db.fetchone(
+            "SELECT id, uri, origin, title, version, updated_at, body FROM knowledge_docs"
+            " WHERE tenant_id = ? AND instance_id = ? AND corpus = ? AND uri = ?",
+            (self.scope.tenant_id, self.scope.instance_id, corpus, uri),
+        )
+        if row is None:
+            return None
+        out = dict(row)
+        if out.pop("body") is None:
+            parts = await self.db.fetchall(
+                "SELECT text FROM knowledge_chunks WHERE doc_id = ? ORDER BY ord", (row["id"],)
+            )
+            out["text"] = "\n\n".join(str(p["text"]) for p in parts)
+        else:
+            out["text"] = row["body"]
+        return out
 
     async def delete(self, corpus: str, uri: str) -> bool:
         self._check(corpus)
@@ -356,7 +405,13 @@ class KnowledgeBase:
                 text = path.read_text(encoding="utf-8", errors="replace")
             uri = f"file:{path.resolve()}"
             seen.add(uri)
-            _, outcome = await self.put(corpus, uri, text, fmt=fmt, origin="file", embed=False)
+            release = hashlib.sha256(text.encode()).hexdigest()  # this version of the file
+            if await self._owner_kept(corpus, uri, release):
+                report.unchanged += 1  # the owner's edit stands until the file changes
+                continue
+            _, outcome = await self.put(
+                corpus, uri, text, fmt=fmt, origin="file", embed=False, source_version=release
+            )
             setattr(report, outcome, getattr(report, outcome) + 1)
         on_delete = str((spec.get("sync") or {}).get("on_delete") or "propagate")
         if on_delete == "propagate":

@@ -562,12 +562,13 @@ class Setup:
         staged = stage(instance, self.catalog, folder / "solution")
         check_approval(record, folder / "solution", "docker", approvers)
         try:
-            return self._stage_files(staged, folder, host)
+            staged_folder = self._stage_files(staged, folder, host)
         except PermissionError as exc:
             _say(f"Cannot write {exc.filename}: it belongs to the container's user from an"
                  f" earlier run. Fix: sudo chown -R $USER {folder / 'secrets'}  then run"
                  " ./setup.sh again.")  # fmt: skip
             return None
+        return staged_folder
 
     def _stage_files(self, staged: Any, folder: Path, host: str) -> Path:
         plan = plan_docker(staged, folder, public_url=self.public_url)
@@ -680,7 +681,10 @@ class Setup:
         if not self.try_it(result):
             return 1
         self.go_online(result)
-        _say("\nDone. Chat with it any time:")
+        _say("\nDone. Fine-tune it by running ./setup.sh again and reusing this client; when it"
+             " is final, hand it over with /handover in Claude Code (or: dif-general-harness"
+             f" handover {result.spec_path} --owner NAME --lang es).")  # fmt: skip
+        _say("Chat with it any time:")
         packs = " ".join(f"--packs {p}" for p in self.packs)
         _say(f"  uv run dif-general-harness console {result.spec_path} {packs}")
         if self.gaps:

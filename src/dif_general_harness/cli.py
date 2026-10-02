@@ -795,6 +795,40 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
     s_check.add_argument("--packs", type=Path, action="append", help="folder containing packs")
     s_check.add_argument("--dir", type=Path, help="default: DIF_SECRETS_DIR or ~/.dif/secrets")
 
+    adm = sub.add_parser("admin", help="operate a running instance: inbox, replies, FAQ, costs")
+    adm.add_argument("--url", help="the instance (default: DIF_ADMIN_URL or this machine's)")
+    adm.add_argument("--token-file", type=Path, help="default: the admin_token secret")
+    adm_sub = adm.add_subparsers(dest="command", required=True)
+    adm_sub.add_parser("status", help="online?, what waits for a person, spend this month")
+    adm_sub.add_parser("inbox", help="conversations handed to a person, approvals waiting")
+    a_show = adm_sub.add_parser("show", help="one conversation, message by message")
+    a_show.add_argument("session")
+    a_reply = adm_sub.add_parser("reply", help="answer a conversation as a person")
+    a_reply.add_argument("session")
+    a_reply.add_argument("text")
+    a_reply.add_argument("--by", default="owner", help="who answers (kept in the audit log)")
+    a_costs = adm_sub.add_parser("costs", help="model spend by day (list prices)")
+    a_costs.add_argument("--since", help="YYYY-MM-DD (default: the last 30 days)")
+    a_faq = adm_sub.add_parser("faq", help="show or replace the FAQ the assistant answers from")
+    a_faq.add_argument("action", choices=["show", "set"])
+    a_faq.add_argument(
+        "file", nargs="?", type=argparse.FileType("r", encoding="utf-8"), default="-",
+        help="for set: the new FAQ (Markdown), or - for standard input",
+    )  # fmt: skip
+    a_faq.add_argument("--corpus", help="default: the instance's first knowledge corpus")
+    a_faq.add_argument("--uri", help="which document, when the FAQ has several")
+
+    hand = sub.add_parser(
+        "handover", help="the documents a client's own Claude starts from, on their server"
+    )
+    hand.add_argument("path", type=Path, help="the client's instance JSON")
+    hand.add_argument("--packs", type=Path, action="append", help="folder containing packs")
+    hand.add_argument("--out", type=Path, help="default: ~/<tenant id>")
+    hand.add_argument("--url", help="the public address (default: DIF_PUBLIC_URL)")
+    hand.add_argument("--owner", help="who runs the business, e.g. Roberta")
+    hand.add_argument("--lang", help="the owner's language, e.g. es (default: the locale)")
+    hand.add_argument("--support", help="how the client reaches Di-Factory (email, phone)")
+
     keys = sub.add_parser("keys", help="approver keys (Ed25519)")
     keys_sub = keys.add_subparsers(dest="command", required=True)
     new = keys_sub.add_parser("new", help="create an approver key")
@@ -845,6 +879,10 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
         return 0
     if args.group == "secrets":
         return _secrets(args)
+    if args.group == "admin":
+        return _admin(args)
+    if args.group == "handover":
+        return _handover(args)
     if args.group == "keys":
         path, public = new_key(args.out, args.name)
         print(f"private key: {path} (keep it secret; only {args.name} uses it)")
@@ -913,6 +951,71 @@ def _secret_value(args: argparse.Namespace) -> str:
 def _describe_secret(name: str, value: str) -> str:
     shown = value[:10] if value.startswith("sk-") else value[:3]
     return f"{name}: {len(value)} characters, starts with {shown}..."
+
+
+def _handover(args: argparse.Namespace) -> int:
+    from .constructor.handover import build_handover
+
+    catalog = PackCatalog(roots=args.packs or _default_roots())
+    try:
+        tenant = json.loads(args.path.read_text(encoding="utf-8"))["tenant"]["id"]
+        out = args.out or Path.home() / tenant
+        url = args.url or _online_url()
+        result = build_handover(args.path, catalog, out, url=url, owner=args.owner,
+                                lang=args.lang, support=args.support)  # fmt: skip
+    except (OSError, KeyError, ValueError, SpecError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(f"Wrote {len(result.files)} files in {result.folder}:")
+    for path in result.files:
+        print(f"  {path.relative_to(result.folder)}")
+    print("\nHandover checks:")
+    for ok, what in result.checks:
+        print(f"  {'✓' if ok else '✗'} {what}")
+    print(f"\nNext: on the server, cd {result.folder} && claude  (the client logs in with their"
+          " own account). Di-Factory's remaining steps are in HANDOVER.md.")  # fmt: skip
+    return 0 if result.ready else 1
+
+
+def _online_url() -> str | None:
+    """The address ./setup.sh put the client online at, if any (.dif/online)."""
+    marker = Path(__file__).resolve().parents[2] / ".dif" / "online"
+    try:
+        host = marker.read_text(encoding="utf-8").splitlines()[1].strip()
+    except (OSError, IndexError):
+        return None
+    return f"https://{host}" if host else None
+
+
+def _admin(args: argparse.Namespace) -> int:
+    return asyncio.run(admin_command(args))
+
+
+async def admin_command(args: argparse.Namespace, client: Any = None) -> int:
+    """``admin ...``: prints the answer, or one line saying what is wrong (exit code 1)."""
+    import httpx2
+
+    from .service.admin_client import Admin, AdminError, admin_client, run
+
+    try:
+        if client is not None:
+            text = await run(Admin(client), args)
+        else:
+            token = (
+                args.token_file.read_text(encoding="utf-8").strip()
+                if args.token_file else local_backend().get("admin_token")
+            )  # fmt: skip
+            async with admin_client(args.url, token) as http:
+                text = await run(Admin(http), args)
+    except AdminError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except (OSError, httpx2.TransportError) as exc:  # the instance is not answering
+        print(f"error: cannot reach the instance ({exc}). Is it running? Try: admin status",
+              file=sys.stderr)  # fmt: skip
+        return 1
+    print(text)
+    return 0
 
 
 def _secrets(args: argparse.Namespace) -> int:

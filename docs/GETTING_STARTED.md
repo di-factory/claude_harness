@@ -229,6 +229,39 @@ docker compose -f deploy/build/<id>/docker-compose.yml restart
 **✅** You chat with the agent on WhatsApp; the admin API shows the inbox and costs
 (`Authorization: Bearer <admin_token>` on `/admin/inbox`, `/admin/costs?by=model`).
 
+## Handing the solution to the client
+
+The path for every client: `./setup.sh` once (the questionnaire), then as many fine-tuning
+rounds as needed (`./setup.sh` again, reuse the client: it rebuilds from the answers, signs and
+redeploys), and the handover last, when the solution is final and the client takes the server.
+In Claude Code on the server (`setup.sh` installs it), `/handover` leads it end to end: it
+confirms the solution, asks the owner's name and language, writes the documents and walks the
+checklist until it passes. The command underneath:
+
+```bash
+uv run dif-general-harness handover clients/<id>.json --owner Roberta --lang es \
+    --support "soporte@di-factory.mx"
+```
+
+It writes `~/<tenant id>/`, the folder the client opens Claude Code in (`cd ~/<tenant id>;
+claude`): `CLAUDE.md` (who Claude works for, the business, the addresses, the rules it never
+breaks), `docs/` (the business from the client's own answers, the solution, daily routines,
+what is not connected yet and its impact, what the client changes and what goes through
+Di-Factory), `GUIA.md` (one page for the client, in their language), `negocio` (the one
+command Claude runs: `./negocio status | inbox | show | reply | faq | costs`, i.e.
+`dif-general-harness admin` against the instance on this server), `.claude/` (permissions:
+replies to customers and FAQ changes always ask first; secrets, Docker, the harness are
+denied; and skills for the daily tasks) and `HANDOVER.md`, Di-Factory's checklist.
+
+It also checks what it can and exits 1 until it holds: no approver key (`jag.key`) left on the
+client's server, the admin token in place, a model key set, Claude Code installed. The rest is
+by hand (in `HANDOVER.md`): the server in the client's AWS account, their SSH access, their
+own model key and admin token, backups, a health alert.
+
+FAQ edits the client makes (`./negocio faq set`) stand across restarts until Di-Factory ships a
+new release of that FAQ; `docs/operacion.md` tells Claude to log each change in
+`solicitudes/faq-cambios.md` so the next release carries it.
+
 ## Common mistakes
 
 | You see | Why | Fix |

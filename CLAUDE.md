@@ -25,6 +25,9 @@ uv run dif-general-harness eval INSTANCE.json --packs DIR   # fresh instance per
 uv run dif-general-harness keys new jag | approve ... | deploy ... --target docker|aws
 uv run dif-general-harness adjust|upgrade INSTANCE.json ... --dry-run     # constructor v3
 uv run dif-general-harness costs INSTANCE.json --by vendor,model         # spend + quality
+uv run dif-general-harness admin status|inbox|show|reply|faq|costs         # a running instance
+uv run dif-general-harness handover INSTANCE.json --owner NAME --lang es  # the client's Claude
+                                          # the whole handover, guided: /handover (.claude/skills)
 uv run dif-general-harness fleet register|offer|rollout|rollback|status  # via the control plane
 uv run dif-general-harness control serve --key KEY                       # the control plane
 terraform -chdir=deploy/terraform/aws init -backend=false && terraform -chdir=deploy/terraform/aws test
@@ -107,7 +110,8 @@ sandbox). After v1.0 the listed gaps were closed (decisions 58–64): context co
 the intent router, file and batch triggers, the documents pack, sampled verification, the
 egress proxy and isolated extensions, hybrid retrieval with S3/Drive/web sources, and voice;
 then the web chat page and the setup's advisers (pack advisor, business consultant; 65–66) reading small FAQs whole (67), and
-the client's look from any brand material plus missing-key explanations (68).
+the client's look from any brand material plus missing-key explanations (68), and the
+handover to a client's own Claude with the `admin` commands and owner FAQ edits (69).
 Next: GCP and Azure profiles.
 Known gaps: streaming (speech-to-speech) voice, knowledge connectors beyond files, S3,
 Drive and web pages (SharePoint, Notion... push through the admin API), pgvector for very

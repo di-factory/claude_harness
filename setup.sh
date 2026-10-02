@@ -36,6 +36,9 @@ have uv || curl -LsSf https://astral.sh/uv/install.sh | sh
 # later logins find uv too (the installer does not always manage it)
 grep -qs 'HOME/.local/bin' ~/.bashrc || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 uv sync -q
+# Claude Code, for the client's own Claude (the handover folder); its native installer
+have claude || curl -fsSL https://claude.ai/install.sh | bash \
+  || echo "Claude Code was not installed; later: curl -fsSL https://claude.ai/install.sh | bash"
 echo "ok"
 
 # The public address: the EC2 metadata service, else an echo service.
@@ -93,6 +96,7 @@ for _ in $(seq 1 60); do
                and run ./setup.sh again to copy it in
   Admin API:   curl -H "Authorization: Bearer \$(cat ~/.dif/secrets/admin_token)" https://$host/admin/inbox
   Logs:        ${docker_cmd[*]} compose -f $folder/docker-compose.yml logs -f
+  Next:        fine-tune: ./setup.sh again (reuse the client); final: /handover in Claude Code
 EOF
     exit 0
   fi

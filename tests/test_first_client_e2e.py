@@ -52,6 +52,7 @@ def test_a_new_client_is_served_like_the_container_does(
     examples: Path, tmp_path: Path, home: Path
 ) -> None:
     folder = _set_up(examples, tmp_path)  # the setup runs its own event loop
+    assert not (home / "clinica-sonrisa").exists()  # the handover is its own, last step
     asyncio.run(_serve(folder, tmp_path))
 
 

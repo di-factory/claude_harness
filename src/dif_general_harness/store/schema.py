@@ -184,6 +184,9 @@ MIGRATIONS: list[list[str]] = [
             ON knowledge_vectors (tenant_id, instance_id, corpus)""",
         "CREATE INDEX IF NOT EXISTS knowledge_vectors_by_doc ON knowledge_vectors (doc_id)",
     ],
+    [  # a document's own text, so an owner can read and edit exactly what the agent knows
+        "ALTER TABLE knowledge_docs ADD COLUMN body TEXT",
+    ],
 ]
 
 

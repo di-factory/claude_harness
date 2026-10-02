@@ -304,7 +304,9 @@ Agents reach a corpus through the generated `knowledge.search_<corpus>` tool.
   that was listed completely; a source that is down removes nothing. Markdown, text, HTML,
   CSV, PDF, DOCX and XLSX are read (Google Docs and Slides as text, Sheets as CSV); images
   and scans are reported. Anything else (SharePoint, Notion...) pushes documents with
-  `PUT /admin/knowledge/{corpus}/documents`.
+  `PUT /admin/knowledge/{corpus}/documents`. With `"owner": true` that call is the business
+  owner's edit of an existing document (their FAQ): it stays over the source file's text
+  across restarts and syncs until the file itself changes (a new release), which then wins.
 - `retrieval.mode: hybrid` with an `embedding` model role (an OpenAI-compatible endpoint)
   also embeds every chunk. Searches then fuse keyword and vector rankings: a passage
   qualifies by `min_score` or by `min_similarity` (cosine, default 0.5), and its score is

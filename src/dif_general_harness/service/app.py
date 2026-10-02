@@ -484,14 +484,27 @@ def create_app(
             raise HTTPException(404, f"unknown corpus {name!r}")
         return kb
 
+    @app.get("/admin/knowledge", dependencies=[Depends(admin)])
+    async def knowledge_corpora() -> dict[str, list[str]]:
+        return {"corpora": sorted(current().spec.knowledge.corpora)}
+
+    @app.get("/admin/knowledge/{corpus}/document", dependencies=[Depends(admin)])
+    async def knowledge_document(corpus: str, uri: str) -> dict[str, Any]:
+        doc: dict[str, Any] | None = await corpus_of(corpus).document(corpus, uri)
+        if doc is None:
+            raise HTTPException(404, "no such document")
+        return doc
+
     @app.get("/admin/knowledge/{corpus}/documents", dependencies=[Depends(admin)])
     async def knowledge_documents(corpus: str) -> list[dict[str, Any]]:
         return list(await corpus_of(corpus).documents(corpus))
 
     @app.put("/admin/knowledge/{corpus}/documents", dependencies=[Depends(admin)])
     async def knowledge_put(corpus: str, body: dict[str, Any]) -> dict[str, Any]:
-        """Add or replace a document (``{"uri", "text", "title"?, "format"?}``): how sources
-        synced elsewhere (Drive, S3, a CMS) reach the index. Formats: markdown, text, html."""
+        """Add or replace a document (``{"uri", "text", "title"?, "format"?, "owner"?}``): how
+        sources synced elsewhere (Drive, S3, a CMS) reach the index. Formats: markdown, text,
+        html. ``"owner": true`` is the business owner's edit of a document (its FAQ): it stays
+        over the source file's text until that file changes."""
         kb = corpus_of(corpus)
         uri, text, fmt = body.get("uri"), body.get("text"), body.get("format", "markdown")
         if not isinstance(uri, str) or not uri or not isinstance(text, str):
@@ -499,7 +512,10 @@ def create_app(
         if fmt not in ("markdown", "text", "html"):
             raise HTTPException(400, "format must be markdown, text or html")
         title = body.get("title") if isinstance(body.get("title"), str) else None
-        doc_id, outcome = await kb.put(corpus, uri, text, fmt=fmt, title=title)
+        if body.get("owner") is True:  # the business owner's edit: kept over the file's text
+            doc_id, outcome = await kb.override(corpus, uri, text)
+        else:
+            doc_id, outcome = await kb.put(corpus, uri, text, fmt=fmt, title=title)
         await current().audit.record(
             scope, "admin", f"knowledge_{outcome}", f"knowledge/{corpus}", {"uri": uri}
         )
