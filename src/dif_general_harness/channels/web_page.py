@@ -187,7 +187,7 @@ setInterval(poll, 8000);
 
 def render_chat(
     channel: str, title: str, *, locale: str | None, public: bool,
-    color: str | None = None, logo: str | None = None,
+    color: str | None = None, logo: str | None = None, icon: str | None = None,
 ) -> str:  # fmt: skip
     """The chat page; ``color`` and ``logo`` come from the instance's branding."""
     texts = TEXTS.get((locale or "en")[:2], TEXTS["en"])
@@ -210,7 +210,11 @@ def render_chat(
         mark = f'<img class="mark" src="{html.escape(logo)}" alt="">'
     return (
         _PAGE.replace("__LANG__", html.escape((locale or "en")[:2]))
-        .replace("</style>\n</head>", "</style>\n" + brand + "</head>", 1)
+        .replace(
+            "</style>\n</head>",
+            "</style>\n" + brand + (f'<link rel="icon" href="{icon}">' if icon else "") + "</head>",
+            1,
+        )
         .replace("<header><h1>", f"<header>{mark}<h1>", 1)
         .replace("__TITLE__", html.escape(title))
         .replace("__CONFIG__", script)

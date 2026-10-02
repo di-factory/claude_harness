@@ -104,6 +104,20 @@ def _theme(spec: SolutionSpec) -> str:
     )
 
 
+def favicon(spec: SolutionSpec) -> str:
+    """The tab icon: the logo, else a dot in the brand color (and no 404 for /favicon.ico)."""
+    logo = spec.branding.logo if spec.branding else None
+    if logo and logo.startswith("data:image/"):
+        return html.escape(logo)
+    colors = spec.branding.colors if spec.branding and spec.branding.colors else None
+    color = _hex(colors.primary if colors else None, DEFAULT_PRIMARY)
+    svg = (
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'>"
+        f"<circle cx='8' cy='8' r='7' fill='{color}'/></svg>"
+    )
+    return "data:image/svg+xml," + quote(svg)
+
+
 def _logo(spec: SolutionSpec, name: str) -> str:
     logo = spec.branding.logo if spec.branding else None
     if logo and logo.startswith("data:image/"):
@@ -229,6 +243,7 @@ def render_landing(spec: SolutionSpec, data: dict[str, Any], chat: str) -> str:
         _PAGE.replace("__LANG__", html.escape(locale))
         .replace("__THEME__", _theme(spec))
         .replace("__LOGO__", _logo(spec, name))
+        .replace("__FAVICON__", favicon(spec))
         .replace("__NAME__", html.escape(name))
         .replace("__INTRO__", _paragraphs(intro[1]) if intro else "")
         .replace("__FACTS__", facts_box)
@@ -250,6 +265,7 @@ _PAGE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__NAME__</title>
+<link rel="icon" href="__FAVICON__">
 <style>
 :root{__THEME__;--bg:#fbfaf7;--panel:#ffffff;--ink:#17171a;--muted:#5d5d63;--line:#e9e7e1;
 --shadow:0 1px 2px rgba(20,20,30,.05),0 8px 28px rgba(20,20,30,.07)}
@@ -328,7 +344,10 @@ gap:12px;flex-wrap:wrap}
 #panel{position:fixed;right:20px;bottom:88px;width:390px;height:min(620px,calc(100vh - 120px));
 border:1px solid var(--line);border-radius:20px;overflow:hidden;background:var(--panel);
 box-shadow:0 18px 50px rgba(0,0,0,.25);z-index:10;display:none}
-#panel.open{display:block}#panel iframe{width:100%;height:100%;border:0}
+#panel.open{display:block;animation:pop .22s ease-out}
+@keyframes pop{from{opacity:0;transform:translateY(12px) scale(.98)}
+to{opacity:1;transform:none}}
+#panel iframe{width:100%;height:100%;border:0}
 @media (max-width:560px){nav .btn{display:none}}
 @media (max-width:820px){.hero .wrap{grid-template-columns:1fr;gap:28px;padding-top:56px;
 padding-bottom:56px}.band{margin:0 16px 64px;padding:32px 24px}}
@@ -366,18 +385,34 @@ __FACTS__
 <script>
 const panel = document.getElementById("panel");
 const bubble = document.getElementById("bubble");
-function toggle(e) {
-  if (window.innerWidth < 700) return;  // phones: the chat opens as its own page
-  e.preventDefault();
-  if (!panel.firstChild) {
-    const frame = document.createElement("iframe");
-    frame.src = bubble.getAttribute("href"); frame.title = bubble.textContent;
-    panel.appendChild(frame);
-  }
-  const open = panel.classList.toggle("open");
-  bubble.textContent = open ? "__CLOSE__" : "__CHAT__";
+function focusChat(frame) {
+  try { frame.contentWindow.document.getElementById("text").focus(); } catch (e) {}
 }
-document.querySelectorAll("[data-chat]").forEach((a) => a.addEventListener("click", toggle));
+function show() {
+  let frame = panel.querySelector("iframe");
+  if (!frame) {
+    frame = document.createElement("iframe");
+    frame.src = bubble.getAttribute("href"); frame.title = bubble.textContent;
+    frame.addEventListener("load", () => focusChat(frame));
+    panel.appendChild(frame);
+  } else {
+    focusChat(frame);
+  }
+  panel.classList.add("open");
+  bubble.textContent = "__CLOSE__";
+}
+function hide() {
+  panel.classList.remove("open");
+  bubble.textContent = "__CHAT__";
+}
+// Every chat button opens the chat; only the floating button also closes it. Phones open
+// the chat as its own page (the link itself).
+document.querySelectorAll("[data-chat]").forEach((a) => a.addEventListener("click", (e) => {
+  if (window.innerWidth < 700) return;
+  e.preventDefault();
+  if (a === bubble && panel.classList.contains("open")) hide(); else show();
+}));
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") hide(); });
 </script>
 </body>
 </html>
