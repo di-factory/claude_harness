@@ -32,7 +32,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from ..channels import ChannelError, Handshake, Inbound, RateLimited, Unauthorized, WebChannel
-from ..channels.landing import render_landing
+from ..channels.landing import favicon, render_landing
 from ..channels.web_page import render_chat
 from ..observability import quality
 from ..runtime import Instance
@@ -191,7 +191,7 @@ def create_app(
         page = render_chat(
             name, str(title), locale=spec.solution.locale, public=adapter.public,
             color=brand.colors.primary if brand and brand.colors else None,
-            logo=brand.logo if brand else None,
+            logo=brand.logo if brand else None, icon=favicon(spec),
         )  # fmt: skip
         return Response(page, media_type="text/html; charset=utf-8")
 
