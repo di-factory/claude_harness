@@ -101,7 +101,7 @@ def test_a_reused_client_takes_the_pack_updates(
     faq.write_text(old)  # a client built before the pack's wording changed
     answers = clients / "clinica-sonrisa-pyme-appointment-agent.answers.yaml"
     answers.write_text(answers.read_text().replace("Limpieza", "Limpieza dental"))
-    replies = iter(["", "1", "", "n"])  # keep the key, client 1, rebuild (Enter), not online
+    replies = iter(["", "1", "", "#4a1450", "n"])  # key, client 1, rebuild, a new look, offline
     run = lambda argv: main(argv, provider=FakeProvider([Message.assistant("Hola.")]))  # noqa: E731
     again = Setup([examples], clients, ask=lambda _: next(replies), run=run,
                   public_url=URL, root=tmp_path / "repo")  # fmt: skip
@@ -112,6 +112,8 @@ def test_a_reused_client_takes_the_pack_updates(
     assert "Rebuilt clinica-sonrisa-pyme-appointment-agent" in capsys.readouterr().out
     spec = json.loads((clients / "clinica-sonrisa-pyme-appointment-agent.json").read_text())
     assert spec["values"]["main_model"] == "claude-sonnet-5-5"  # nothing else lost
+    assert spec["branding"] == {"colors": {"primary": "#4a1450"}}  # the look given on reuse
+    assert "branding" in answers.read_text()  # kept for the next rebuild
 
 
 def test_a_client_that_cannot_answer_is_never_put_online(
@@ -122,7 +124,7 @@ def test_a_client_that_cannot_answer_is_never_put_online(
     assert "[needs: its own openai-compatible model endpoint (not set up here)]" in out
     marker = tmp_path / "repo" / ".dif" / "online"
     marker.unlink()  # setup.sh removes it before every run
-    replies = iter(["", "1", "", "y"])  # keep the key, client 1, rebuild, online if it can
+    replies = iter(["", "1", "", "", "y"])  # key, client 1, rebuild, same look, online
     broken = Setup([examples], tmp_path / "clients", ask=lambda _: next(replies),
                    run=lambda argv: 2,  # "cannot start: secrets.llm: not set", say
                    public_url=URL, root=tmp_path / "repo")  # fmt: skip

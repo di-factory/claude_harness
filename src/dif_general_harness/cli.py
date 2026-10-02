@@ -20,10 +20,12 @@ import argparse
 import asyncio
 import dataclasses
 import json
+import operator
 import os
 import shutil
 import sys
 import tempfile
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +47,7 @@ from .constructor.deploy import (
     plan_docker,
     stage,
 )
+from .constructor.impact import missing as impact_of
 from .constructor.interview import Question
 from .core.events import ErrorEvent, TextDelta, ToolCallFinished, ToolCallStarted, TurnEnded
 from .observability import UsageStore, quality
@@ -952,8 +955,11 @@ def _secrets(args: argparse.Namespace) -> int:
         value = (env.get(name) if env is not None else None) or files.get(name) or ""
         if not value:
             missing += 1
-            print(f"  ✗ {name}: not set ({decl.description}). Run: dif-general-harness secrets"
-                  f" set {name}")  # fmt: skip
+            [item] = impact_of(resolved.spec, resolved.data, partial(operator.ne, name))
+            print(f"  ✗ {name}: not set ({decl.description})")
+            for effect in item.impact:
+                print(f"      without it: {effect}")
+            print(f"      how to get it: {item.how}")
             continue
         problem = ""
         if name == "anthropic":

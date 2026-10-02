@@ -335,6 +335,18 @@ class Ledger(Strict):
 # --- the spec --------------------------------------------------------------------
 
 
+class BrandColors(Strict):
+    primary: str | None = None  # "#1f5f4a": buttons, headings, the chat
+    accent: str | None = None  # a second color for highlights
+
+
+class Branding(Strict):
+    """The client's look on the landing page and the chat (see constructor/brand.py)."""
+
+    colors: BrandColors | None = None
+    logo: str | None = None  # a data:image/...;base64 URI, so it is signed with the solution
+
+
 class SolutionSpec(Strict):
     schema_: str | None = Field(default=None, alias="$schema")
     spec_version: Literal["1"]
@@ -361,6 +373,7 @@ class SolutionSpec(Strict):
     workspaces: dict[str, dict[str, Any]] = Field(default_factory=dict)
     ledger: Ledger | None = None
     extensions: list[str] = Field(default_factory=list)
+    branding: Branding | None = None
 
 
 TOP_LEVEL_KEYS = {f.alias or name for name, f in SolutionSpec.model_fields.items()}

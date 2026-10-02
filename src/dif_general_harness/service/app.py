@@ -184,9 +184,14 @@ def create_app(
     async def chat_page(name: str | None = None) -> Response:
         name, adapter = web_channel(name)
         spec = current().spec
+        values = current().resolved.data.get("values") or {}
+        title = (values.get("business_name") or (spec.tenant.name if spec.tenant else None)
+                 or spec.solution.name or "Chat")  # fmt: skip
+        brand = spec.branding
         page = render_chat(
-            name, (spec.tenant.name if spec.tenant else None) or spec.solution.name or "Chat",
-            locale=spec.solution.locale, public=adapter.public,
+            name, str(title), locale=spec.solution.locale, public=adapter.public,
+            color=brand.colors.primary if brand and brand.colors else None,
+            logo=brand.logo if brand else None,
         )  # fmt: skip
         return Response(page, media_type="text/html; charset=utf-8")
 

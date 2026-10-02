@@ -59,6 +59,7 @@ packs/pyme-appointment-agent/
 | `extensions` | ○ | ○ | Python modules for logic the spec cannot express (§8) |
 | `workspaces` | ○ | ○ | sandboxed working copies (for example a git repo) and the executor they run in (§5.14) |
 | `ledger` | ○ | ○ | the shared task ledger for agent teams: fields, backend, who can see it (§5.15) |
+| `branding` | – | ○ | the client's look on the landing page and the web chat: colors and logo (§5.17) |
 
 ## 3. References and expressions
 
@@ -628,6 +629,26 @@ An outcome case uses `setup.message` and `expect` (`tools_called`, `must_not`,
 cannot check is skipped with the reason, never passed. Results are stored per config
 version, and cases that passed in the previous run and fail now are reported as
 regressions.
+
+### 5.17 `branding`
+
+```json
+"branding": {
+  "colors": { "primary": "#4a1450", "accent": "#cc3c84" },
+  "logo": "data:image/png;base64,iVBORw0..."
+}
+```
+
+The landing page (`/`) and the web chat use it: the primary color for buttons, icons and the
+visitor's messages (text on it is white or near-black, whichever reads), the accent for
+highlights, and the logo in their headers (without one, the business's initial). The setup
+fills it from whatever brand material the client has (`constructor/brand.py`): logos and
+photos (their pixels), SVGs, CSS or JSON themes and any text (their color codes), PDF and Word
+documents (codes in their text), and PowerPoint, Word and Excel files (their theme palette).
+Typed or written colors win over sampled ones; near-white, near-black and greys are never the
+primary. The logo is re-encoded small and stored inline, so it is signed with the solution;
+a remote URL is refused (`invalid_branding`), as is any color that is not `#rrggbb`. The
+answers file keeps it, so a rebuild keeps the look.
 
 ## 6. Validation (what the loader enforces)
 

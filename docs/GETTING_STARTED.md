@@ -18,12 +18,17 @@ It installs what is missing (Docker, Caddy, uv), then guides you through:
    the model it falls back to word matching. One instance runs one pack: when you pick
    several (`1,2`), it checks first whether they can share an instance and, if not, asks you
    to choose one (the other can be a second client: run the setup again);
-3. the questionnaire: the client's business (what they do, services, prices, address,
+3. the client's look (optional): give it any brand material — a logo, photos, a palette, a
+   brand guide (PDF, slides, Word), a CSS theme, a folder of them, or colors like `#4a1450`
+   — and the landing page and the chat take its colors and logo;
+   then the questionnaire: the client's business (what they do, services, prices, address,
    policies) and a few settings, with Di-Factory's defaults filled in. On request a business
    consultant (Opus, a few cents; `DIF_CONSULTANT_MODEL` picks another model) asks one
    follow-up when an answer is too thin for the agent to use, and at the end recommends what
    the business should still define (kept in the client's summary);
-4. the build, and one real test question to the new agent;
+4. the build, and one real test question to the new agent; then, for each key that is not set
+   yet (WhatsApp, Google Calendar...), what it is, what stays off without it and how to get
+   it (also in the client's summary, and in `secrets check`);
 5. on request, going online: it signs the solution (Jag's key, created on first use),
    deploys it with Docker and serves it over HTTPS at `<public-ip>.sslip.io`, then prints
    the web chat address (`https://<public-ip>.sslip.io/chat`), the WhatsApp webhook and the

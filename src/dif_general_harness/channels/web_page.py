@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 
 TEXTS = {
     "es": {
@@ -51,7 +52,9 @@ flex-direction:column;
 background:var(--panel);border-left:1px solid var(--line);border-right:1px solid var(--line)}
 header{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;
 align-items:center;justify-content:space-between;gap:12px}
-header h1{font-size:17px;margin:0;font-weight:600}
+header h1{font-size:17px;margin:0;font-weight:600;flex:1;min-width:0;overflow:hidden;
+text-overflow:ellipsis;white-space:nowrap}
+.mark{height:30px;width:auto;max-width:90px;object-fit:contain;border-radius:6px}
 header button{background:none;border:1px solid var(--line);color:var(--muted);
 border-radius:8px;padding:6px 10px;font:inherit;font-size:13px;cursor:pointer}
 #log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
@@ -182,7 +185,11 @@ setInterval(poll, 8000);
 """
 
 
-def render_chat(channel: str, title: str, *, locale: str | None, public: bool) -> str:
+def render_chat(
+    channel: str, title: str, *, locale: str | None, public: bool,
+    color: str | None = None, logo: str | None = None,
+) -> str:  # fmt: skip
+    """The chat page; ``color`` and ``logo`` come from the instance's branding."""
     texts = TEXTS.get((locale or "en")[:2], TEXTS["en"])
     config = {
         "channel": channel,
@@ -193,8 +200,18 @@ def render_chat(channel: str, title: str, *, locale: str | None, public: bool) -
     }
     # "</" cannot appear inside the script block, whatever the title or texts hold
     script = json.dumps(config, ensure_ascii=False).replace("</", "<\\/")
+    brand = ""
+    if color and re.fullmatch(r"#[0-9a-fA-F]{6}", color):
+        from .landing import _on
+
+        brand = f"<style>:root{{--me:{color};--me-ink:{_on(color)};--accent:{color}}}</style>"
+    mark = ""
+    if logo and logo.startswith("data:image/"):
+        mark = f'<img class="mark" src="{html.escape(logo)}" alt="">'
     return (
         _PAGE.replace("__LANG__", html.escape((locale or "en")[:2]))
+        .replace("</style>\n</head>", "</style>\n" + brand + "</head>", 1)
+        .replace("<header><h1>", f"<header>{mark}<h1>", 1)
         .replace("__TITLE__", html.escape(title))
         .replace("__CONFIG__", script)
     )

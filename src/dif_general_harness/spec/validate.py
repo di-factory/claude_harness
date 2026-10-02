@@ -39,6 +39,9 @@ _MOVED = (
     " (paths are relative to the spec file that names them; to start a client from an"
     " example, use `dif-general-harness spec copy`, which copies the files too)"
 )
+_HEX_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
+_LOGO = re.compile(r"data:image/(png|jpeg|webp|gif|svg\+xml);base64,[A-Za-z0-9+/=]+$")
+MAX_LOGO_CHARS = 400_000
 _DIALABLE = re.compile(r"^(\+[1-9]\d{6,14}|sip:[^\s@]+@[^\s]+)$")
 _DOTTED = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
 
@@ -226,6 +229,19 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
         err("invalid_embedding_provider", "models.roles.embedding",
             f"{embedding.provider} has no embeddings API here; use an OpenAI-compatible"
             " endpoint (OpenAI, a self-hosted model, a gateway)")  # fmt: skip
+
+    # --- branding ----------------------------------------------------------------------
+    brand = spec.branding
+    if brand is not None:
+        for slot in ("primary", "accent"):
+            value = getattr(brand.colors, slot, None) if brand.colors else None
+            if value is not None and not _HEX_COLOR.fullmatch(value):
+                err("invalid_branding", f"branding.colors.{slot}",
+                    f"{value!r} is not a color like #1f5f4a")  # fmt: skip
+        logo = brand.logo
+        if logo is not None and (not _LOGO.match(logo) or len(logo) > MAX_LOGO_CHARS):
+            err("invalid_branding", "branding.logo",
+                "a logo is an image as a base64 data: URI, under 400 kB")  # fmt: skip
 
     # --- channels, triggers, workflows ------------------------------------------
     for cname, ch in channels.items():
