@@ -253,7 +253,16 @@ def _check_monotonic(
     here: tuple[str, ...], old: Any, new: Any, over_parent: dict[str, Any], issues: list[Issue]
 ) -> None:
     where = ".".join(here)
-    if here == ("governance", "pii", "tokenize") and old is True and new is False:
+    if len(here) == 3 and here[0] == "channels" and here[2] == "public" and new and not old:
+        issues.append(
+            Issue(
+                "error",
+                "safety_weakened",
+                where,
+                "a later layer cannot open an existing channel to the public",
+            )
+        )
+    elif here == ("governance", "pii", "tokenize") and old is True and new is False:
         issues.append(
             Issue(
                 "error",

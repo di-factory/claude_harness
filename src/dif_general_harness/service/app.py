@@ -5,6 +5,9 @@ Routes:
 - ``POST /channels/{name}``: inbound messages. Gateway and Telegram requests are verified
   and queued (acknowledged at once); REST/web channels answer inline, and voice answers
   inline with TwiML (speak, listen, transfer).
+- ``GET /``: the business's landing page (from its FAQ) with the chat, when it has a web chat;
+- ``GET /chat`` (or ``/chat/{name}``): the web chat page of a ``web`` channel;
+  ``GET /channels/{name}/outbox``: replies that arrived later (a person, a reminder).
 - ``POST /hooks/{path}``: webhook triggers, verified with their shared secret
   (``X-Hub-Signature-256`` or a bearer token), deduplicated by delivery id.
 - ``/admin/*``: the inbox (list, decide), sessions (view, reply as a person), consent,
@@ -28,7 +31,9 @@ from typing import Any, Literal
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from ..channels import ChannelError, Handshake, Inbound, Unauthorized
+from ..channels import ChannelError, Handshake, Inbound, RateLimited, Unauthorized, WebChannel
+from ..channels.landing import render_landing
+from ..channels.web_page import render_chat
 from ..observability import quality
 from ..runtime import Instance
 from ..tenancy.config_versions import ConfigError, ConfigStore
@@ -72,6 +77,7 @@ def _inbound(request: Request, body: bytes) -> Inbound:
         url=str(request.url),
         headers={k.lower(): v for k, v in request.headers.items()},
         body=body,
+        client=request.client.host if request.client else "",
     )
 
 
@@ -137,6 +143,8 @@ def create_app(
             results = await headless.receive(name, _inbound(request, await request.body()))
         except Unauthorized as exc:
             raise HTTPException(401, str(exc)) from None
+        except RateLimited as exc:
+            raise HTTPException(429, str(exc)) from None
         except Handshake as shake:
             return Response(json.dumps(shake.body), media_type="application/json")
         except ChannelError as exc:
@@ -156,6 +164,41 @@ def create_app(
         if adapter.config.type == "gateway":  # an empty TwiML answer: we reply asynchronously
             return Response("<Response/>", media_type="application/xml")
         return Response("{}", media_type="application/json")
+
+    def web_channel(name: str | None) -> tuple[str, WebChannel]:
+        webs = {n: a for n, a in headless.adapters.items() if isinstance(a, WebChannel)}
+        if name is None and webs:
+            name = next(iter(webs))
+        if name is None or name not in webs:
+            raise HTTPException(404, "no web chat here")
+        return name, webs[name]
+
+    @app.get("/")
+    async def landing() -> Response:
+        name, _ = web_channel(None)
+        page = render_landing(current().spec, current().resolved.data, name)
+        return Response(page, media_type="text/html; charset=utf-8")
+
+    @app.get("/chat")
+    @app.get("/chat/{name}")
+    async def chat_page(name: str | None = None) -> Response:
+        name, adapter = web_channel(name)
+        spec = current().spec
+        page = render_chat(
+            name, (spec.tenant.name if spec.tenant else None) or spec.solution.name or "Chat",
+            locale=spec.solution.locale, public=adapter.public,
+        )  # fmt: skip
+        return Response(page, media_type="text/html; charset=utf-8")
+
+    @app.get("/channels/{name}/outbox")
+    async def chat_outbox(name: str, contact: str, request: Request) -> dict[str, Any]:
+        name, adapter = web_channel(name)
+        try:
+            return {"messages": adapter.poll(_inbound(request, b""), contact)}
+        except Unauthorized as exc:
+            raise HTTPException(401, str(exc)) from None
+        except ChannelError as exc:
+            raise HTTPException(400, str(exc)) from None
 
     @app.post("/hooks/{path:path}", status_code=202)
     async def hook(path: str, request: Request) -> dict[str, Any]:

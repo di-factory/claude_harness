@@ -1,4 +1,4 @@
-"""Channel adapters: gateway (WhatsApp/SMS), Telegram, REST/web, email, Slack, voice."""
+"""Channel adapters: gateway (WhatsApp/SMS), Telegram, REST, web chat, email, Slack, voice."""
 
 from typing import Any
 
@@ -12,6 +12,7 @@ from .gateway import GatewayChannel
 from .slack import SlackChannel
 from .telegram import TelegramChannel
 from .voice import VoiceChannel
+from .web import RateLimited, WebChannel
 
 
 def build_adapter(
@@ -26,7 +27,9 @@ def build_adapter(
         return GatewayChannel(name, config, credentials, client=client, public_url=public_url)
     if config.type == "telegram":
         return TelegramChannel(name, config, credentials, client=client)
-    if config.type in {"api", "web"}:
+    if config.type == "web":
+        return WebChannel(name, config, credentials)
+    if config.type == "api":
         return ApiChannel(name, config, credentials)
     if config.type == "email":
         return EmailChannel(name, config, credentials)
@@ -46,9 +49,11 @@ __all__ = [
     "GatewayChannel",
     "Handshake",
     "Inbound",
+    "RateLimited",
     "SlackChannel",
     "TelegramChannel",
     "Unauthorized",
     "VoiceChannel",
+    "WebChannel",
     "build_adapter",
 ]

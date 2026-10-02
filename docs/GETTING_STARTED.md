@@ -19,11 +19,15 @@ It installs what is missing (Docker, Caddy, uv), then guides you through:
    several (`1,2`), it checks first whether they can share an instance and, if not, asks you
    to choose one (the other can be a second client: run the setup again);
 3. the questionnaire: the client's business (what they do, services, prices, address,
-   policies) and a few settings, with Di-Factory's defaults filled in;
+   policies) and a few settings, with Di-Factory's defaults filled in. On request a business
+   consultant (Opus, a few cents; `DIF_CONSULTANT_MODEL` picks another model) asks one
+   follow-up when an answer is too thin for the agent to use, and at the end recommends what
+   the business should still define (kept in the client's summary);
 4. the build, and one real test question to the new agent;
 5. on request, going online: it signs the solution (Jag's key, created on first use),
    deploys it with Docker and serves it over HTTPS at `<public-ip>.sslip.io`, then prints
-   the WhatsApp webhook and the admin commands.
+   the web chat address (`https://<public-ip>.sslip.io/chat`), the WhatsApp webhook and the
+   admin commands.
 
 Run it again at any time: it reuses the key and offers the clients already set up. Every
 answer is kept in `clients/<id>.answers.yaml`, so a correction is "edit, run build again".
@@ -190,7 +194,21 @@ curl https://<ip-with-dashes>.sslip.io/healthz
 
 **✅** `/healthz` answers from your browser.
 
-## Phase 8: WhatsApp
+## Phase 8: The landing page and the web chat
+
+Packs with a `web` channel (the appointment pack has one) also serve a landing page for the
+business at `https://<ip-with-dashes>.sslip.io/`: its name, what it does, its services,
+prices, location, policies and hours (all from the questionnaire, so it says nothing the
+agent would not), a WhatsApp button, and the chat in a panel. The chat alone is at `/chat`:
+open it on your phone, or link it from the client's own website ("Chat with us"). To change
+the page, change the answers and rebuild. The appointment pack's chat is public: anyone with the link can
+chat, each browser keeps its own conversation, messages are rate-limited, and the daily
+budget caps the spend. When the agent hands a conversation to a person, the person answers
+from the inbox (`/admin/sessions/<id>/reply`) and the reply appears in the visitor's page.
+
+**✅** A message on `/chat` gets the same answer as in the console.
+
+## Phase 9: WhatsApp
 
 In Twilio, open the WhatsApp **sandbox**, join it from your phone, and set "When a message
 comes in" to `https://<ip-with-dashes>.sslip.io/channels/whatsapp` (POST). Then:
@@ -215,4 +233,5 @@ docker compose -f deploy/build/<id>/docker-compose.yml restart
 | `subscription (OAuth) token` | A Claude Pro/Max login token was used | Create an API key at console.anthropic.com |
 | `not tied to a workspace` | The key belongs to no workspace (its text alone does not tell) | Create the key inside a workspace (or set `models.providers.anthropic.workspace_id`) |
 | `cannot run together in one instance yet` | Each pack sets its own tools, budgets and consent; two in one instance would loosen one of them | One pack per instance; set up the other need as a second client |
+| `/chat` answers `no web chat here` | The instance was built from a pack without a `web` channel, or before the pack had one | `git pull`, then `./setup.sh` and reuse the client: it signs and deploys it again |
 | `git push` asks for a password and fails | GitHub refuses account passwords for git | `gh auth login` (browser) or a personal access token |

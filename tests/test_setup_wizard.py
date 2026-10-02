@@ -14,6 +14,7 @@ from dif_general_harness.constructor.deploy import check_approval
 from dif_general_harness.constructor.setup import Setup, parse_choice
 from dif_general_harness.core.messages import Message
 from dif_general_harness.providers import FakeProvider
+from dif_general_harness.providers.base import ModelRequest
 from dif_general_harness.spec import PackCatalog
 from tests.test_constructor import CLINIC, _flat
 
@@ -185,3 +186,44 @@ def test_without_the_advisor_word_matching_still_works(
     setup.ask = lambda _: next(replies)
     assert setup.choose_pack() == [PACK]
     assert "did not answer: RuntimeError" in capsys.readouterr().out
+
+
+def test_the_consultant_asks_follow_ups_and_recommends(
+    examples: Path, tmp_path: Path, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    secrets = home / ".dif" / "secrets"
+    secrets.mkdir(parents=True)
+    (secrets / "anthropic").write_text(KEY)
+
+    def consult(request: ModelRequest) -> Message:
+        asked = request.messages[0].text()
+        if "recommendations" in request.system:
+            assert "Limpiezas: 600 MXN, 45 minutos" in asked  # the follow-up made it in
+            return Message.assistant('{"recommendations": ["Define a cancellation fee."]}')
+        if "Question: Which services do you offer" in asked:
+            return Message.assistant('{"follow_up": "¿Cuánto cuesta y cuánto dura cada uno?"}')
+        return Message.assistant('{"follow_up": null}')
+
+    consultant = FakeProvider([consult] * 20)
+    business = [q for q in pack_questions(PackCatalog(roots=[examples]), [PACK])
+                if q.key.startswith("knowledge.")]  # fmt: skip
+    services = next(i for i, q in enumerate(business) if q.key.endswith(".services"))
+    replies = _replies(examples)
+    # the answer to "services" is followed by the consultant's question
+    flat_keys = [q.key for q in pack_questions(PackCatalog(roots=[examples]), [PACK])
+                 if q.key not in {"values.main_model", "values.fast_model"}]  # fmt: skip
+    at = flat_keys.index(business[services].key)
+    replies.insert(at + 1, "Limpiezas: 600 MXN, 45 minutos")
+    script = iter(["", "dental appointments on WhatsApp", "1", "y", *replies])
+    setup = Setup([examples], tmp_path / "clients", ask=lambda _: next(script),
+                  consultant=lambda _: consultant)  # fmt: skip
+    assert setup.run_all() == 0
+    out = capsys.readouterr().out
+    assert "Consultant: ¿Cuánto cuesta y cuánto dura cada uno?" in out
+    assert consultant.requests[0].model_role == "consultant"
+    folder = tmp_path / "clients"
+    faq = folder / "clinica-sonrisa-pyme-appointment-agent.knowledge" / "clinic_faq.md"
+    assert "Limpiezas: 600 MXN, 45 minutos" in faq.read_text()
+    summary = (folder / "clinica-sonrisa-pyme-appointment-agent.summary.md").read_text()
+    assert "## The business consultant's recommendations" in summary
+    assert "- Define a cancellation fee." in summary

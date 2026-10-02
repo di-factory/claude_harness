@@ -8,6 +8,8 @@
    work); without the model it falls back to word matching;
 3. runs the pack's questionnaire, the client's business included, with Di-Factory's
    defaults filled in (models; anything Di-Factory does not know yet is marked ``pending``);
+   on request a business consultant (a top model) asks one follow-up when a business answer
+   is thin and, at the end, recommends what to define or add (kept in the summary);
 4. builds and validates the instance, and sends it one real test question;
 5. on request, prepares it to go online: signs it (Jag's key, created on first use),
    stages the Docker deploy behind HTTPS, copies the secrets it needs and writes the proxy
@@ -45,6 +47,7 @@ DIFACTORY_DEFAULTS = {"main_model": "claude-sonnet-5-5", "fast_model": "claude-h
 TEST_QUESTION = {"es": "¿De qué se trata este negocio?", "en": "What is this business about?"}
 ONLINE_MARKER = Path(".dif") / "online"
 ADVISOR_MODEL = "claude-haiku-4-5"
+CONSULTANT_MODEL = "claude-opus-5"  # DIF_CONSULTANT_MODEL changes it
 # what a draft instance lacks only because nobody answered yet; anything else is a conflict
 _UNANSWERED = {"missing_value", "invalid_value", "model_not_set", "unresolved_variable",
                "missing_file"}  # fmt: skip
@@ -69,6 +72,36 @@ Answer with JSON only:
 "packs" may be empty when nothing fits. Write covered, gaps and why in the request's language."""
 
 
+_CONSULTANT_FOLLOW_UP = """You are a senior business consultant helping a small business set up
+the assistant that will answer its customers. The business answers a questionnaire; its
+answers become the assistant's FAQ, and the assistant never says anything the FAQ does not.
+Given one answer, decide whether a customer-facing assistant could use it as it is. If it is
+thin or leaves out what customers will surely ask (prices, durations, conditions, what is
+and is not offered, how to pay, what happens in an emergency...), write ONE short, concrete
+follow-up question, in the language of the answer. Otherwise none.
+Answer with JSON only: {"follow_up": "<question>"} or {"follow_up": null}"""
+
+_CONSULTANT_REVIEW = """You are a senior business consultant. A small business has answered a
+questionnaire that becomes the FAQ of its customer-facing assistant, which never invents
+anything. Read the answers and give at most 6 concrete, prioritized recommendations: what
+customers will ask that the answers do not cover, policies the business should define
+(cancellations, payments, privacy, emergencies), and risks for this kind of business. Be
+brief and specific to this business; do not repeat the uncovered needs already noted. Write
+in the language of the answers.
+Answer with JSON only: {"recommendations": ["...", "..."]}"""
+
+
+def _json_object(text: str) -> dict[str, Any] | None:
+    found = re.search(r"\{.*\}", text, re.S)
+    if not found:
+        return None
+    try:
+        raw = json.loads(found.group(0))
+    except ValueError:
+        return None
+    return raw if isinstance(raw, dict) else None
+
+
 def _pack_card(data: dict[str, Any]) -> str:
     sol = data["solution"]
     agents = "; ".join(
@@ -80,14 +113,8 @@ def _pack_card(data: dict[str, Any]) -> str:
 
 def parse_advice(text: str, known: set[str]) -> Advice | None:
     """The advisor's JSON, keeping only packs that exist; None when it is not usable."""
-    found = re.search(r"\{.*\}", text, re.S)
-    if not found:
-        return None
-    try:
-        raw = json.loads(found.group(0))
-    except ValueError:
-        return None
-    if not isinstance(raw, dict):
+    raw = _json_object(text)
+    if raw is None:
         return None
 
     def strings(key: str) -> list[str]:
@@ -131,6 +158,7 @@ class Setup:
         public_url: str | None = None,
         root: Path = REPO_ROOT,
         advisor: Advisor | None = None,
+        consultant: Advisor | None = None,
     ) -> None:
         self.root = root  # where deploy/build and .dif live (the repository)
         self.catalog = PackCatalog(roots=packs)
@@ -142,8 +170,13 @@ class Setup:
         self.public_url = public_url
         self.pending: list[str] = []
         self.advisor = advisor  # None: word matching only (tests, or no key)
+        self.consultant = consultant  # the business consultant (questionnaire help)
+        self.consulting = False
         self.key: str | None = None
         self.gaps: list[str] = []
+        self.request = ""
+        self.business: dict[str, str] = {}  # the business answers so far, for the consultant
+        self.recommendations: list[str] = []
 
     # --- 1. the key ---------------------------------------------------------------------
 
@@ -183,35 +216,45 @@ class Setup:
 
     # --- 2. the pack --------------------------------------------------------------------
 
-    def advise(self, request: str, packs: dict[str, dict[str, Any]]) -> Advice | None:
-        """Ask the small model which packs fit; None when it cannot answer."""
-        if self.advisor is None or not self.key or not request.strip():
+    def _ask_model(
+        self,
+        factory: Advisor | None,
+        who: str,
+        system: str,
+        user: str,
+        *,
+        role: str,
+        max_tokens: int,
+    ) -> str | None:
+        """One model call; None (and a short note) when it cannot answer."""
+        if factory is None or not self.key:
             return None
-        try:
-            model = self.advisor(self.key)
-        except Exception:  # e.g. the SDK is missing: word matching still works
-            return None
-        cards = "\n".join(_pack_card(packs[pid]) for pid in sorted(packs))
-        model_request = ModelRequest(
-            system=_ADVISOR_SYSTEM,
-            messages=[Message.user(f"Packs:\n{cards}\n\nThe client's need: {request}")],
-            model_role="fast",
-            max_tokens=1024,
-        )
+        request = ModelRequest(system=system, messages=[Message.user(user)],
+                               model_role=role, max_tokens=max_tokens)  # fmt: skip
 
-        async def ask() -> str:
+        async def call() -> str:
             final = ""
-            async for event in model.stream(model_request):
+            async for event in factory(self.key or "").stream(request):
                 if isinstance(event, ProviderMessage):
                     final = event.message.text()
             return final
 
         try:
-            text = asyncio.run(asyncio.wait_for(ask(), timeout=60))
-        except Exception as exc:  # any failure: fall back to word matching
-            _say(f"(The advisor model did not answer: {type(exc).__name__}. Using word matching.)")
+            return asyncio.run(asyncio.wait_for(call(), timeout=120))
+        except Exception as exc:  # the setup goes on without it
+            _say(f"(The {who} did not answer: {type(exc).__name__}. Going on without it.)")
             return None
-        return parse_advice(text, set(packs))
+
+    def advise(self, request: str, packs: dict[str, dict[str, Any]]) -> Advice | None:
+        """Ask the small model which packs fit; None when it cannot answer."""
+        if not request.strip():
+            return None
+        cards = "\n".join(_pack_card(packs[pid]) for pid in sorted(packs))
+        text = self._ask_model(
+            self.advisor, "advisor model", _ADVISOR_SYSTEM,
+            f"Packs:\n{cards}\n\nThe client's need: {request}", role="fast", max_tokens=1024,
+        )  # fmt: skip
+        return parse_advice(text, set(packs)) if text is not None else None
 
     def conflicts(self, pack_ids: list[str]) -> list[str]:
         """Why these packs cannot run together in one instance (empty: they can)."""
@@ -238,6 +281,7 @@ class Setup:
         _step(2, "What does the client need?")
         packs = {layer.data["solution"]["id"]: layer.data for layer in self.catalog.latest()}
         request = self.ask("In a sentence (e.g. 'WhatsApp appointments for a dental clinic'): ")
+        self.request = request.strip()
         advice = self.advise(request, packs)
         if advice is None:
             found = [m.pack_id for m in match(self.catalog, request)] if request.strip() else []
@@ -293,12 +337,38 @@ class Setup:
         if not answer.strip() and later:
             self.pending.append(q.name)
             return "pending"  # Di-Factory fills it in later (adjust --set)
+        if q.key.startswith("knowledge.") and answer.strip() and error is None:
+            answer = self._follow_up(q, answer)
+            self.business[q.heading or q.text] = answer
         return answer
+
+    def _follow_up(self, q: Question, answer: str) -> str:
+        """The consultant asks at most one question that makes a thin answer useful."""
+        if not self.consulting:
+            return answer
+        so_far = "\n".join(f"- {k}: {v}" for k, v in self.business.items()) or "(none yet)"
+        text = self._ask_model(
+            self.consultant, "consultant", _CONSULTANT_FOLLOW_UP,
+            f"The client's need: {self.request or '(not given)'}\n"
+            f"Answers so far:\n{so_far}\n\nQuestion: {q.text}\nAnswer: {answer}",
+            role="consultant", max_tokens=600,
+        )  # fmt: skip
+        raw = _json_object(text or "")
+        follow = str(raw.get("follow_up") or "").strip() if raw else ""
+        if not follow:
+            return answer
+        _say(f"   Consultant: {follow}")
+        more = self.ask("> ").strip()
+        return f"{answer.strip()}\n{more}" if more else answer
 
     def questionnaire(self, pack_ids: list[str]) -> BuildResult:
         _step(3, "Questionnaire (the client's business, then a few settings)")
         _say("Answer in the client's language. Enter keeps a default; Di-Factory's own"
              " settings already have sensible defaults.")  # fmt: skip
+        if self.consultant is not None and self.key:
+            _say("A business consultant (a top model) can help: one follow-up when an answer"
+                 " is thin, and recommendations at the end. Costs a few cents.")  # fmt: skip
+            self.consulting = _yes(self.ask("Use the consultant? [Y/n] "), default=True)
         variables = {k for p in pack_ids for k in self.catalog.find(p).data.get("variables", {})}
         defaults = {f"values.{k}": v for k, v in DIFACTORY_DEFAULTS.items() if k in variables}
         result = build(self.catalog, pack_ids, self.out, answers=defaults, ask=self._question)
@@ -306,7 +376,32 @@ class Setup:
             with result.summary_path.open("a", encoding="utf-8") as summary:
                 summary.write("\n## Needs not covered yet (Di-Factory design work)\n\n")
                 summary.writelines(f"- {gap}\n" for gap in self.gaps)
+        self.review()
+        if self.recommendations:
+            with result.summary_path.open("a", encoding="utf-8") as summary:
+                summary.write("\n## The business consultant's recommendations\n\n")
+                summary.writelines(f"- {r}\n" for r in self.recommendations)
         return result
+
+    def review(self) -> None:
+        """The consultant reads all the business answers and says what to improve."""
+        if not self.consulting or not self.business:
+            return
+        answers = "\n".join(f"## {k}\n{v}" for k, v in self.business.items())
+        text = self._ask_model(
+            self.consultant, "consultant", _CONSULTANT_REVIEW,
+            f"The client's need: {self.request or '(not given)'}\n"
+            f"Uncovered needs already noted: {'; '.join(self.gaps) or 'none'}\n\n{answers}",
+            role="consultant", max_tokens=1500,
+        )  # fmt: skip
+        raw = _json_object(text or "")
+        items = raw.get("recommendations") if raw else None
+        self.recommendations = [str(i) for i in items if str(i).strip()][:8] if isinstance(
+            items, list) else []  # fmt: skip
+        if self.recommendations:
+            _say("\nThe consultant recommends (also in the summary):")
+            for item in self.recommendations:
+                _say(f"  - {item}")
 
     # --- 4. try it ----------------------------------------------------------------------
 
@@ -461,14 +556,24 @@ def anthropic_advisor(key: str) -> ModelProvider:
     return AnthropicProvider(ADVISOR_MODEL, api_key=key, max_tokens=1024, prompt_cache=False)
 
 
+def anthropic_consultant(key: str) -> ModelProvider:
+    import os
+
+    from ..providers.anthropic import AnthropicProvider
+
+    model = os.environ.get("DIF_CONSULTANT_MODEL") or CONSULTANT_MODEL
+    return AnthropicProvider(model, api_key=key, max_tokens=2000, prompt_cache=False)
+
+
 def run_setup(
     args: Any,
     run: Callable[[list[str]], int] | None = None,
     advisor: Advisor | None = anthropic_advisor,
+    consultant: Advisor | None = anthropic_consultant,
 ) -> int:
     setup = Setup(
         args.packs or default_packs(), args.out, run=run, public_url=args.public_url,
-        advisor=advisor,
+        advisor=advisor, consultant=consultant,
     )  # fmt: skip
     try:
         return setup.run_all()

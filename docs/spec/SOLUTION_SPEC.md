@@ -343,6 +343,20 @@ Channel types: `gateway` (WhatsApp/SMS via Twilio-style providers),
 `telegram`, `web`, `email`, `slack`, `api` and `voice`. Outbound
 messages outside a provider's session window must use a template.
 
+A `web` channel is a chat page the instance serves itself at `/chat` (or `/chat/<name>`),
+ready to link from the client's website. By default it is private: every message carries
+the channel's `credentials` as a bearer token, which the page asks for once. With
+`"public": true` anyone with the link can chat: each browser gets a random id (one visitor
+never sees another's conversation), messages are rate-limited per visitor and per address
+and capped at 2,000 characters, and the budgets still bound the spend. Only a `web` channel
+can be public (`invalid_public`), and only the layer that declares the channel may make it
+public: a later layer cannot open an existing channel (`safety_weakened`). Replies that come
+later (a person from the inbox, a reminder) reach the page through
+`GET /channels/<name>/outbox`. An instance with a `web` channel also serves a landing page
+at `/`, built only from its own FAQ files (the first section introduces the business, the
+others become cards), `values.business_hours` and a gateway channel's number (a WhatsApp
+button).
+
 A `voice` channel (Twilio Programmable Voice; point the number's voice webhook at
 `/channels/<name>`) holds phone conversations with the same agents. Twilio recognizes the
 caller's speech and each utterance is one ordinary turn; the reply is spoken, without
