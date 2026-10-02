@@ -231,9 +231,12 @@ docker compose -f deploy/build/<id>/docker-compose.yml restart
 
 ## Handing the solution to the client
 
-Every time `./setup.sh` puts a client online it also writes `~/<tenant id>/`, the folder the
-client's own Claude starts from (and `setup.sh` installs Claude Code). To name the owner and
-their language, or to rewrite it after a change:
+The path for every client: `./setup.sh` once (the questionnaire), then as many fine-tuning
+rounds as needed (`./setup.sh` again, reuse the client: it rebuilds from the answers, signs and
+redeploys), and the handover last, when the solution is final and the client takes the server.
+In Claude Code on the server (`setup.sh` installs it), `/handover` leads it end to end: it
+confirms the solution, asks the owner's name and language, writes the documents and walks the
+checklist until it passes. The command underneath:
 
 ```bash
 uv run dif-general-harness handover clients/<id>.json --owner Roberta --lang es \

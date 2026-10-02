@@ -24,7 +24,6 @@ from __future__ import annotations
 import asyncio
 import getpass
 import json
-import os
 import re
 import secrets
 import shlex
@@ -44,7 +43,6 @@ from .brand import read_brand
 from .build import BuildResult, _extends, build
 from .catalog import match
 from .deploy import REPO_ROOT, approve, check_approval, new_key, plan_docker, stage
-from .handover import build_handover
 from .impact import missing, report
 from .interview import Question, load_answers
 
@@ -570,29 +568,7 @@ class Setup:
                  f" earlier run. Fix: sudo chown -R $USER {folder / 'secrets'}  then run"
                  " ./setup.sh again.")  # fmt: skip
             return None
-        self.handover(instance)
         return staged_folder
-
-    def handover(self, instance: Path) -> Path | None:
-        """The documents the client's own Claude starts from (``~/<tenant>/``), written with
-        every deploy so they always describe what is online. Never stops the deploy."""
-        try:
-            data = json.loads(instance.read_text(encoding="utf-8"))
-            tenant = data["tenant"]
-            out = Path.home() / str(tenant["id"])
-            result = build_handover(
-                instance, self.catalog, out, url=self.public_url, owner=None,
-                lang=(data.get("solution") or {}).get("locale"),
-                support=os.environ.get("DIF_SUPPORT_CONTACT"), harness=self.root,
-            )  # fmt: skip
-        except Exception as exc:  # the client is online either way
-            _say(f"(The handover documents were not written: {type(exc).__name__}: {exc}.)")
-            return None
-        _say(f"Handover documents for the client's own Claude: {result.folder}"
-             f" (cd {result.folder} && claude); checklist: HANDOVER.md there. To name the"
-             " owner and their language: dif-general-harness handover INSTANCE.json --owner"
-             " NAME --lang es")  # fmt: skip
-        return result.folder
 
     def _stage_files(self, staged: Any, folder: Path, host: str) -> Path:
         plan = plan_docker(staged, folder, public_url=self.public_url)
@@ -705,7 +681,10 @@ class Setup:
         if not self.try_it(result):
             return 1
         self.go_online(result)
-        _say("\nDone. Chat with it any time:")
+        _say("\nDone. Fine-tune it by running ./setup.sh again and reusing this client; when it"
+             " is final, hand it over with /handover in Claude Code (or: dif-general-harness"
+             f" handover {result.spec_path} --owner NAME --lang es).")  # fmt: skip
+        _say("Chat with it any time:")
         packs = " ".join(f"--packs {p}" for p in self.packs)
         _say(f"  uv run dif-general-harness console {result.spec_path} {packs}")
         if self.gaps:

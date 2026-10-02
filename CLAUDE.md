@@ -27,6 +27,7 @@ uv run dif-general-harness adjust|upgrade INSTANCE.json ... --dry-run     # cons
 uv run dif-general-harness costs INSTANCE.json --by vendor,model         # spend + quality
 uv run dif-general-harness admin status|inbox|show|reply|faq|costs         # a running instance
 uv run dif-general-harness handover INSTANCE.json --owner NAME --lang es  # the client's Claude
+                                          # the whole handover, guided: /handover (.claude/skills)
 uv run dif-general-harness fleet register|offer|rollout|rollback|status  # via the control plane
 uv run dif-general-harness control serve --key KEY                       # the control plane
 terraform -chdir=deploy/terraform/aws init -backend=false && terraform -chdir=deploy/terraform/aws test

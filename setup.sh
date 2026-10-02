@@ -96,8 +96,7 @@ for _ in $(seq 1 60); do
                and run ./setup.sh again to copy it in
   Admin API:   curl -H "Authorization: Bearer \$(cat ~/.dif/secrets/admin_token)" https://$host/admin/inbox
   Logs:        ${docker_cmd[*]} compose -f $folder/docker-compose.yml logs -f
-  Client:      the handover folder printed above: cd ~/<client> && claude
-               (their own Claude, with the business and the solution as context)
+  Next:        fine-tune: ./setup.sh again (reuse the client); final: /handover in Claude Code
 EOF
     exit 0
   fi
