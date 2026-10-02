@@ -22,6 +22,8 @@ from ..spec.loader import PackCatalog, ResolvedSpec, load_instance
 from ..spec.schema import SolutionSpec, Variable
 from .interview import Ask, Question, business_questions, interview, questions
 
+CARRIED = ("models", "secrets")
+
 
 @dataclass
 class BuildResult:
@@ -79,6 +81,9 @@ def build(
     qs = pack_questions(catalog, pack_ids)
     answers = dict(answers or {})
     branding = answers.pop("branding", None)  # the client's look: not a pack question
+    # Di-Factory's per-client choices that are not questions either, e.g. running a pack's
+    # models on another provider: copied into the instance and kept for rebuilds
+    carried = {k: answers.pop(k) for k in CARRIED if isinstance(answers.get(k), dict)}
     got, problems = interview(qs, answers, ask)
 
     tenant_id = str(got.get("tenant.id", "tenant"))
@@ -104,6 +109,7 @@ def build(
     }
     if isinstance(branding, dict) and branding:
         spec["branding"] = branding  # the client's look (logo, colors): kept across rebuilds
+    spec.update(carried)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     faqs = business_faq(qs, got, tenant_name)
@@ -120,8 +126,9 @@ def build(
     summary_path = out_dir / f"{instance_id}.summary.md"
     spec_path.write_text(json.dumps(spec, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     saved = _nested(got)
-    if "branding" in spec:
-        saved["branding"] = spec["branding"]
+    for key in ("branding", *CARRIED):
+        if key in spec:
+            saved[key] = spec[key]
     answers_path.write_text(
         yaml.safe_dump(saved, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )

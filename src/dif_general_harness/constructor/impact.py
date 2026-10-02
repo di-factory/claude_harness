@@ -121,8 +121,8 @@ def missing(
             uses[name].append(impact)
     out = []
     for name, decl in sorted(spec.secrets.items()):
-        if have(name):
-            continue
+        if have(name) or name not in uses:
+            continue  # set, or declared by the pack but used by nothing in this instance
         how = HOW_TO_GET.get(name, f"`dif-general-harness secrets set {name}`")
         out.append(Missing(name, "secret", decl.description, uses.get(name, []), how))
     for name in pending or []:

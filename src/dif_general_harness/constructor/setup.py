@@ -125,7 +125,7 @@ def _pack_card(data: dict[str, Any]) -> str:
         f"{name}: {a.get('description') or ''}" for name, a in data.get("agents", {}).items()
     )
     needs = _needs(data)
-    warning = f" NEEDS {needs}: do not recommend it." if needs else ""
+    warning = f" (Its models: {needs}.)" if needs else ""
     return (f"- {sol['id']} ({sol.get('name') or sol['id']}): {sol.get('description') or ''}"
             f" Agents: {agents}{warning}")  # fmt: skip
 
@@ -166,7 +166,24 @@ def _needs(data: dict[str, Any]) -> str:
     other = sorted(name for name in providers if name != "anthropic")
     if not other:
         return ""
-    return ", ".join(f"its own {name} model endpoint" for name in other) + " (not set up here)"
+    return ", ".join(f"its own {name} model endpoint" for name in other) + "; can run on Anthropic"
+
+
+def on_anthropic(data: dict[str, Any]) -> dict[str, Any]:
+    """The instance layer that runs a pack's models on the Anthropic key instead of their
+    own endpoint: every role on another provider moves to Anthropic (the models are
+    Di-Factory's defaults), the other providers are dropped, and the key is declared."""
+    models = data.get("models") or {}
+    roles = {name: {"provider": "anthropic"} for name, role in (models.get("roles") or {}).items()
+             if (role or {}).get("provider") != "anthropic"}  # fmt: skip
+    providers: dict[str, Any] = {
+        name: None for name in (models.get("providers") or {}) if name != "anthropic"
+    }
+    providers["anthropic"] = {"api_key": {"$secret": "anthropic"}}
+    return {
+        "models": {"roles": roles, "providers": providers},
+        "secrets": {"anthropic": {"description": "Model API key"}},
+    }
 
 
 def _key_problem(key: str) -> str | None:
@@ -213,6 +230,7 @@ class Setup:
         self.request = ""
         self.business: dict[str, str] = {}  # the business answers so far, for the consultant
         self.recommendations: list[str] = []
+        self.carried: dict[str, Any] = {}  # per-client choices kept in the answers (models)
 
     # --- 1. the key ---------------------------------------------------------------------
 
@@ -315,6 +333,19 @@ class Setup:
             _say("With that choice, not covered yet: " + "; ".join(found))
         return found
 
+    def _model_choice(self, chosen: list[str], packs: dict[str, dict[str, Any]]) -> dict[str, Any]:
+        """A pack on another provider's endpoint can run on the Anthropic key instead."""
+        for pid in chosen:
+            if not _needs(packs[pid]):
+                continue
+            question = (f"{pid} runs on its own model endpoint (another provider's key). Run"
+                        " it on the Anthropic key you gave instead? [Y/n] ")  # fmt: skip
+            if _yes(self.ask(question), default=True):
+                return on_anthropic(packs[pid])
+            _say("   It will not answer until that endpoint's key is set (dif-general-harness"
+                 " secrets set llm), so it is not put online.")  # fmt: skip
+        return {}
+
     def conflicts(self, pack_ids: list[str]) -> list[str]:
         """Why these packs cannot run together in one instance (empty: they can)."""
         if len(pack_ids) < 2:
@@ -378,6 +409,7 @@ class Setup:
             if not problems:
                 if advice.packs and set(chosen) != set(advice.packs):
                     self.gaps = self.gaps_for(chosen, packs)
+                self.carried = self._model_choice(chosen, packs)
                 return chosen
             _say("These packs cannot run together in one instance yet:")
             for problem in problems[:5]:
@@ -479,6 +511,7 @@ class Setup:
         branding = self.ask_brand()
         if branding:
             defaults["branding"] = branding
+        defaults.update(self.carried)
         result = build(self.catalog, pack_ids, self.out, answers=defaults, ask=self._question)
         if self.gaps:
             with result.summary_path.open("a", encoding="utf-8") as summary:

@@ -122,7 +122,7 @@ def test_a_client_that_cannot_answer_is_never_put_online(
 ) -> None:
     _set_up(examples, tmp_path)
     out = capsys.readouterr().out
-    assert "[needs: its own openai-compatible model endpoint (not set up here)]" in out
+    assert "[needs: its own openai-compatible model endpoint; can run on Anthropic]" in out
     marker = tmp_path / "repo" / ".dif" / "online"
     marker.unlink()  # setup.sh removes it before every run
     replies = iter(["", "1", "", "", "y"])  # key, client 1, rebuild, same look, online
