@@ -70,7 +70,10 @@ def test_from_questionnaires_to_a_running_client(
 
     secrets = tmp_path / "secrets"
     assert main(["secrets", "check", str(instance), *packs, "--dir", str(secrets)]) == 1
-    assert "✗ anthropic: not set" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "✗ anthropic: not set" in out
+    assert "without it: the agent cannot answer at all" in out  # what it means
+    assert "how to get it: console.anthropic.com" in out
     env_file = tmp_path / ".env"
     env_file.write_text('export DIF_SECRET_ANTHROPIC="sk-ant-api03-' + "k" * 90 + '"\n')
     for name in ("anthropic", "google", "twilio"):

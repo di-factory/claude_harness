@@ -27,7 +27,7 @@ def _replies(examples: Path) -> list[str]:
     the template ids are left blank, so they become pending)."""
     flat = _flat(CLINIC)
     skip = {"values.main_model", "values.fast_model"}
-    out = []
+    out = [""]  # the brand look: skipped
     for q in pack_questions(PackCatalog(roots=[examples]), [PACK]):
         if q.key in skip:
             continue
@@ -76,7 +76,13 @@ def test_from_nothing_to_signed_and_staged(
     assert stored.read_text() == KEY and stored.stat().st_mode & 0o777 == 0o600
     assert "Somos una clínica dental familiar." in out  # the real test question went through
     assert provider.requests[0].messages[-1].text() == "¿De qué se trata este negocio?"
-    assert "Pending Di-Factory settings: tpl_reminder_id, tpl_nudge_id" in out
+    assert "Not connected yet. The agent works without these" in out
+    assert "tpl_reminder_id (Approved WhatsApp template id for reminders)" in out
+    assert "without it: WhatsApp only lets a business start a conversation" in out
+    assert "channel whatsapp: WhatsApp/SMS messages are not received" in out  # twilio
+    assert "the agent cannot see free slots" in out  # google
+    summary = tmp_path / "clients" / "clinica-sonrisa-pyme-appointment-agent.summary.md"
+    assert "## Not connected yet, and what that means" in summary.read_text()
 
     instance = tmp_path / "clients" / "clinica-sonrisa-pyme-appointment-agent.json"
     spec = json.loads(instance.read_text())
@@ -113,7 +119,7 @@ def test_running_again_reuses_the_client(
     assert first.run_all() == 0
     assert "Found an Anthropic key" in capsys.readouterr().out
 
-    again = iter(["", "1", ""])  # keep the key; reuse client 1; rebuild it (Enter)
+    again = iter(["", "1", "", ""])  # keep the key; reuse client 1; rebuild it; same look
     second = Setup([examples], clients, ask=lambda _: next(again), run=run)
     assert second.run_all() == 0
     out = capsys.readouterr().out
@@ -227,7 +233,7 @@ def test_the_consultant_asks_follow_ups_and_recommends(
     flat_keys = [q.key for q in pack_questions(PackCatalog(roots=[examples]), [PACK])
                  if q.key not in {"values.main_model", "values.fast_model"}]  # fmt: skip
     at = flat_keys.index(business[services].key)
-    replies.insert(at + 1, "Limpiezas: 600 MXN, 45 minutos")
+    replies.insert(at + 2, "Limpiezas: 600 MXN, 45 minutos")  # after the brand prompt
     script = iter(["", "dental appointments on WhatsApp", "1", "y", *replies])
     setup = Setup([examples], tmp_path / "clients", ask=lambda _: next(script),
                   consultant=lambda _: consultant)  # fmt: skip

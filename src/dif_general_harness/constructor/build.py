@@ -77,6 +77,8 @@ def build(
 ) -> BuildResult:
     first = catalog.find(pack_ids[0]).data["solution"]
     qs = pack_questions(catalog, pack_ids)
+    answers = dict(answers or {})
+    branding = answers.pop("branding", None)  # the client's look: not a pack question
     got, problems = interview(qs, answers, ask)
 
     tenant_id = str(got.get("tenant.id", "tenant"))
@@ -100,6 +102,8 @@ def build(
         },
         "values": {k.removeprefix("values."): v for k, v in got.items() if k.startswith("values.")},
     }
+    if isinstance(branding, dict) and branding:
+        spec["branding"] = branding  # the client's look (logo, colors): kept across rebuilds
 
     out_dir.mkdir(parents=True, exist_ok=True)
     faqs = business_faq(qs, got, tenant_name)
@@ -115,8 +119,11 @@ def build(
     answers_path = out_dir / f"{instance_id}.answers.yaml"
     summary_path = out_dir / f"{instance_id}.summary.md"
     spec_path.write_text(json.dumps(spec, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    saved = _nested(got)
+    if "branding" in spec:
+        saved["branding"] = spec["branding"]
     answers_path.write_text(
-        yaml.safe_dump(_nested(got), allow_unicode=True, sort_keys=False), encoding="utf-8"
+        yaml.safe_dump(saved, allow_unicode=True, sort_keys=False), encoding="utf-8"
     )
 
     resolved: ResolvedSpec | None = None

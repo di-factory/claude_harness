@@ -26,6 +26,7 @@ import getpass
 import json
 import re
 import secrets
+import shlex
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -38,9 +39,11 @@ from ..runtime.routing import RoutingError, check_anthropic_key
 from ..spec.errors import SpecError
 from ..spec.loader import PackCatalog, load_instance
 from ..tenancy import FileSecrets, default_secrets_dir, local_backend
+from .brand import read_brand
 from .build import BuildResult, _extends, build
 from .catalog import match
 from .deploy import REPO_ROOT, approve, check_approval, new_key, plan_docker, stage
+from .impact import missing, report
 from .interview import Question, load_answers
 
 Ask = Callable[[str], str]
@@ -416,6 +419,30 @@ class Setup:
         more = self.ask("> ").strip()
         return f"{answer.strip()}\n{more}" if more else answer
 
+    def ask_brand(self, keeps: bool = False) -> dict[str, Any] | None:
+        """The client's look, from whatever they have: files, folders or typed colors."""
+        _say("\nBrand look (optional), for the landing page and the chat: a logo, a palette,"
+             " a brand guide (PDF, slides, Word), a CSS theme, photos, a folder with any of"
+             " these, or colors like #1f5f4a #e8a33d. Several: separate with spaces.")  # fmt: skip
+        answer = self.ask("Enter keeps the current look: " if keeps else "Enter skips: ")
+        if not answer.strip():
+            return None
+        try:
+            items = shlex.split(answer)
+        except ValueError:
+            items = answer.split()
+        brand = read_brand(items)
+        for note in brand.notes:
+            _say(f"   {note}")
+        branding = brand.branding()
+        if not branding:
+            _say("   No usable colors or logo found there; the look stays as it is.")
+            return None
+        colors = branding.get("colors") or {}
+        shown = ", ".join(f"{k} {v}" for k, v in colors.items()) or "default colors"
+        _say(f"   Look: {shown}; logo: {'yes' if branding.get('logo') else 'none'}.")
+        return branding
+
     def questionnaire(self, pack_ids: list[str]) -> BuildResult:
         _step(3, "Questionnaire (the client's business, then a few settings)")
         _say("Answer in the client's language. Enter keeps a default; Di-Factory's own"
@@ -425,7 +452,12 @@ class Setup:
                  " is thin, and recommendations at the end. Costs a few cents.")  # fmt: skip
             self.consulting = _yes(self.ask("Use the consultant? [Y/n] "), default=True)
         variables = {k for p in pack_ids for k in self.catalog.find(p).data.get("variables", {})}
-        defaults = {f"values.{k}": v for k, v in DIFACTORY_DEFAULTS.items() if k in variables}
+        defaults: dict[str, Any] = {
+            f"values.{k}": v for k, v in DIFACTORY_DEFAULTS.items() if k in variables
+        }
+        branding = self.ask_brand()
+        if branding:
+            defaults["branding"] = branding
         result = build(self.catalog, pack_ids, self.out, answers=defaults, ask=self._question)
         if self.gaps:
             with result.summary_path.open("a", encoding="utf-8") as summary:
@@ -472,14 +504,18 @@ class Setup:
         if self.run is not None:
             packs = [a for p in self.packs for a in ("--packs", str(p))]
             worked = self.run(["run", str(result.spec_path), *packs, "-m", question]) == 0
-        missing = [n for n in sorted(spec.secrets) if n != "anthropic"
-                   and not local_backend().get(n)]  # fmt: skip
-        if missing:
-            _say(f"\nNot connected yet (those parts stay off): {', '.join(missing)}."
-                 " Add each with: dif-general-harness secrets set NAME")  # fmt: skip
-        if self.pending:
-            _say(f"Pending Di-Factory settings: {', '.join(self.pending)}. Set them with:"
-                 f" dif-general-harness adjust {result.spec_path} --set NAME=VALUE")  # fmt: skip
+        store = local_backend()
+        items = missing(
+            spec, result.resolved.data, lambda n: n == "anthropic" or bool(store.get(n)),
+            self.pending,
+        )  # fmt: skip
+        if items:
+            _say("\nNot connected yet. The agent works without these; this is what stays off:")
+            for item in items:
+                _say("\n".join(f"  {line}" for line in item.lines()).replace(
+                    "INSTANCE.json", str(result.spec_path)))  # fmt: skip
+            with result.summary_path.open("a", encoding="utf-8") as summary:
+                summary.write("\n" + report(items).replace("INSTANCE.json", str(result.spec_path)))
         if not worked:
             _say("\nThe test question did not work (see the message above), so it is not put"
                  " online: it would not start there either. Fix that and run ./setup.sh"
@@ -594,6 +630,9 @@ class Setup:
             return reused
         try:
             answers = load_answers(reused.answers_path)
+            branding = self.ask_brand(keeps=bool(answers.get("branding")))
+            if branding:
+                answers["branding"] = branding
             extends = json.loads(reused.spec_path.read_text(encoding="utf-8"))["extends"]
             packs = [str(ref).split("@", 1)[0] for ref in extends]
             with tempfile.TemporaryDirectory() as tmp:  # a dry run first: nothing half-written
