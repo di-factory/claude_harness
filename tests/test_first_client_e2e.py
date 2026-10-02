@@ -112,3 +112,20 @@ def test_a_reused_client_takes_the_pack_updates(
     assert "Rebuilt clinica-sonrisa-pyme-appointment-agent" in capsys.readouterr().out
     spec = json.loads((clients / "clinica-sonrisa-pyme-appointment-agent.json").read_text())
     assert spec["values"]["main_model"] == "claude-sonnet-5-5"  # nothing else lost
+
+
+def test_a_client_that_cannot_answer_is_never_put_online(
+    examples: Path, tmp_path: Path, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _set_up(examples, tmp_path)
+    out = capsys.readouterr().out
+    assert "[needs: its own openai-compatible model endpoint (not set up here)]" in out
+    marker = tmp_path / "repo" / ".dif" / "online"
+    marker.unlink()  # setup.sh removes it before every run
+    replies = iter(["", "1", "", "y"])  # keep the key, client 1, rebuild, online if it can
+    broken = Setup([examples], tmp_path / "clients", ask=lambda _: next(replies),
+                   run=lambda argv: 2,  # "cannot start: secrets.llm: not set", say
+                   public_url=URL, root=tmp_path / "repo")  # fmt: skip
+    assert broken.run_all() == 1
+    assert "The test question did not work" in capsys.readouterr().out
+    assert not marker.exists()  # setup.sh starts nothing
