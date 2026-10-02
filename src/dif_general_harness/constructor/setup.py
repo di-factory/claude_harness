@@ -81,6 +81,14 @@ packs do not cover, judging only from the packs' descriptions; a need a chosen p
 not a gap. Write them in the request's language.
 Answer with JSON only: {"gaps": ["...", "..."]}"""
 
+_COLORS_SYSTEM = """Turn a description of a brand's colors into a palette for its web page.
+Keep every color the person named, in their order, and add only what they ask for (for
+example "another blue to complete"). The first color is the main one: buttons and headings
+use it, so it is never white, near-white or black (move those later). The second is an
+accent. Give 2 to 5 colors.
+Answer with JSON only: {"colors": ["#rrggbb", "#rrggbb", ...]}"""
+_HEX = re.compile(r"#[0-9a-fA-F]{6}")
+
 _CONSULTANT_FOLLOW_UP = """You are a senior business consultant helping a small business set up
 the assistant that will answer its customers. The business answers a questionnaire; its
 answers become the assistant's FAQ, and the assistant never says anything the FAQ does not.
@@ -423,7 +431,8 @@ class Setup:
         """The client's look, from whatever they have: files, folders or typed colors."""
         _say("\nBrand look (optional), for the landing page and the chat: a logo, a palette,"
              " a brand guide (PDF, slides, Word), a CSS theme, photos, a folder with any of"
-             " these, or colors like #1f5f4a #e8a33d. Several: separate with spaces.")  # fmt: skip
+             " these, colors like #1f5f4a #e8a33d, or in words (navy and gold, azul marino y"
+             " blanco, dark blue plus another blue). Several: separate with spaces.")  # fmt: skip
         answer = self.ask("Enter keeps the current look: " if keeps else "Enter skips: ")
         if not answer.strip():
             return None
@@ -431,7 +440,8 @@ class Setup:
             items = shlex.split(answer)
         except ValueError:
             items = answer.split()
-        brand = read_brand(items)
+        describe = self._describe_colors if self.advisor is not None and self.key else None
+        brand = read_brand(items, text=answer, describe=describe)
         for note in brand.notes:
             _say(f"   {note}")
         branding = brand.branding()
@@ -442,6 +452,17 @@ class Setup:
         shown = ", ".join(f"{k} {v}" for k, v in colors.items()) or "default colors"
         _say(f"   Look: {shown}; logo: {'yes' if branding.get('logo') else 'none'}.")
         return branding
+
+    def _describe_colors(self, text: str) -> list[str] | None:
+        """A description of colors ("dark blue, light blue, and another blue") as a palette."""
+        answer = self._ask_model(self.advisor, "advisor model", _COLORS_SYSTEM, text,
+                                 role="fast", max_tokens=300)  # fmt: skip
+        raw = _json_object(answer or "") or {}
+        colors = raw.get("colors")
+        if not isinstance(colors, list):
+            return None
+        valid = [c.lower() for c in colors if isinstance(c, str) and _HEX.fullmatch(c)]
+        return list(dict.fromkeys(valid)) or None
 
     def questionnaire(self, pack_ids: list[str]) -> BuildResult:
         _step(3, "Questionnaire (the client's business, then a few settings)")

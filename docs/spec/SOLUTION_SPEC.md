@@ -647,6 +647,9 @@ highlights, and the logo in their headers (without one, the business's initial).
 fills it from whatever brand material the client has (`constructor/brand.py`): logos and
 photos (their pixels), SVGs, CSS or JSON themes and any text (their color codes), PDF and Word
 documents (codes in their text), and PowerPoint, Word and Excel files (their theme palette).
+Color words count too, in English and Spanish ("navy and gold", "azul marino y blanco"), and a
+description ("dark blue, light blue and another blue to complete") goes to the setup's small
+model, which turns it into a palette.
 Typed or written colors win over sampled ones; near-white, near-black and greys are never the
 primary. The logo is re-encoded small and stored inline, so it is signed with the solution;
 a remote URL is refused (`invalid_branding`), as is any color that is not `#rrggbb`. The

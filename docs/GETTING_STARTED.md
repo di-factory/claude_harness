@@ -19,7 +19,8 @@ It installs what is missing (Docker, Caddy, uv), then guides you through:
    several (`1,2`), it checks first whether they can share an instance and, if not, asks you
    to choose one (the other can be a second client: run the setup again);
 3. the client's look (optional): give it any brand material — a logo, photos, a palette, a
-   brand guide (PDF, slides, Word), a CSS theme, a folder of them, or colors like `#4a1450`
+   brand guide (PDF, slides, Word), a CSS theme, a folder of them, colors like `#4a1450`,
+   or just words ("navy and gold", "azul marino y blanco", "dark blue plus another blue")
    — and the landing page and the chat take its colors and logo;
    then the questionnaire: the client's business (what they do, services, prices, address,
    policies) and a few settings, with Di-Factory's defaults filled in. On request a business
