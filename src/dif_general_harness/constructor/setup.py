@@ -34,6 +34,7 @@ from typing import Any
 
 from ..core.messages import Message
 from ..providers.base import ModelProvider, ModelRequest, ProviderMessage
+from ..runtime.routing import RoutingError, check_anthropic_key
 from ..spec.errors import SpecError
 from ..spec.loader import PackCatalog, load_instance
 from ..tenancy import FileSecrets, default_secrets_dir, local_backend
@@ -141,6 +142,14 @@ def _step(n: int, title: str) -> None:
     _say(f"\n── Step {n}/5 · {title} " + "─" * max(0, 50 - len(title)))
 
 
+def _key_problem(key: str) -> str | None:
+    try:
+        check_anthropic_key(key, {})
+    except RoutingError as exc:
+        return str(exc)
+    return None
+
+
 def _yes(answer: str, default: bool = False) -> bool:
     text = answer.strip().lower()
     return default if not text else text in {"y", "yes", "s", "si", "sí"}
@@ -183,6 +192,9 @@ class Setup:
     def model_key(self) -> bool:
         _step(1, "Model API key")
         found = local_backend().get("anthropic")
+        if found and (problem := _key_problem(found)):
+            _say(f"The stored Anthropic key cannot work: {problem}.")
+            found = None
         if found:
             _say(f"Found an Anthropic key ({len(found)} characters, {found[:10]}...).")
             if not _yes(self.ask("Use it? [Y/n] "), default=True):
@@ -201,6 +213,9 @@ class Setup:
                 continue
             if not value.startswith("sk-"):
                 _say("That does not look like an API key (it starts with sk-). Try again.")
+                continue
+            if problem := _key_problem(value):
+                _say(f"That cannot work: {problem}. Paste it once more, just once.")
                 continue
             folder = default_secrets_dir()
             folder.mkdir(parents=True, exist_ok=True)

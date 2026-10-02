@@ -229,9 +229,12 @@ docker compose -f deploy/build/<id>/docker-compose.yml restart
 | `missing_file ... tpl_reminder...` | The instance was copied without the files next to it | Use `spec copy`, which copies them too |
 | `secrets.anthropic: not set` | Variables set by hand are gone after a new login | `secrets set anthropic` once; `secrets check` shows what is missing |
 | `nothing was received` | The terminal paste never reached the hidden prompt | `--from-env-file ~/.env`, or pipe it from your Mac (Phase 5) |
+| A handoff although the FAQ has the answer (in other words, or in English) | Older instances match words only | `git pull` and rebuild: the appointment pack now reads small FAQs whole (`read_whole_below`) |
 | "No tengo esa información" and a handoff | The FAQ does not cover the question: the agent never invents | Answer it in the questionnaire and run `build` again |
+| `API key is invalid` (401) in the logs, or `holds N keys one after another` | The paste arrived more than once (some terminals repeat it into hidden prompts), so the stored key is several keys glued together | `secrets set anthropic` again and paste once; the setup and `secrets set` now refuse such keys. Then copy it into `deploy/build/<id>/secrets/` (or run `./setup.sh` again) |
 | `subscription (OAuth) token` | A Claude Pro/Max login token was used | Create an API key at console.anthropic.com |
 | `not tied to a workspace` | The key belongs to no workspace (its text alone does not tell) | Create the key inside a workspace (or set `models.providers.anthropic.workspace_id`) |
 | `cannot run together in one instance yet` | Each pack sets its own tools, budgets and consent; two in one instance would loosen one of them | One pack per instance; set up the other need as a second client |
+| `Bind for 127.0.0.1:8080 failed: port is already allocated` | Another client's container still holds the port (one client is served per server) | `git pull` and run `./setup.sh` again: it now stops the previous client first (its data is kept) |
 | `/chat` answers `no web chat here` | The instance was built from a pack without a `web` channel, or before the pack had one | `git pull`, then `./setup.sh` and reuse the client: it signs and deploys it again |
 | `git push` asks for a password and fails | GitHub refuses account passwords for git | `gh auth login` (browser) or a personal access token |

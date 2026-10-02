@@ -30,10 +30,10 @@ if have apt-get; then
 else
   echo "Not an apt system: install Docker, the compose plugin and Caddy yourself; continuing."
 fi
-if ! have uv; then
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  export PATH="$HOME/.local/bin:$PATH"
-fi
+export PATH="$HOME/.local/bin:$PATH"
+have uv || curl -LsSf https://astral.sh/uv/install.sh | sh
+# later logins find uv too (the installer does not always manage it)
+grep -qs 'HOME/.local/bin' ~/.bashrc || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 uv sync -q
 echo "ok"
 
@@ -63,6 +63,15 @@ say "Starting it online"
 docker_cmd=(docker)
 docker info >/dev/null 2>&1 || docker_cmd=(sudo docker)  # the docker group applies from next login
 sudo chown -R 10001 "$folder/secrets" && sudo chmod 600 "$folder"/secrets/* 2>/dev/null || true
+# One client is served per server (Caddy -> 127.0.0.1:8080): stop any other one first.
+# Its data volume stays; ./setup.sh with that client brings it back.
+for other in deploy/build/*/docker-compose.yml; do
+  [[ -f "$other" && "$(cd "$(dirname "$other")" && pwd)" != "$(cd "$folder" && pwd)" ]] || continue
+  if [[ -n "$("${docker_cmd[@]}" compose -f "$other" ps -q 2>/dev/null)" ]]; then
+    echo "Stopping the previous client $(basename "$(dirname "$other")") (its data is kept)"
+    "${docker_cmd[@]}" compose -f "$other" down
+  fi
+done
 sudo cp "$folder/Caddyfile" /etc/caddy/Caddyfile
 sudo systemctl reload caddy || sudo systemctl restart caddy
 "${docker_cmd[@]}" compose -f "$folder/docker-compose.yml" up -d --build

@@ -31,6 +31,13 @@ def check_anthropic_key(key: Any, settings: dict[str, Any]) -> None:
             "the anthropic secret is a Claude subscription (OAuth) token; subscriptions cannot"
             " run applications. Create an API key at console.anthropic.com (API Keys)"
         )
+    if key.count("sk-ant-") > 1:
+        raise RoutingError(
+            f"the anthropic secret holds {key.count('sk-ant-')} keys one after another (the"
+            " paste arrived more than once); set it again with exactly one key"
+        )
+    if any(c.isspace() for c in key):
+        raise RoutingError("the anthropic secret contains spaces or line breaks; set it again")
 
 
 def _anthropic(role: ModelRoleConfig, settings: dict[str, Any]) -> ModelProvider:

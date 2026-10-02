@@ -1,7 +1,9 @@
 """Knowledge in an agent's run: the ``knowledge.search_<corpus>`` tools, the ``citations``
 check on answers, and how citations reach the contact.
 
-- **Search:** returns the chunks scoring at least ``min_score``, each with a source marker
+- **Search:** returns the chunks scoring at least ``min_score`` (a small corpus with
+  ``read_whole_below`` comes back whole, and the agent is told what to do when none of it
+  answers), each with a source marker
   (``kb:<id>``) when the corpus has ``cite: true``. Nothing found tells the agent what the
   corpus's ``not_found`` asks for (``say_so``: say the documents do not cover it; ``handoff``:
   pass it to a person) and evaluates the escalation rules with ``knowledge.not_found``.
@@ -66,6 +68,13 @@ def search_tool(instance: Instance, corpus: str) -> Tool:
             item = {"document": h.title, "section": h.section, "text": h.text, "score": h.score}
             results.append({"source": f"kb:{h.id}", **item} if cite else item)
         out: dict[str, Any] = {"found": True, "results": results}
+        if settings.get("read_whole_below"):
+            out["note"] = (
+                f"These may be all the {corpus} documents. Answer only from what they say;"
+                " they may be in another language than the contact's, so answer in the"
+                " contact's language. If none of them answers the question: "
+                + NOT_FOUND.get(not_found, NOT_FOUND["say_so"])
+            )
         if cite:
             out["how_to_cite"] = (
                 "Answer only from these results. Put the source marker in brackets, like"

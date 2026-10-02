@@ -124,11 +124,25 @@ def test_running_again_reuses_the_client(
 def test_subscription_tokens_are_refused(
     examples: Path, tmp_path: Path, home: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    keys: Any = iter(["sk-ant-oat01-abc", KEY])
+    keys: Any = iter(["sk-ant-oat01-abc", KEY * 4, KEY])
     setup = Setup([examples], tmp_path, ask=lambda _: "", ask_secret=lambda _: next(keys))
     assert setup.model_key()
-    assert "subscription (OAuth) token" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "subscription (OAuth) token" in out
+    assert "holds 4 keys one after another" in out  # a paste that arrived four times
     assert (home / ".dif" / "secrets" / "anthropic").read_text() == KEY
+
+
+def test_a_broken_stored_key_is_asked_again(
+    tmp_path: Path, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    secrets = home / ".dif" / "secrets"
+    secrets.mkdir(parents=True)
+    (secrets / "anthropic").write_text(KEY * 4)
+    setup = Setup([tmp_path], tmp_path, ask=lambda _: "", ask_secret=lambda _: KEY)
+    assert setup.model_key() and setup.key == KEY
+    assert "The stored Anthropic key cannot work" in capsys.readouterr().out
+    assert (secrets / "anthropic").read_text() == KEY
 
 
 def test_choices_accept_several_numbers() -> None:
