@@ -41,7 +41,7 @@ from ..tenancy import FileSecrets, default_secrets_dir, local_backend
 from .build import BuildResult, _extends, build
 from .catalog import match
 from .deploy import REPO_ROOT, approve, check_approval, new_key, plan_docker, stage
-from .interview import Question
+from .interview import Question, load_answers
 
 Ask = Callable[[str], str]
 DIFACTORY_DEFAULTS = {"main_model": "claude-sonnet-5-5", "fast_model": "claude-haiku-4-5"}
@@ -108,8 +108,10 @@ def _pack_card(data: dict[str, Any]) -> str:
     agents = "; ".join(
         f"{name}: {a.get('description') or ''}" for name, a in data.get("agents", {}).items()
     )
+    needs = _needs(data)
+    warning = f" NEEDS {needs}: do not recommend it." if needs else ""
     return (f"- {sol['id']} ({sol.get('name') or sol['id']}): {sol.get('description') or ''}"
-            f" Agents: {agents}")  # fmt: skip
+            f" Agents: {agents}{warning}")  # fmt: skip
 
 
 def parse_advice(text: str, known: set[str]) -> Advice | None:
@@ -140,6 +142,15 @@ def _say(text: str = "") -> None:
 
 def _step(n: int, title: str) -> None:
     _say(f"\n── Step {n}/5 · {title} " + "─" * max(0, 50 - len(title)))
+
+
+def _needs(data: dict[str, Any]) -> str:
+    """What a pack's models need beyond the Anthropic key the setup stores, if anything."""
+    providers = (data.get("models") or {}).get("providers") or {}
+    other = sorted(name for name in providers if name != "anthropic")
+    if not other:
+        return ""
+    return ", ".join(f"its own {name} model endpoint" for name in other) + " (not set up here)"
 
 
 def _key_problem(key: str) -> str | None:
@@ -316,7 +327,12 @@ class Setup:
         for i, pid in enumerate(options, 1):
             sol = packs[pid]["solution"]
             star = "★" if pid in advice.packs else " "
-            _say(f" {star}{i}. {sol.get('name') or pid}: {(sol.get('description') or '')[:90]}")
+            needs = _needs(packs[pid])
+            note = f" [needs: {needs}]" if needs else ""
+            _say(
+                f" {star}{i}. {sol.get('name') or pid}: {(sol.get('description') or '')[:90]}"
+                + note
+            )
         default = "1"  # the first recommendation (or the first pack)
         while True:
             answer = self.ask(f"Which one? [1-{len(options)}, Enter = {default}] ")
@@ -420,7 +436,7 @@ class Setup:
 
     # --- 4. try it ----------------------------------------------------------------------
 
-    def try_it(self, result: BuildResult) -> None:
+    def try_it(self, result: BuildResult) -> bool:
         _step(4, "Built; one real test question")
         assert result.resolved is not None
         spec = result.resolved.spec
@@ -428,9 +444,10 @@ class Setup:
         locale = (spec.solution.locale or "en")[:2]
         question = TEST_QUESTION.get(locale, TEST_QUESTION["en"])
         _say(f"Asking: {question}\n")
+        worked = True
         if self.run is not None:
             packs = [a for p in self.packs for a in ("--packs", str(p))]
-            self.run(["run", str(result.spec_path), *packs, "-m", question])
+            worked = self.run(["run", str(result.spec_path), *packs, "-m", question]) == 0
         missing = [n for n in sorted(spec.secrets) if n != "anthropic"
                    and not local_backend().get(n)]  # fmt: skip
         if missing:
@@ -439,6 +456,11 @@ class Setup:
         if self.pending:
             _say(f"Pending Di-Factory settings: {', '.join(self.pending)}. Set them with:"
                  f" dif-general-harness adjust {result.spec_path} --set NAME=VALUE")  # fmt: skip
+        if not worked:
+            _say("\nThe test question did not work (see the message above), so it is not put"
+                 " online: it would not start there either. Fix that and run ./setup.sh"
+                 " again (reuse this client).")  # fmt: skip
+        return worked
 
     # --- 5. online ----------------------------------------------------------------------
 
@@ -537,12 +559,44 @@ class Setup:
             resolved,
         )  # fmt: skip
 
+    def refresh(self, reused: BuildResult) -> BuildResult:
+        """Rebuild a reused client from its saved answers, so pack updates (wording, new
+        settings, fixes) reach it. Nothing changes unless the rebuild validates."""
+        if not reused.answers_path.exists():
+            return reused
+        if not _yes(self.ask("Rebuild it from its saved answers? It brings in pack updates;"
+                             " hand edits to its FAQ files are replaced (edit the answers"
+                             " file instead). [Y/n] "), default=True):  # fmt: skip
+            return reused
+        try:
+            answers = load_answers(reused.answers_path)
+            extends = json.loads(reused.spec_path.read_text(encoding="utf-8"))["extends"]
+            packs = [str(ref).split("@", 1)[0] for ref in extends]
+            with tempfile.TemporaryDirectory() as tmp:  # a dry run first: nothing half-written
+                trial = build(self.catalog, packs, Path(tmp), answers=answers)
+        except Exception as exc:  # a broken answers file: keep the client as it is
+            _say(f"Could not rebuild ({exc}); keeping it as it is.")
+            return reused
+        if not trial.ok:
+            _say("Its saved answers no longer pass with the current pack; keeping it as it is:")
+            for problem in trial.problems:
+                _say(f"  - {problem}")
+            for issue in trial.resolved.issues if trial.resolved else []:
+                if issue.severity == "error":
+                    _say(f"  - {issue}")
+            return reused
+        result = build(self.catalog, packs, self.out, answers=answers)
+        _say(f"Rebuilt {result.instance_id} from {reused.answers_path.name}.")
+        return result
+
     def run_all(self) -> int:
         _say("Di-Factory harness setup. Ctrl+C stops at any time; nothing is half-written.")
         self.model_key()
         reused = self.existing()
         if reused is not None:
-            self.try_it(reused)
+            reused = self.refresh(reused)
+            if not self.try_it(reused):
+                return 1
             self.go_online(reused)
             return 0
         pack_ids = self.choose_pack()
@@ -560,7 +614,8 @@ class Setup:
             _say(f"Edit {result.answers_path} and run: dif-general-harness build {chosen}"
                  f" --answers {result.answers_path} --out {self.out}")  # fmt: skip
             return 1
-        self.try_it(result)
+        if not self.try_it(result):
+            return 1
         self.go_online(result)
         _say("\nDone. Chat with it any time:")
         packs = " ".join(f"--packs {p}" for p in self.packs)
