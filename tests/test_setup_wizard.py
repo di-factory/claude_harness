@@ -113,7 +113,7 @@ def test_running_again_reuses_the_client(
     assert first.run_all() == 0
     assert "Found an Anthropic key" in capsys.readouterr().out
 
-    again = iter(["", "1"])  # keep the key; reuse client 1
+    again = iter(["", "1", ""])  # keep the key; reuse client 1; rebuild it (Enter)
     second = Setup([examples], clients, ask=lambda _: next(again), run=run)
     assert second.run_all() == 0
     out = capsys.readouterr().out

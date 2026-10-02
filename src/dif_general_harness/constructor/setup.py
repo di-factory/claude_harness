@@ -41,7 +41,7 @@ from ..tenancy import FileSecrets, default_secrets_dir, local_backend
 from .build import BuildResult, _extends, build
 from .catalog import match
 from .deploy import REPO_ROOT, approve, check_approval, new_key, plan_docker, stage
-from .interview import Question
+from .interview import Question, load_answers
 
 Ask = Callable[[str], str]
 DIFACTORY_DEFAULTS = {"main_model": "claude-sonnet-5-5", "fast_model": "claude-haiku-4-5"}
@@ -537,11 +537,42 @@ class Setup:
             resolved,
         )  # fmt: skip
 
+    def refresh(self, reused: BuildResult) -> BuildResult:
+        """Rebuild a reused client from its saved answers, so pack updates (wording, new
+        settings, fixes) reach it. Nothing changes unless the rebuild validates."""
+        if not reused.answers_path.exists():
+            return reused
+        if not _yes(self.ask("Rebuild it from its saved answers? It brings in pack updates;"
+                             " hand edits to its FAQ files are replaced (edit the answers"
+                             " file instead). [Y/n] "), default=True):  # fmt: skip
+            return reused
+        try:
+            answers = load_answers(reused.answers_path)
+            extends = json.loads(reused.spec_path.read_text(encoding="utf-8"))["extends"]
+            packs = [str(ref).split("@", 1)[0] for ref in extends]
+            with tempfile.TemporaryDirectory() as tmp:  # a dry run first: nothing half-written
+                trial = build(self.catalog, packs, Path(tmp), answers=answers)
+        except Exception as exc:  # a broken answers file: keep the client as it is
+            _say(f"Could not rebuild ({exc}); keeping it as it is.")
+            return reused
+        if not trial.ok:
+            _say("Its saved answers no longer pass with the current pack; keeping it as it is:")
+            for problem in trial.problems:
+                _say(f"  - {problem}")
+            for issue in trial.resolved.issues if trial.resolved else []:
+                if issue.severity == "error":
+                    _say(f"  - {issue}")
+            return reused
+        result = build(self.catalog, packs, self.out, answers=answers)
+        _say(f"Rebuilt {result.instance_id} from {reused.answers_path.name}.")
+        return result
+
     def run_all(self) -> int:
         _say("Di-Factory harness setup. Ctrl+C stops at any time; nothing is half-written.")
         self.model_key()
         reused = self.existing()
         if reused is not None:
+            reused = self.refresh(reused)
             self.try_it(reused)
             self.go_online(reused)
             return 0

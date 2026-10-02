@@ -30,7 +30,10 @@ It installs what is missing (Docker, Caddy, uv), then guides you through:
    admin commands.
 
 Run it again at any time: it reuses the key and offers the clients already set up. Every
-answer is kept in `clients/<id>.answers.yaml`, so a correction is "edit, run build again".
+answer is kept in `clients/<id>.answers.yaml`, so a correction is "edit the answers, run
+`./setup.sh`, reuse the client": it rebuilds the client from its answers (bringing in any pack
+updates since; hand edits to its FAQ files are replaced), signs it again and redeploys. A
+rebuild that no longer validates changes nothing.
 
 ## The step-by-step way
 
