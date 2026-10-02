@@ -19,6 +19,7 @@ if have apt-get; then
   missing=()
   have docker || missing+=(docker.io)
   docker compose version >/dev/null 2>&1 || missing+=(docker-compose-v2)
+  docker buildx version >/dev/null 2>&1 || missing+=(docker-buildx)  # compose builds with it
   have caddy || missing+=(caddy)
   have git || missing+=(git)
   have curl || missing+=(curl)
