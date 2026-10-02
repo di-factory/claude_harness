@@ -38,6 +38,13 @@ grep -qs 'HOME/.local/bin' ~/.bashrc || echo 'export PATH="$HOME/.local/bin:$PAT
 uv sync -q
 # Claude Code, for the client's own Claude (the handover folder); its native installer
 have claude || curl -fsSL https://claude.ai/install.sh | bash || true
+# ~/.local/bin is not on this terminal's PATH until the next login: link the tools into
+# /usr/local/bin, which every shell already searches, so `uv` and `claude` work right away
+for tool in uv uvx claude; do
+  if [[ -x "$HOME/.local/bin/$tool" ]] && have sudo; then
+    sudo ln -sf "$HOME/.local/bin/$tool" "/usr/local/bin/$tool"
+  fi
+done
 if have claude; then
   echo "Claude Code: $(claude --version 2>/dev/null | head -1)"
 else
@@ -101,7 +108,6 @@ for _ in $(seq 1 60); do
   Admin API:   curl -H "Authorization: Bearer \$(cat ~/.dif/secrets/admin_token)" https://$host/admin/inbox
   Logs:        ${docker_cmd[*]} compose -f $folder/docker-compose.yml logs -f
   Next:        fine-tune: ./setup.sh again (reuse the client); final: /handover in Claude Code
-               In this terminal first run: source ~/.bashrc   (so uv and claude are found)
 EOF
     exit 0
   fi
