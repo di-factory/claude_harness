@@ -108,6 +108,9 @@ async def test_the_landing_page_opens_the_chat(tmp_path: Path) -> None:
         page = await client.get("/")
         assert page.status_code == 200 and "<h1>ACME</h1>" in page.text
         assert 'href="/chat/web"' in page.text
+        # the page's chat buttons are plain links to the chat page; only the floating one
+        # opens the panel
+        assert page.text.count('href="/chat/web"') == 4 and page.text.count("data-chat") == 2
     plain = Env(tmp_path / "plain", [])
     inst, _, client = await plain.open()
     async with inst, client:
