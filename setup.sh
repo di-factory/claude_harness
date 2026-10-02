@@ -51,7 +51,10 @@ public_url=""
 
 rm -f .dif/online
 for d in deploy/build/*/secrets; do  # owned by the container's user once online
-  [[ -d "$d" && ! -w "$d" ]] && sudo chown -R "$USER" "$d"
+  [[ -d "$d" ]] || continue
+  if [[ ! -w "$d" ]] || sudo find "$d" ! -user "$USER" -print -quit | grep -q .; then
+    sudo chown -R "$USER" "$d"
+  fi
 done
 uv run dif-general-harness setup ${public_url:+--public-url "$public_url"} "$@"
 
