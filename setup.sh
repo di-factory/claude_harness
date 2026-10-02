@@ -63,6 +63,15 @@ say "Starting it online"
 docker_cmd=(docker)
 docker info >/dev/null 2>&1 || docker_cmd=(sudo docker)  # the docker group applies from next login
 sudo chown -R 10001 "$folder/secrets" && sudo chmod 600 "$folder"/secrets/* 2>/dev/null || true
+# One client is served per server (Caddy -> 127.0.0.1:8080): stop any other one first.
+# Its data volume stays; ./setup.sh with that client brings it back.
+for other in deploy/build/*/docker-compose.yml; do
+  [[ -f "$other" && "$(cd "$(dirname "$other")" && pwd)" != "$(cd "$folder" && pwd)" ]] || continue
+  if [[ -n "$("${docker_cmd[@]}" compose -f "$other" ps -q 2>/dev/null)" ]]; then
+    echo "Stopping the previous client $(basename "$(dirname "$other")") (its data is kept)"
+    "${docker_cmd[@]}" compose -f "$other" down
+  fi
+done
 sudo cp "$folder/Caddyfile" /etc/caddy/Caddyfile
 sudo systemctl reload caddy || sudo systemctl restart caddy
 "${docker_cmd[@]}" compose -f "$folder/docker-compose.yml" up -d --build
