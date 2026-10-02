@@ -118,3 +118,49 @@ def test_invalid_branding_is_caught(examples: Path, branding: dict[str, object])
     path.write_text(json.dumps(data))
     resolved = load_instance(path, PackCatalog(roots=[examples]))
     assert "invalid_branding" in {i.code for i in resolved.issues if i.severity == "error"}
+
+
+def test_colors_in_words_and_descriptions(tmp_path: Path) -> None:
+    from dif_general_harness.constructor.brand import named_colors
+
+    said = "darkblue, lightblue, and white.. also use any other kind of blue to complete"
+    alone = read_brand(said.split(), text=said)  # no model at hand: the names still count
+    assert alone.branding() == {"colors": {"primary": "#00008b", "accent": "#add8e6"}}
+    assert not any(n.startswith("not found") for n in alone.notes)  # words are not files
+    assert "not read as colors: any other kind to complete" in alone.notes
+
+    asked: list[str] = []
+
+    def model(text: str) -> list[str]:
+        asked.append(text)
+        return ["#0b2545", "#8da9c4", "#13315c", "#ffffff"]
+
+    described = read_brand(said.split(), text=said, describe=model)
+    assert asked == [said]  # the whole sentence goes to the model
+    assert described.branding() == {"colors": {"primary": "#0b2545", "accent": "#8da9c4"}}
+    plain = read_brand(["navy", "gold"], text="navy gold", describe=model)
+    assert len(asked) == 1 and plain.branding() == {"colors": {"primary": "#000080",
+                                                               "accent": "#ffd700"}}  # fmt: skip
+
+    assert named_colors("Azul marino y dorado, con dark blue")[0] == [
+        "#1b2a4a", "#d4af37", "#00008b"]  # fmt: skip
+    logo = _logo(tmp_path / "logo.png")
+    mixed = read_brand([str(logo), "navy"], text=f"{logo} navy", describe=model)
+    assert mixed.branding()["colors"]["primary"] == "#000080" and len(asked) == 1
+
+
+def test_the_setup_asks_the_model_for_a_described_palette(
+    examples: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dif_general_harness.constructor.setup import Setup
+    from dif_general_harness.core.messages import Message
+    from dif_general_harness.providers import FakeProvider
+
+    advisor = FakeProvider([Message.assistant('{"colors": ["#0b2545", "#8da9c4"]}')])
+    said = "darkblue, lightblue, and white.. also use any other kind of blue to complete"
+    setup = Setup([examples], tmp_path, ask=lambda _: said, advisor=lambda _: advisor)
+    setup.key = "sk-ant-api03-" + "k" * 90
+    assert setup.ask_brand() == {"colors": {"primary": "#0b2545", "accent": "#8da9c4"}}
+    assert advisor.requests[0].messages[0].text() == said
+    out = capsys.readouterr().out
+    assert "colors from your description" in out and "not found" not in out
