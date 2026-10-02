@@ -21,6 +21,11 @@ it removes its chunks from the index at once.
   or by cosine similarity (``min_similarity``, default 0.5), and its ``score`` is the
   higher of the two. Vectors are compared in-process (exact, fine to about 100k chunks per
   corpus); a failed embedding call falls back to keyword scoring, never to "not found".
+- **Small corpora:** with ``retrieval.read_whole_below`` (characters), a corpus smaller than
+  that is returned whole on every search, the matching chunks first, and the agent decides
+  from all of it. A business FAQ is a few thousand characters: reading it whole costs little
+  and survives other words and other languages ("¿cuánto cuesta?" against "Prices"), where
+  word matching would say "not found".
 """
 
 from __future__ import annotations
@@ -449,6 +454,9 @@ class KnowledgeBase:
         index = await self._index(corpus)
         wanted = set(terms(query))
         n = len(index.rows)
+        whole = int(settings.get("read_whole_below") or 0)
+        if n and whole and sum(len(r["text"]) for r in index.rows) <= whole:
+            return self._whole(corpus, index, wanted)
         if not wanted or not n:
             return []
         avgdl = sum(index.lengths) / n or 1.0
@@ -478,6 +486,18 @@ class KnowledgeBase:
             for cov, _, r in scored
             if cov >= floor
         ][:top_k]
+
+    def _whole(self, corpus: str, index: _Index, wanted: set[str]) -> list[Hit]:
+        """Every chunk of a small corpus: the ones sharing words with the query first (by
+        how many), then the rest in document order."""
+        shared = [sum(1 for t in wanted if tf[t]) for tf in index.tfs]
+        order = sorted(range(len(index.rows)), key=lambda i: -shared[i])
+        return [
+            Hit(r["id"], corpus, r["uri"], r["title"], r["section"], r["text"],
+                round(shared[i] / len(wanted), 3) if wanted else 0.0)
+            for i in order
+            for r in [index.rows[i]]
+        ]  # fmt: skip
 
     async def _fuse(
         self, corpus: str, query: str, index: _Index,

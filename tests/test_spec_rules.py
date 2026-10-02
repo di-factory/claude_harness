@@ -91,6 +91,13 @@ PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
         "invalid_not_found",
         lambda d: d["knowledge"]["corpora"]["docs"]["retrieval"].update(not_found="guess"),
     ),
+    (
+        "pyme-appointment-agent",
+        "invalid_read_whole",
+        lambda d: d["knowledge"]["corpora"]["clinic_faq"]["retrieval"].update(
+            read_whole_below="all"
+        ),
+    ),
     ("dev-cell", "unknown_workspace", lambda d: d["agents"]["developer"].update(workspace="nope")),
     ("opc-c-suite", "unknown_agent", lambda d: d["triggers"]["cto-health"].update(agent="cfo")),
     ("opc-c-suite", "missing_ledger", lambda d: d.pop("ledger")),

@@ -309,6 +309,12 @@ Agents reach a corpus through the generated `knowledge.search_<corpus>` tool.
   qualifies by `min_score` or by `min_similarity` (cosine, default 0.5), and its score is
   the higher of the two. Without an embedding role, or while the embedding model is down,
   searches use keywords only.
+- `retrieval.read_whole_below` (characters, 0 = off): a corpus smaller than this comes back
+  whole on every search, the passages sharing words with the query first, and the agent is
+  told to answer only from it, in the contact's language, or else follow `not_found`. For a
+  business FAQ (a few thousand characters) this is cheap, and it finds answers written in
+  other words or another language that word matching misses. The appointment pack uses
+  12000. Values: 0 to 200000 (`invalid_read_whole`).
 
 ### 5.7 `memory`
 

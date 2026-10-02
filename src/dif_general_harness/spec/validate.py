@@ -260,6 +260,12 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
                 err("invalid_questionnaire", f"{where}.questionnaire",
                     "a list of {id (lowercase), question, heading?, required?, example?}"
                     " with unique ids")  # fmt: skip
+        whole = (corpus_cfg.get("retrieval") or {}).get("read_whole_below")
+        if whole is not None and (
+            isinstance(whole, bool) or not isinstance(whole, int) or not 0 <= whole <= 200_000
+        ):
+            err("invalid_read_whole", f"{where}.retrieval.read_whole_below",
+                "read_whole_below is a size in characters, from 0 (off) to 200000")  # fmt: skip
         not_found = (corpus_cfg.get("retrieval") or {}).get("not_found")
         if not_found is not None and not_found not in ("say_so", "handoff"):
             err("invalid_not_found", f"{where}.retrieval", "not_found must be say_so or handoff")

@@ -229,6 +229,7 @@ docker compose -f deploy/build/<id>/docker-compose.yml restart
 | `missing_file ... tpl_reminder...` | The instance was copied without the files next to it | Use `spec copy`, which copies them too |
 | `secrets.anthropic: not set` | Variables set by hand are gone after a new login | `secrets set anthropic` once; `secrets check` shows what is missing |
 | `nothing was received` | The terminal paste never reached the hidden prompt | `--from-env-file ~/.env`, or pipe it from your Mac (Phase 5) |
+| A handoff although the FAQ has the answer (in other words, or in English) | Older instances match words only | `git pull` and rebuild: the appointment pack now reads small FAQs whole (`read_whole_below`) |
 | "No tengo esa información" and a handoff | The FAQ does not cover the question: the agent never invents | Answer it in the questionnaire and run `build` again |
 | `API key is invalid` (401) in the logs, or `holds N keys one after another` | The paste arrived more than once (some terminals repeat it into hidden prompts), so the stored key is several keys glued together | `secrets set anthropic` again and paste once; the setup and `secrets set` now refuse such keys. Then copy it into `deploy/build/<id>/secrets/` (or run `./setup.sh` again) |
 | `subscription (OAuth) token` | A Claude Pro/Max login token was used | Create an API key at console.anthropic.com |

@@ -261,3 +261,42 @@ async def test_admin_documents_and_scheduled_sync(tmp_path: Path) -> None:
         r = await client.post("/admin/knowledge/faq/sync", headers=ADMIN_H)
         assert r.json()["unchanged"] == 2
         assert (await client.get("/admin/audit/verify", headers=ADMIN_H)).json()["intact"]
+
+
+async def test_a_small_corpus_is_read_whole(db: Any, scope: Scope, tmp_path: Path) -> None:
+    docs = tmp_path / "small"
+    docs.mkdir()
+    (docs / "faq.md").write_text(FAQ)
+    corpora = {"faq": {"sources": [{"type": "file", "path": str(docs)}],
+                       "retrieval": {"min_score": 0.5, "read_whole_below": 2000}}}  # fmt: skip
+    kb = KnowledgeBase(db, scope, corpora)
+    await kb.sync("faq")
+    hits = await kb.search("faq", "¿Cuánto cuesta y aceptan tarjeta?")  # Spanish, no shared words
+    assert {h.section for h in hits} >= {"Sonrisa FAQ > Payment methods"}  # still found
+    first = await kb.search("faq", "Is there parking?")
+    assert "Parking" in first[0].text  # the matching section comes first
+    corpora["faq"]["retrieval"]["read_whole_below"] = 100  # too big now: word matching again
+    assert await KnowledgeBase(db, scope, corpora).search("faq", "¿Cuánto cuesta?") == []
+
+
+async def test_the_agent_reads_a_small_faq_in_another_language(tmp_path: Path) -> None:
+    def answer(request: ModelRequest) -> Message:
+        result = request.messages[-1].content[0]
+        assert isinstance(result, ToolResultBlock) and result.content["found"] is True
+        assert "debit and credit cards" in str(result.content["results"])
+        assert "contact's language" in result.content["note"]
+        return Message.assistant("Aceptamos efectivo, débito y crédito.")
+
+    base = _kb_spec(_docs(tmp_path))
+
+    def edit(spec: dict[str, Any]) -> None:
+        base(spec)
+        retrieval = spec["knowledge"]["corpora"]["faq"]["retrieval"]
+        retrieval.update(read_whole_below=20000, cite=False)
+        spec["policies"].pop("verification")
+
+    script = [calls(("k1", "knowledge.search_faq", {"query": "¿formas de pago?"})), answer]
+    env = Env(tmp_path, script, edit=edit)
+    inst, _, client = await env.open()
+    async with inst, client:
+        assert await _ask(client, "¿Cómo puedo pagar?") == "Aceptamos efectivo, débito y crédito."
