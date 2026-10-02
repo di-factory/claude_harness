@@ -52,6 +52,9 @@ def test_a_new_client_is_served_like_the_container_does(
     examples: Path, tmp_path: Path, home: Path
 ) -> None:
     folder = _set_up(examples, tmp_path)  # the setup runs its own event loop
+    handover = home / "clinica-sonrisa"  # written with the deploy, for the client's own Claude
+    assert "who runs **Clínica Sonrisa**" in (handover / "CLAUDE.md").read_text()
+    assert str((tmp_path / "repo").resolve()) in (handover / "negocio").read_text()
     asyncio.run(_serve(folder, tmp_path))
 
 

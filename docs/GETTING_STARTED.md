@@ -231,7 +231,9 @@ docker compose -f deploy/build/<id>/docker-compose.yml restart
 
 ## Handing the solution to the client
 
-When the client runs their assistant themselves, with their own Claude, on the server:
+Every time `./setup.sh` puts a client online it also writes `~/<tenant id>/`, the folder the
+client's own Claude starts from (and `setup.sh` installs Claude Code). To name the owner and
+their language, or to rewrite it after a change:
 
 ```bash
 uv run dif-general-harness handover clients/<id>.json --owner Roberta --lang es \
