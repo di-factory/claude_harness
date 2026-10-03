@@ -51,6 +51,7 @@ DIFACTORY_DEFAULTS = {"main_model": "claude-sonnet-5-5", "fast_model": "claude-h
 TEST_QUESTION = {"es": "¿De qué se trata este negocio?", "en": "What is this business about?"}
 ONLINE_MARKER = Path(".dif") / "online"
 ADVISOR_MODEL = "claude-haiku-4-5"
+WEB_CODE = "web_access_code"  # the secret a closed web chat asks for
 CONSULTANT_MODEL = "claude-opus-5"  # DIF_CONSULTANT_MODEL changes it
 # what a draft instance lacks only because nobody answered yet; anything else is a conflict
 _UNANSWERED = {"missing_value", "invalid_value", "model_not_set", "unresolved_variable",
@@ -511,6 +512,7 @@ class Setup:
         branding = self.ask_brand()
         if branding:
             defaults["branding"] = branding
+        self.ask_web_access(pack_ids)
         defaults.update(self.carried)
         result = build(self.catalog, pack_ids, self.out, answers=defaults, ask=self._question)
         if self.gaps:
@@ -523,6 +525,34 @@ class Setup:
                 summary.write("\n## The business consultant's recommendations\n\n")
                 summary.writelines(f"- {r}\n" for r in self.recommendations)
         return result
+
+    def ask_web_access(self, pack_ids: list[str]) -> None:
+        """A pack's open web chat: keep it open to anyone with the link, or close it for
+        this client behind an access code (closing is a tightening, so the instance may)."""
+        names = [
+            name for p in pack_ids
+            for name, ch in (self.catalog.find(p).data.get("channels") or {}).items()
+            if isinstance(ch, dict) and ch.get("type") == "web" and ch.get("public") is True
+        ]  # fmt: skip
+        if not names or _yes(self.ask(
+            "Should anyone with the link use the web chat (and see the web page's chat"
+            " buttons)? It answers from what this client gives it. [Y/n] "
+        ), default=True):  # fmt: skip
+            return
+        channels = self.carried.setdefault("channels", {})
+        for name in names:
+            channels[name] = {"public": False, "credentials": {"$secret": WEB_CODE}}
+        self.carried.setdefault("secrets", {})[WEB_CODE] = {
+            "description": "The web chat's access code (for the people allowed to chat)"
+        }
+        if not (local_backend().get(WEB_CODE) or FileSecrets(default_secrets_dir()).get(WEB_CODE)):
+            target = default_secrets_dir() / WEB_CODE
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(secrets.token_urlsafe(9), encoding="utf-8")
+            target.chmod(0o600)
+        _say(f"   The chat asks for an access code: it is in {default_secrets_dir() / WEB_CODE}"
+             " (give it only to the people who should chat; the page shows them no chat"
+             " buttons).")  # fmt: skip
 
     def review(self) -> None:
         """The consultant reads all the business answers and says what to improve."""

@@ -175,8 +175,9 @@ def create_app(
 
     @app.get("/")
     async def landing() -> Response:
-        name, _ = web_channel(None)
-        page = render_landing(current().spec, current().resolved.data, name)
+        name, adapter = web_channel(None)
+        page = render_landing(current().spec, current().resolved.data, name,
+                              public=adapter.public)  # fmt: skip
         return Response(page, media_type="text/html; charset=utf-8")
 
     @app.get("/chat")

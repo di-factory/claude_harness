@@ -24,12 +24,14 @@ TEXTS = {
            "close": "Cerrar", "map": "Ver en el mapa", "facts": "De un vistazo",
            "where": "Dónde", "pay": "Pagos", "band": "¿Tienes una pregunta?",
            "band_sub": "Nuestro asistente responde al momento, a cualquier hora.",
+           "private": "Chat (con código de acceso)",
            "note": "Te responde nuestro asistente; una persona del equipo revisa cuando hace"
            " falta."},
     "en": {"chat": "Chat with us", "whatsapp": "WhatsApp", "hours": "Opening hours",
            "close": "Close", "map": "View on the map", "facts": "At a glance",
            "where": "Where", "pay": "Payment", "band": "Have a question?",
            "band_sub": "Our assistant answers right away, at any hour.",
+           "private": "Chat (access code)",
            "note": "Our assistant answers; a person from the team reviews when needed."},
 }  # fmt: skip
 
@@ -130,7 +132,8 @@ def faq_sections(spec: SolutionSpec, data: dict[str, Any]) -> list[tuple[str, st
     """(heading, body) from the instance's Markdown FAQ files, in order."""
     out: list[tuple[str, str]] = []
     corpora = ((data.get("knowledge") or {}).get("corpora")) or {}
-    for corpus in corpora.values():
+    asked = [c for c in corpora.values() if isinstance(c, dict) and c.get("questionnaire")]
+    for corpus in asked or corpora.values():  # the client's answers, not their documents
         for src in (corpus or {}).get("sources") or []:
             if not (isinstance(src, dict) and src.get("type") == "file"):
                 continue
@@ -189,7 +192,11 @@ def _fact(label: str, body: str) -> str:
     return f"<div><dt>{html.escape(label)}</dt><dd>{html.escape(first[:90])}</dd></div>"
 
 
-def render_landing(spec: SolutionSpec, data: dict[str, Any], chat: str) -> str:
+def render_landing(
+    spec: SolutionSpec, data: dict[str, Any], chat: str, *, public: bool = True
+) -> str:
+    """The page; with a private chat (an access code) it does not invite every visitor to
+    chat: one quiet link for the people who have the code, no chat buttons or panel."""
     locale = (spec.solution.locale or "en")[:2]
     t = TEXTS.get(locale, TEXTS["en"])
     values = data.get("values") or {}
@@ -239,6 +246,14 @@ def render_landing(spec: SolutionSpec, data: dict[str, Any], chat: str) -> str:
         if wa else ""
     )  # fmt: skip
     chat_url = f"/chat/{quote(chat)}"
+    if public:
+        nav = f'<a class="btn primary small" href="{chat_url}">__CHAT__</a>'
+        hero = f'<a class="btn primary" href="{chat_url}">__CHAT__</a>'
+        band = _BAND.replace("__CHAT_URL__", chat_url)
+        bubble = _BUBBLE.replace("__CHAT_URL__", chat_url)
+    else:
+        nav, band, bubble = "", "", ""
+        hero = f'<a class="btn ghost" href="{chat_url}">{html.escape(t["private"])}</a>'
     return (
         _PAGE.replace("__LANG__", html.escape(locale))
         .replace("__THEME__", _theme(spec))
@@ -250,7 +265,10 @@ def render_landing(spec: SolutionSpec, data: dict[str, Any], chat: str) -> str:
         .replace("__EYEBROW__", eyebrow)
         .replace("__CARDS__", "".join(card_html))
         .replace("__WHATSAPP__", wa_html)
-        .replace("__CHAT_URL__", chat_url)
+        .replace("__NAV_CHAT__", nav)
+        .replace("__HERO_CHAT__", hero)
+        .replace("__BAND_SECTION__", band)
+        .replace("__BUBBLE__", bubble)
         .replace("__BAND__", html.escape(t["band"]))
         .replace("__BAND_SUB__", html.escape(t["band_sub"]))
         .replace("__CHAT__", html.escape(t["chat"]))
@@ -360,7 +378,7 @@ padding-bottom:56px}.band{margin:0 16px 64px;padding:32px 24px}}
 <body>
 <nav><div class="wrap">
 <a class="brand" href="#">__LOGO__<span class="name">__NAME__</span></a>
-<a class="btn primary small" href="__CHAT_URL__">__CHAT__</a>
+__NAV_CHAT__
 </div></nav>
 <header class="hero"><div class="wrap">
 <div>
@@ -368,19 +386,26 @@ __EYEBROW__
 <h1>__NAME__</h1>
 <div class="intro">__INTRO__</div>
 <div class="actions">
-<a class="btn primary" href="__CHAT_URL__">__CHAT__</a>
+__HERO_CHAT__
 __WHATSAPP__
 </div>
 </div>
 __FACTS__
 </div></header>
 <main><div class="wrap"><div class="grid">__CARDS__</div></div></main>
-<section class="band">
+__BAND_SECTION__
+<footer><div class="wrap"><span>© __NAME__</span><span>__NOTE__</span></div></footer>
+__BUBBLE__
+</body>
+</html>
+"""
+
+_BAND = """<section class="band">
 <div><h2>__BAND__</h2><p>__BAND_SUB__</p></div>
 <a class="btn" href="__CHAT_URL__">__CHAT__</a>
-</section>
-<footer><div class="wrap"><span>© __NAME__</span><span>__NOTE__</span></div></footer>
-<a id="bubble" class="btn primary" href="__CHAT_URL__" data-chat>__CHAT__</a>
+</section>"""
+
+_BUBBLE = r"""<a id="bubble" class="btn primary" href="__CHAT_URL__" data-chat>__CHAT__</a>
 <div id="panel" role="dialog" aria-label="__CHAT__"></div>
 <script>
 const panel = document.getElementById("panel");
@@ -413,7 +438,4 @@ document.querySelectorAll("[data-chat]").forEach((a) => a.addEventListener("clic
   if (a === bubble && panel.classList.contains("open")) hide(); else show();
 }));
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") hide(); });
-</script>
-</body>
-</html>
-"""
+</script>"""

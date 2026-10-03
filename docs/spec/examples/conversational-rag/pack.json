@@ -110,10 +110,12 @@
       "prompt": "prompts/assistant.md",
       "model_role": "main",
       "tools": [
-        "knowledge.search_docs"
+        "knowledge.search_docs",
+        "knowledge.search_about"
       ],
       "knowledge": [
-        "docs"
+        "docs",
+        "about"
       ],
       "memory": {
         "scope": "contact"
@@ -148,6 +150,47 @@
           "schedule": "0 */4 * * *",
           "on_delete": "propagate"
         }
+      },
+      "about": {
+        "description": "who the assistant answers for: what the organization does, what people can ask, how to reach a person",
+        "sources": [
+          {
+            "type": "file",
+            "path": "knowledge/about.md"
+          }
+        ],
+        "questionnaire": [
+          {
+            "id": "about",
+            "heading": "What is this about?",
+            "required": true,
+            "question": "What does the business or organization do? Two or three sentences a visitor would understand (it opens the web page).",
+            "example": "Reparo fixes phones and laptops in Guadalajara; we answer questions about repairs, warranties and prices."
+          },
+          {
+            "id": "topics",
+            "heading": "What can I ask?",
+            "required": true,
+            "question": "What can people ask the assistant about? A short list.",
+            "example": "Repair times, warranty terms, prices of common repairs, how to send a device."
+          },
+          {
+            "id": "contact",
+            "heading": "How do I reach a person?",
+            "required": true,
+            "question": "How can people reach a person: email, phone, address and hours.",
+            "example": "soporte@reparo.mx, 33 1234 5678, Mon-Fri 9:00-18:00; Av. Vallarta 100, Guadalajara."
+          }
+        ],
+        "chunking": "layout",
+        "retrieval": {
+          "mode": "hybrid",
+          "top_k": 4,
+          "min_score": 0.35,
+          "read_whole_below": 12000,
+          "cite": true,
+          "not_found": "say_so"
+        }
       }
     }
   },
@@ -170,8 +213,10 @@
     },
     "web": {
       "type": "web",
+      "public": true,
       "entry_agent": "assistant",
-      "contact_key": "session_cookie"
+      "contact_key": "session_cookie",
+      "session_window": "24h"
     },
     "email": {
       "type": "email",

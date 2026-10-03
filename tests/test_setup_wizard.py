@@ -27,7 +27,7 @@ def _replies(examples: Path) -> list[str]:
     the template ids are left blank, so they become pending)."""
     flat = _flat(CLINIC)
     skip = {"values.main_model", "values.fast_model"}
-    out = [""]  # the brand look: skipped
+    out = ["", ""]  # the brand look: skipped; the web chat: open to anyone (Enter)
     for q in pack_questions(PackCatalog(roots=[examples]), [PACK]):
         if q.key in skip:
             continue
@@ -233,7 +233,7 @@ def test_the_consultant_asks_follow_ups_and_recommends(
     flat_keys = [q.key for q in pack_questions(PackCatalog(roots=[examples]), [PACK])
                  if q.key not in {"values.main_model", "values.fast_model"}]  # fmt: skip
     at = flat_keys.index(business[services].key)
-    replies.insert(at + 2, "Limpiezas: 600 MXN, 45 minutos")  # after the brand prompt
+    replies.insert(at + 3, "Limpiezas: 600 MXN, 45 minutos")  # after brand and web chat
     script = iter(["", "dental appointments on WhatsApp", "1", "y", *replies])
     setup = Setup([examples], tmp_path / "clients", ask=lambda _: next(script),
                   consultant=lambda _: consultant)  # fmt: skip
@@ -327,7 +327,7 @@ def test_a_pack_on_another_endpoint_runs_on_the_anthropic_key(
         "tenant.id": "reparo", "tenant.name": "Reparo", "values.assistant_name": "Reparo",
         "values.corpus_sources": [str(docs)], "values.support_email": "a@reparo.mx",
         "values.main_model": "claude-sonnet-5-5", "values.fast_model": "claude-haiku-4-5",
-        **carried,
+        **ABOUT, **carried,
     }  # fmt: skip
     first = build(catalog, ["conversational-rag"], tmp_path / "out", answers=answers)
     assert first.ok, first.problems
@@ -344,3 +344,54 @@ def test_a_pack_on_another_endpoint_runs_on_the_anthropic_key(
     no = Setup([examples], tmp_path, ask=lambda _: "n")
     assert no._model_choice(["conversational-rag"], packs) == {}
     assert "not put online" in capsys.readouterr().out
+
+
+ABOUT = {
+    "knowledge.about.about": "Reparo fixes phones and laptops in Guadalajara.",
+    "knowledge.about.topics": "Repair times, warranties and prices.",
+    "knowledge.about.contact": "soporte@reparo.mx, 33 1234 5678.",
+}
+
+
+def test_a_document_assistant_gets_a_page_and_an_open_or_closed_chat(
+    examples: Path, tmp_path: Path, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dif_general_harness.channels.landing import render_landing
+    from dif_general_harness.channels.web_page import render_chat
+    from dif_general_harness.constructor import build
+
+    catalog = PackCatalog(roots=[examples])
+    docs = tmp_path / "docs.md"
+    docs.write_text("# Manual\n\n## Internal pricing\nNot for the web page.\n")
+    answers = {
+        "tenant.id": "reparo", "tenant.name": "Reparo", "values.assistant_name": "Reparo",
+        "values.corpus_sources": [str(docs)], "values.support_email": "a@reparo.mx",
+        "values.main_model": "m", "values.fast_model": "f", **ABOUT,
+    }  # fmt: skip
+    open_ = build(catalog, ["conversational-rag"], tmp_path / "open", answers=dict(answers))
+    assert open_.ok and open_.resolved is not None, open_.problems
+    assert open_.resolved.spec.channels["web"].public is True  # the pack's chat is open
+    page = render_landing(open_.resolved.spec, open_.resolved.data, "web")
+    assert "Reparo fixes phones and laptops" in page and "Repair times" in page
+    assert "Internal pricing" not in page  # the page shows the client's answers, not documents
+    assert 'id="bubble"' in page and page.count('href="/chat/web"') == 4
+
+    setup = Setup([examples], tmp_path, ask=lambda _: "n")  # not for anyone with the link
+    setup.ask_web_access(["conversational-rag"])
+    code = home / ".dif" / "secrets" / "web_access_code"
+    assert code.read_text() and code.stat().st_mode & 0o777 == 0o600
+    assert str(code) in capsys.readouterr().out and code.read_text() not in str(setup.carried)
+    closed = build(catalog, ["conversational-rag"], tmp_path / "closed",
+                   answers={**answers, **setup.carried})  # fmt: skip
+    assert closed.ok and closed.resolved is not None, closed.problems
+    web = closed.resolved.spec.channels["web"]
+    assert web.public is False and closed.resolved.data["channels"]["web"]["credentials"] == {
+        "$secret": "web_access_code"}  # fmt: skip
+    assert "channels" in closed.answers_path.read_text()  # kept for every rebuild
+    private = render_landing(closed.resolved.spec, closed.resolved.data, "web", public=False)
+    assert 'id="bubble"' not in private and "Chat (access code)" in private
+    assert private.count('href="/chat/web"') == 1  # one quiet link for people with the code
+
+    chat = render_chat("web", "Reparo", locale="es", public=False)
+    assert 'id="gate"' in chat and "prompt(" not in chat  # asked on the page, not a pop-up
+    assert "Este chat es privado" in chat
