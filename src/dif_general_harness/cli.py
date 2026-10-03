@@ -1058,7 +1058,12 @@ def _secrets(args: argparse.Namespace) -> int:
         value = (env.get(name) if env is not None else None) or files.get(name) or ""
         if not value:
             missing += 1
-            [item] = impact_of(resolved.spec, resolved.data, partial(operator.ne, name))
+            found = impact_of(resolved.spec, resolved.data, partial(operator.ne, name))
+            if not found:
+                missing -= 1
+                print(f"  · {name}: not set, and nothing in this instance uses it")
+                continue
+            [item] = found
             print(f"  ✗ {name}: not set ({decl.description})")
             for effect in item.impact:
                 print(f"      without it: {effect}")

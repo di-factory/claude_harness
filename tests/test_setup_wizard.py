@@ -302,3 +302,45 @@ def test_gaps_follow_the_pack_actually_chosen(
     assert "Chosen packs:" in advisor.requests[1].messages[0].text()
     assert PACK in advisor.requests[1].messages[0].text()
     assert "With that choice, not covered yet: Online payments" in capsys.readouterr().out
+
+
+def test_a_pack_on_another_endpoint_runs_on_the_anthropic_key(
+    examples: Path, tmp_path: Path, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dif_general_harness.constructor import build
+    from dif_general_harness.constructor.impact import missing
+    from dif_general_harness.constructor.interview import load_answers
+    from dif_general_harness.spec import load_instance
+
+    catalog = PackCatalog(roots=[examples])
+    packs = {la.data["solution"]["id"]: la.data for la in catalog.latest()}
+    setup = Setup([examples], tmp_path, ask=lambda _: "")  # Enter: yes, on Anthropic
+    carried = setup._model_choice(["conversational-rag"], packs)
+    assert "runs on its own model endpoint" not in capsys.readouterr().out  # asked, not warned
+    assert carried["models"]["providers"] == {
+        "openai-compatible": None, "anthropic": {"api_key": {"$secret": "anthropic"}}}  # fmt: skip
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "faq.md").write_text("# Reparo\n\n## What we do\nWe repair phones.\n")
+    answers = {
+        "tenant.id": "reparo", "tenant.name": "Reparo", "values.assistant_name": "Reparo",
+        "values.corpus_sources": [str(docs)], "values.support_email": "a@reparo.mx",
+        "values.main_model": "claude-sonnet-5-5", "values.fast_model": "claude-haiku-4-5",
+        **carried,
+    }  # fmt: skip
+    first = build(catalog, ["conversational-rag"], tmp_path / "out", answers=answers)
+    assert first.ok, first.problems
+    again = build(
+        catalog, ["conversational-rag"], tmp_path / "out", answers=load_answers(first.answers_path)
+    )  # a rebuild keeps the choice
+    resolved = load_instance(again.spec_path, catalog)
+    roles = resolved.data["models"]["roles"]
+    assert {r["provider"] for r in roles.values()} == {"anthropic"}
+    assert set(resolved.data["models"]["providers"]) == {"anthropic"}
+    left = {m.name for m in missing(resolved.spec, resolved.data, lambda n: n == "anthropic")}
+    assert "llm" not in left and "telegram" in left  # nothing uses llm any more
+
+    no = Setup([examples], tmp_path, ask=lambda _: "n")
+    assert no._model_choice(["conversational-rag"], packs) == {}
+    assert "not put online" in capsys.readouterr().out

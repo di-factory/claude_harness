@@ -37,8 +37,19 @@ have uv || curl -LsSf https://astral.sh/uv/install.sh | sh
 grep -qs 'HOME/.local/bin' ~/.bashrc || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 uv sync -q
 # Claude Code, for the client's own Claude (the handover folder); its native installer
-have claude || curl -fsSL https://claude.ai/install.sh | bash \
-  || echo "Claude Code was not installed; later: curl -fsSL https://claude.ai/install.sh | bash"
+have claude || curl -fsSL https://claude.ai/install.sh | bash || true
+# ~/.local/bin is not on this terminal's PATH until the next login: link the tools into
+# /usr/local/bin, which every shell already searches, so `uv` and `claude` work right away
+for tool in uv uvx claude; do
+  if [[ -x "$HOME/.local/bin/$tool" ]] && have sudo; then
+    sudo ln -sf "$HOME/.local/bin/$tool" "/usr/local/bin/$tool"
+  fi
+done
+if have claude; then
+  echo "Claude Code: $(claude --version 2>/dev/null | head -1)"
+else
+  echo "Claude Code is not installed; later: curl -fsSL https://claude.ai/install.sh | bash"
+fi
 echo "ok"
 
 # The public address: the EC2 metadata service, else an echo service.

@@ -13,12 +13,22 @@
   "variables": {
     "assistant_name": {
       "type": "string",
-      "required": true
+      "required": true,
+      "ask": {
+        "question": "What should the assistant be called?",
+        "example": "Reparo",
+        "answered_by": "client"
+      }
     },
     "corpus_sources": {
       "type": "list",
       "required": true,
-      "description": "Knowledge sources (files, Drive folders, S3 prefixes)"
+      "description": "Knowledge sources (files, Drive folders, S3 prefixes)",
+      "ask": {
+        "question": "Where are the documents it answers from? Web pages (https://...), folders on this server, Drive folders (gdrive://<folder id>) or S3 (s3://bucket/prefix); several: separate with commas.",
+        "example": "https://reparo.mx/preguntas-frecuentes, ./docs",
+        "answered_by": "client"
+      }
     },
     "telegram_enabled": {
       "type": "boolean",
@@ -27,7 +37,12 @@
     "support_email": {
       "type": "string",
       "required": true,
-      "description": "Where unanswered questions are escalated"
+      "description": "Where unanswered questions are escalated",
+      "ask": {
+        "question": "Which email gets the questions the documents do not answer?",
+        "example": "soporte@reparo.mx",
+        "answered_by": "client"
+      }
     },
     "llm_base_url": {
       "type": "string",
