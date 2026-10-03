@@ -1,0 +1,12 @@
+# Never commit secrets or keys: they live in ~/.dif on the server
+.env
+.env.*
+*.env
+*.key
+secrets/
+.dif/
+
+# Built and staged files (rebuilt from this repository)
+deploy/
+__pycache__/
+.venv/

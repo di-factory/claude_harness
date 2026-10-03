@@ -762,7 +762,11 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
         "setup", help="guided setup: key, questionnaire, build, test, and optionally online"
     )
     setup.add_argument("--packs", type=Path, action="append", help="folder containing packs")
-    setup.add_argument("--out", type=Path, default=Path("clients"), help="where clients go")
+    setup.add_argument(
+        "--out", type=Path, default=Path.home() / "clients",
+        help="where clients go, each its own repository (default: ~/clients, outside the"
+        " harness: the client's Claude must not read the harness's own CLAUDE.md)",
+    )  # fmt: skip
     setup.add_argument(
         "--public-url", default=os.environ.get("DIF_PUBLIC_URL"),
         help="https address to serve it at (setup.sh finds it from the server's public IP)",
@@ -823,11 +827,26 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
     )
     hand.add_argument("path", type=Path, help="the client's instance JSON")
     hand.add_argument("--packs", type=Path, action="append", help="folder containing packs")
-    hand.add_argument("--out", type=Path, help="default: ~/<tenant id>")
+    hand.add_argument(
+        "--out", type=Path, help="default: the client's repository (else ~/<tenant id>)"
+    )
     hand.add_argument("--url", help="the public address (default: DIF_PUBLIC_URL)")
     hand.add_argument("--owner", help="who runs the business, e.g. Roberta")
     hand.add_argument("--lang", help="the owner's language, e.g. es (default: the locale)")
     hand.add_argument("--support", help="how the client reaches Di-Factory (email, phone)")
+
+    client = sub.add_parser("client", help="a client's own repository (~/clients/<id>/)")
+    client_sub = client.add_subparsers(dest="command", required=True)
+    c_pub = client_sub.add_parser(
+        "publish", help="create its private GitHub repository (if needed) and push"
+    )
+    c_pub.add_argument("path", type=Path, help="the client's folder or instance JSON")
+    c_tr = client_sub.add_parser("transfer", help="move its GitHub repository to the client")
+    c_tr.add_argument("path", type=Path, help="the client's folder or instance JSON")
+    c_tr.add_argument("--to", required=True, help="the client's GitHub account or organization")
+    c_inv = client_sub.add_parser("invite", help="give a GitHub user write access to it")
+    c_inv.add_argument("path", type=Path, help="the client's folder or instance JSON")
+    c_inv.add_argument("--user", required=True, help="their GitHub user name")
 
     keys = sub.add_parser("keys", help="approver keys (Ed25519)")
     keys_sub = keys.add_subparsers(dest="command", required=True)
@@ -883,6 +902,8 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
         return _admin(args)
     if args.group == "handover":
         return _handover(args)
+    if args.group == "client":
+        return _client(args)
     if args.group == "keys":
         path, public = new_key(args.out, args.name)
         print(f"private key: {path} (keep it secret; only {args.name} uses it)")
@@ -954,12 +975,15 @@ def _describe_secret(name: str, value: str) -> str:
 
 
 def _handover(args: argparse.Namespace) -> int:
+    from .constructor import client_repo
     from .constructor.handover import build_handover
 
     catalog = PackCatalog(roots=args.packs or _default_roots())
     try:
         tenant = json.loads(args.path.read_text(encoding="utf-8"))["tenant"]["id"]
-        out = args.out or Path.home() / tenant
+        repo = args.path.resolve().parent
+        in_repo = client_repo.is_repo(repo)
+        out = args.out or (repo if in_repo else Path.home() / tenant)
         url = args.url or _online_url()
         result = build_handover(args.path, catalog, out, url=url, owner=args.owner,
                                 lang=args.lang, support=args.support)  # fmt: skip
@@ -972,9 +996,63 @@ def _handover(args: argparse.Namespace) -> int:
     print("\nHandover checks:")
     for ok, what in result.checks:
         print(f"  {'✓' if ok else '✗'} {what}")
+    if client_repo.is_repo(result.folder):
+        print(_record_handover(result.folder, args.owner))
     print(f"\nNext: on the server, cd {result.folder} && claude  (the client logs in with their"
           " own account). Di-Factory's remaining steps are in HANDOVER.md.")  # fmt: skip
     return 0 if result.ready else 1
+
+
+def _client_folder(path: Path) -> Path:
+    return path.parent if path.is_file() else path
+
+
+def _client(args: argparse.Namespace, http: Any = None, remote: str | None = None) -> int:
+    from .constructor import client_repo
+
+    folder = _client_folder(args.path).resolve()
+    if not client_repo.is_repo(folder):
+        print(f"error: {folder} is not a client repository (./setup.sh makes one per client)",
+              file=sys.stderr)  # fmt: skip
+        return 2
+    github = client_repo.github_from_secrets()
+    if github is None:
+        print("error: no GitHub token: store one with `dif-general-harness secrets set github`"
+              " (it must be able to create repositories in the organization; DIF_GITHUB_ORG"
+              f" names it, default {client_repo.DEFAULT_ORG})", file=sys.stderr)  # fmt: skip
+        return 2
+    try:
+        if args.command == "publish":
+            client_repo.commit(folder, "Changes made on the server")
+            print(client_repo.publish(folder, folder.name, github, http=http, remote=remote))
+        elif args.command == "transfer":
+            print(client_repo.hand_to(folder.name, github, to=args.to, http=http))
+        else:
+            print(client_repo.hand_to(folder.name, github, to=args.user, mode="invite",
+                                      http=http))  # fmt: skip
+    except client_repo.ClientRepoError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _record_handover(folder: Path, owner: str | None) -> str:
+    """Commit the handover documents in the client's repository, and push them."""
+    from .constructor import client_repo
+
+    try:
+        client_repo.commit(folder, f"Handover to {owner or 'the business owner'}")
+        github = client_repo.github_from_secrets()
+        if github is not None and client_repo.push(folder, github):
+            return (f"\nCommitted and pushed to its repository. Then hand the repository to"
+                    f" the client: dif-general-harness client transfer {folder} --to ACCOUNT"
+                    f" (or: client invite {folder} --user NAME)")  # fmt: skip
+    except client_repo.ClientRepoError as exc:
+        return f"\nThe client's repository was not updated: {exc}"
+    return (
+        f"\nCommitted in its repository ({folder}); not on GitHub yet: store a token"
+        f" (secrets set github), then dif-general-harness client publish {folder}"
+    )
 
 
 def _online_url() -> str | None:

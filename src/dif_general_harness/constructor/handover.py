@@ -521,6 +521,9 @@ automatically when it was written (run `dif-general-harness handover` again to r
 - [ ] A new admin token only the client knows (`dif-general-harness secrets set admin_token`,
       then `./setup.sh` to copy it in).
 - [ ] Twilio, Google and other accounts are the client's (see `docs/pendientes.md`).
+- [ ] This folder's git repository is the client's: published (`dif-general-harness client
+      publish`), then transferred to their GitHub account (`client transfer --to ACCOUNT`, they
+      accept it) or shared with them (`client invite --user NAME`).
 - [ ] Backups: a daily EBS snapshot (AWS Data Lifecycle Manager) of the server's volume.
 - [ ] A health alert on {self.site or "https://<address>"}/healthz (e.g. Route 53 health check).
 - [ ] Claude Code: installed, the client logged in with their own account, and a first

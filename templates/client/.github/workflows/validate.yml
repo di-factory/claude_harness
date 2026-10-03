@@ -1,0 +1,28 @@
+# Checks that this client's instance still validates against the harness it is pinned to.
+name: validate
+on: [push, pull_request]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Harness version
+        id: harness
+        run: echo "ref=$(head -1 HARNESS_VERSION)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: di-factory/claude_harness
+          ref: ${{ steps.harness.outputs.ref }}
+          path: .harness
+          # the harness is private: a token with read access, stored as HARNESS_TOKEN
+          token: ${{ secrets.HARNESS_TOKEN || github.token }}
+      - uses: astral-sh/setup-uv@v5
+      - name: Validate the instance
+        run: |
+          for spec in *.json; do
+            grep -q '"kind": "instance"' "$spec" || continue
+            uv run --project .harness dif-general-harness spec resolve "$spec" \
+              --packs .harness/docs/spec/examples > /dev/null
+            echo "valid: $spec"
+          done

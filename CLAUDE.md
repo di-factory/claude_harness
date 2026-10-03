@@ -27,6 +27,7 @@ uv run dif-general-harness adjust|upgrade INSTANCE.json ... --dry-run     # cons
 uv run dif-general-harness costs INSTANCE.json --by vendor,model         # spend + quality
 uv run dif-general-harness admin status|inbox|show|reply|faq|costs         # a running instance
 uv run dif-general-harness handover INSTANCE.json --owner NAME --lang es  # the client's Claude
+uv run dif-general-harness client publish|transfer|invite ~/clients/ID   # its own repository
                                           # the whole handover, guided: /handover (.claude/skills)
 uv run dif-general-harness fleet register|offer|rollout|rollback|status  # via the control plane
 uv run dif-general-harness control serve --key KEY                       # the control plane
@@ -74,6 +75,8 @@ setup mistakes the harness now catches early). Keep it in step with the CLI.
 - `src/dif_general_harness/constructor/`: matching, interview, build, evals, approve and deploy
 - `deploy/docker/`, `deploy/terraform/aws/`: the image and the AWS module (profiles, alarms,
   `tests/*.tftest.hcl` against a mocked provider)
+- `templates/client/`: the skeleton of every client's own repository (`~/clients/<id>/`, made
+  by the setup; `constructor/client_repo.py` commits, publishes and hands it over)
 - `integrations/openclaw-skill/`: the wrapper Teky uses to drive the constructor
 - `docs/spec/examples/`: six example packs + one instance, which are also the **test fixtures**
 - `tests/test_acceptance_m1.py` … `tests/test_acceptance_m4.py`: the milestone gates;
@@ -111,7 +114,8 @@ the intent router, file and batch triggers, the documents pack, sampled verifica
 egress proxy and isolated extensions, hybrid retrieval with S3/Drive/web sources, and voice;
 then the web chat page and the setup's advisers (pack advisor, business consultant; 65–66) reading small FAQs whole (67), and
 the client's look from any brand material plus missing-key explanations (68), and the
-handover to a client's own Claude with the `admin` commands and owner FAQ edits (69).
+handover to a client's own Claude with the `admin` commands and owner FAQ edits (69), and
+one git repository per client from a template, handed to the client at the end (70).
 Next: GCP and Azure profiles.
 Known gaps: streaming (speech-to-speech) voice, knowledge connectors beyond files, S3,
 Drive and web pages (SharePoint, Notion... push through the admin API), pgvector for very

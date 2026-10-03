@@ -17,6 +17,11 @@
 
 Everything it writes can be redone by hand with the individual commands, and every answer
 is kept in ``<instance>.answers.yaml``, so a correction is "edit, run build again".
+
+Each client lives in ``clients/<id>/``, a git repository of its own made from
+``templates/client``: the first build, every fine-tuning round and every signature is a
+commit. With a GitHub token stored (the ``github`` secret) it is a private repository in
+Di-Factory's organization, pushed after every commit; at the handover it moves to the client.
 """
 
 from __future__ import annotations
@@ -39,6 +44,7 @@ from ..runtime.routing import RoutingError, check_anthropic_key
 from ..spec.errors import SpecError
 from ..spec.loader import PackCatalog, load_instance
 from ..tenancy import FileSecrets, default_secrets_dir, local_backend
+from . import client_repo
 from .brand import read_brand
 from .build import BuildResult, _extends, build
 from .catalog import match
@@ -212,6 +218,8 @@ class Setup:
         root: Path = REPO_ROOT,
         advisor: Advisor | None = None,
         consultant: Advisor | None = None,
+        github: Callable[[], client_repo.GitHub | None] | None = None,
+        legacy: Path | None = None,
     ) -> None:
         self.root = root  # where deploy/build and .dif live (the repository)
         self.catalog = PackCatalog(roots=packs)
@@ -231,6 +239,10 @@ class Setup:
         self.business: dict[str, str] = {}  # the business answers so far, for the consultant
         self.recommendations: list[str] = []
         self.carried: dict[str, Any] = {}  # per-client choices kept in the answers (models)
+        self.github = github  # the GitHub connection (None: the repositories stay local)
+        self.legacy = legacy  # where clients were built before (flat files): adopted on reuse
+        self.repo_http: Any = None  # tests: the GitHub API transport
+        self.repo_remote: str | None = None  # tests: a local bare repository to push to
 
     # --- 1. the key ---------------------------------------------------------------------
 
@@ -512,17 +524,56 @@ class Setup:
         if branding:
             defaults["branding"] = branding
         defaults.update(self.carried)
-        result = build(self.catalog, pack_ids, self.out, answers=defaults, ask=self._question)
-        if self.gaps:
-            with result.summary_path.open("a", encoding="utf-8") as summary:
-                summary.write("\n## Needs not covered yet (Di-Factory design work)\n\n")
-                summary.writelines(f"- {gap}\n" for gap in self.gaps)
-        self.review()
-        if self.recommendations:
-            with result.summary_path.open("a", encoding="utf-8") as summary:
-                summary.write("\n## The business consultant's recommendations\n\n")
-                summary.writelines(f"- {r}\n" for r in self.recommendations)
-        return result
+        with tempfile.TemporaryDirectory() as tmp:  # moved into clients/<id>/ when complete
+            built = build(self.catalog, pack_ids, Path(tmp), answers=defaults,
+                          ask=self._question)  # fmt: skip
+            if self.gaps:
+                with built.summary_path.open("a", encoding="utf-8") as summary:
+                    summary.write("\n## Needs not covered yet (Di-Factory design work)\n\n")
+                    summary.writelines(f"- {gap}\n" for gap in self.gaps)
+            self.review()
+            if self.recommendations:
+                with built.summary_path.open("a", encoding="utf-8") as summary:
+                    summary.write("\n## The business consultant's recommendations\n\n")
+                    summary.writelines(f"- {r}\n" for r in self.recommendations)
+            folder = self.out / built.instance_id
+            client_repo.place(Path(tmp), folder)
+        return _moved(built, folder, self.catalog)
+
+    # --- the client's repository --------------------------------------------------------
+
+    def record(self, result: BuildResult, message: str) -> None:
+        """Commit the client's folder (its own repository) and push it when GitHub is set.
+        Never stops the setup: a problem here is said, and the files stay in place."""
+        folder = result.spec_path.parent
+        if folder.resolve() == self.out.resolve():
+            return  # not in its own folder (a client built by hand with --out)
+        try:
+            created = not client_repo.is_repo(folder)
+            if created:
+                spec = json.loads(result.spec_path.read_text(encoding="utf-8"))
+                packs = [str(ref).split("@", 1)[0] for ref in spec.get("extends", [])]
+                name = str((spec.get("tenant") or {}).get("name") or result.instance_id)
+                client_repo.create(folder, result.instance_id, name=name, packs=packs)
+            if not client_repo.commit(folder, message):
+                return
+            github = self.github() if self.github else None
+            if github is None:
+                if created:
+                    _say(f"\nIts own git repository: {folder} (every change is a commit). To"
+                         " keep it on GitHub as well: dif-general-harness secrets set github"
+                         " (a token that can create repositories in the organization), then"
+                         f" dif-general-harness client publish {folder}")  # fmt: skip
+                return
+            if client_repo.has_remote(folder):
+                client_repo.push(folder, github)
+            else:
+                url = client_repo.publish(folder, result.instance_id, github,
+                                          http=self.repo_http, remote=self.repo_remote)  # fmt: skip
+                _say(f"\nIts repository on GitHub (private): {url}")
+        except (client_repo.ClientRepoError, OSError, ValueError) as exc:
+            _say(f"\n(The client's repository was not updated: {exc}. The files are in"
+                 f" place; dif-general-harness client publish {folder} retries.)")  # fmt: skip
 
     def review(self) -> None:
         """The consultant reads all the business answers and says what to improve."""
@@ -610,6 +661,7 @@ class Setup:
             record = approve(staged, Path(tmp) / "solution", "docker", key, "jag")
         approval = instance.with_suffix(".docker.approval.json")
         approval.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+        self.record(result, f"Signed for docker at {host}")
         staged_id = load_instance(instance, self.catalog).spec.solution.id
         folder = self.root / "deploy" / "build" / staged_id
         folder.mkdir(parents=True, exist_ok=True)
@@ -653,7 +705,10 @@ class Setup:
     def existing(self) -> BuildResult | None:
         """A client built before: reuse it instead of answering everything again."""
         found = []
-        for path in sorted(self.out.glob("*.json")) if self.out.is_dir() else []:
+        paths = [*self.out.glob("*/*.json"), *self.out.glob("*.json")] if self.out.is_dir() else []
+        if self.legacy is not None and self.legacy.is_dir() and self.legacy != self.out:
+            paths += self.legacy.glob("*.json")
+        for path in sorted(paths, key=lambda p: p.name):
             try:
                 if json.loads(path.read_text(encoding="utf-8")).get("kind") == "instance":
                     found.append(path)
@@ -668,6 +723,9 @@ class Setup:
         if not choice.isdigit() or not 1 <= int(choice) <= len(found):
             return None
         path = found[int(choice) - 1]
+        if path.parent in {self.out, self.legacy}:  # built before client repositories
+            path = client_repo.adopt(path, self.out / path.stem)
+            _say(f"Moved it into its own folder: {path.parent}")
         resolved = load_instance(path, self.catalog)
         return BuildResult(
             path.stem, path, path.with_suffix(".answers.yaml"), path.with_suffix(".summary.md"),
@@ -703,7 +761,7 @@ class Setup:
                 if issue.severity == "error":
                     _say(f"  - {issue}")
             return reused
-        result = build(self.catalog, packs, self.out, answers=answers)
+        result = build(self.catalog, packs, reused.spec_path.parent, answers=answers)
         _say(f"Rebuilt {result.instance_id} from {reused.answers_path.name}.")
         return result
 
@@ -712,16 +770,20 @@ class Setup:
         self.model_key()
         reused = self.existing()
         if reused is not None:
-            reused = self.refresh(reused)
-            if not self.try_it(reused):
+            refreshed = self.refresh(reused)
+            worked = self.try_it(refreshed)
+            self.record(refreshed, "Fine-tuning: rebuilt from its answers"
+                        if refreshed is not reused else "Fine-tuning: checked again")  # fmt: skip
+            if not worked:
                 return 1
-            self.go_online(reused)
+            self.go_online(refreshed)
             return 0
         pack_ids = self.choose_pack()
         if pack_ids is None:
             return 2
         result = self.questionnaire(pack_ids)
         if not result.ok:
+            self.record(result, "Setup: first answers (not complete yet)")
             _say("\nNot ready yet:")
             for problem in result.problems:
                 _say(f"  - {problem}")
@@ -730,9 +792,11 @@ class Setup:
                     _say(f"  - {issue}")
             chosen = " ".join(f"--pack {p}" for p in pack_ids)
             _say(f"Edit {result.answers_path} and run: dif-general-harness build {chosen}"
-                 f" --answers {result.answers_path} --out {self.out}")  # fmt: skip
+                 f" --answers {result.answers_path} --out {result.spec_path.parent}")  # fmt: skip
             return 1
-        if not self.try_it(result):
+        worked = self.try_it(result)
+        self.record(result, "Setup: first build")
+        if not worked:
             return 1
         self.go_online(result)
         _say("\nDone. Fine-tune it by running ./setup.sh again and reusing this client; when it"
@@ -744,6 +808,16 @@ class Setup:
         if self.gaps:
             _say("Not covered yet (in the summary, for Di-Factory): " + "; ".join(self.gaps))
         return 0
+
+
+def _moved(built: BuildResult, folder: Path, catalog: PackCatalog) -> BuildResult:
+    """The build result with its files at their place in the client's folder."""
+    spec_path = folder / built.spec_path.name
+    resolved = load_instance(spec_path, catalog) if built.resolved is not None else None
+    return BuildResult(
+        built.instance_id, spec_path, folder / built.answers_path.name,
+        folder / built.summary_path.name, resolved, built.problems,
+    )  # fmt: skip
 
 
 def default_packs() -> list[Path]:
@@ -773,7 +847,8 @@ def run_setup(
 ) -> int:
     setup = Setup(
         args.packs or default_packs(), args.out, run=run, public_url=args.public_url,
-        advisor=advisor, consultant=consultant,
+        advisor=advisor, consultant=consultant, github=client_repo.github_from_secrets,
+        legacy=REPO_ROOT / "clients",
     )  # fmt: skip
     try:
         return setup.run_all()

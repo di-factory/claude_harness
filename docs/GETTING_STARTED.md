@@ -35,8 +35,19 @@ It installs what is missing (Docker, Caddy, uv), then guides you through:
    the web chat address (`https://<public-ip>.sslip.io/chat`), the WhatsApp webhook and the
    admin commands.
 
-Run it again at any time: it reuses the key and offers the clients already set up. Every
-answer is kept in `clients/<id>.answers.yaml`, so a correction is "edit the answers, run
+Each client is its own git repository, `~/clients/<id>/` (outside the harness, made from
+`templates/client`): the first build, every fine-tuning round, every signature and the
+handover are commits. To keep them on GitHub, store a token that can create repositories in
+the organization once (`uv run dif-general-harness secrets set github`; `DIF_GITHUB_ORG`
+names the organization, default `di-factory`): the setup then creates a private
+`client-<id>` repository and pushes after every commit. Without a token the repository stays
+on the server; `uv run dif-general-harness client publish ~/clients/<id>` uploads it later.
+The repository's CI checks the instance against the harness version in `HARNESS_VERSION`
+(for a private harness, give it a `HARNESS_TOKEN` secret that can read it).
+
+Run it again at any time: it reuses the key and offers the clients already set up (older
+clients in the harness's `clients/` folder are moved into `~/clients/<id>/`). Every
+answer is kept in `~/clients/<id>/<id>.answers.yaml`, so a correction is "edit the answers, run
 `./setup.sh`, reuse the client": it rebuilds the client from its answers (bringing in any pack
 updates since; hand edits to its FAQ files are replaced), signs it again and redeploys. A
 rebuild that no longer validates changes nothing.
@@ -240,12 +251,13 @@ confirms the solution, asks the owner's name and language, writes the documents 
 checklist until it passes. The command underneath:
 
 ```bash
-uv run dif-general-harness handover clients/<id>.json --owner Roberta --lang es \
+uv run dif-general-harness handover ~/clients/<id>/<id>.json --owner Roberta --lang es \
     --support "soporte@di-factory.mx"
 ```
 
-It writes `~/<tenant id>/`, the folder the client opens Claude Code in (`cd ~/<tenant id>;
-claude`): `CLAUDE.md` (who Claude works for, the business, the addresses, the rules it never
+It writes into the client's repository `~/clients/<id>/`, the folder the client opens Claude
+Code in (`cd ~/clients/<id>; claude`), commits it (and pushes it when a GitHub token is
+stored): `CLAUDE.md` (who Claude works for, the business, the addresses, the rules it never
 breaks), `docs/` (the business from the client's own answers, the solution, daily routines,
 what is not connected yet and its impact, what the client changes and what goes through
 Di-Factory), `GUIA.md` (one page for the client, in their language), `negocio` (the one
@@ -257,7 +269,10 @@ denied; and skills for the daily tasks) and `HANDOVER.md`, Di-Factory's checklis
 It also checks what it can and exits 1 until it holds: no approver key (`jag.key`) left on the
 client's server, the admin token in place, a model key set, Claude Code installed. The rest is
 by hand (in `HANDOVER.md`): the server in the client's AWS account, their SSH access, their
-own model key and admin token, backups, a health alert.
+own model key and admin token, backups, a health alert, and the repository: transfer it to
+the client's GitHub account (`uv run dif-general-harness client transfer ~/clients/<id> --to
+ACCOUNT`, they accept it in GitHub) or invite them (`client invite ~/clients/<id> --user
+NAME`).
 
 FAQ edits the client makes (`./negocio faq set`) stand across restarts until Di-Factory ships a
 new release of that FAQ; `docs/operacion.md` tells Claude to log each change in

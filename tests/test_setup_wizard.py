@@ -81,10 +81,20 @@ def test_from_nothing_to_signed_and_staged(
     assert "without it: WhatsApp only lets a business start a conversation" in out
     assert "channel whatsapp: WhatsApp/SMS messages are not received" in out  # twilio
     assert "the agent cannot see free slots" in out  # google
-    summary = tmp_path / "clients" / "clinica-sonrisa-pyme-appointment-agent.summary.md"
+    summary = (
+        tmp_path
+        / "clients"
+        / "clinica-sonrisa-pyme-appointment-agent"
+        / "clinica-sonrisa-pyme-appointment-agent.summary.md"
+    )
     assert "## Not connected yet, and what that means" in summary.read_text()
 
-    instance = tmp_path / "clients" / "clinica-sonrisa-pyme-appointment-agent.json"
+    instance = (
+        tmp_path
+        / "clients"
+        / "clinica-sonrisa-pyme-appointment-agent"
+        / "clinica-sonrisa-pyme-appointment-agent.json"
+    )
     spec = json.loads(instance.read_text())
     assert spec["values"]["main_model"] == "claude-sonnet-5-5"  # Di-Factory's default
     assert spec["values"]["tpl_reminder_id"] == "pending"
@@ -190,7 +200,12 @@ def test_the_advisor_recommends_and_names_the_gaps(
     assert "Not covered by any pack yet (noted as Di-Factory design work): cobros" in out
     assert " ★1. " in out and "no-such-pack" not in out  # invented packs are dropped
     assert "cannot run together in one instance yet" in out and "safety_weakened" in out
-    summary = tmp_path / "clients" / "clinica-sonrisa-pyme-appointment-agent.summary.md"
+    summary = (
+        tmp_path
+        / "clients"
+        / "clinica-sonrisa-pyme-appointment-agent"
+        / "clinica-sonrisa-pyme-appointment-agent.summary.md"
+    )
     text = summary.read_text()
     assert "## Needs not covered yet (Di-Factory design work)" in text
     assert "- notas de terapia" in text
@@ -241,7 +256,7 @@ def test_the_consultant_asks_follow_ups_and_recommends(
     out = capsys.readouterr().out
     assert "Consultant: ¿Cuánto cuesta y cuánto dura cada uno?" in out
     assert consultant.requests[0].model_role == "consultant"
-    folder = tmp_path / "clients"
+    folder = tmp_path / "clients" / "clinica-sonrisa-pyme-appointment-agent"
     faq = folder / "clinica-sonrisa-pyme-appointment-agent.knowledge" / "clinic_faq.md"
     assert "Limpiezas: 600 MXN, 45 minutos" in faq.read_text()
     summary = (folder / "clinica-sonrisa-pyme-appointment-agent.summary.md").read_text()

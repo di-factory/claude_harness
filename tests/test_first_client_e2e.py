@@ -97,10 +97,19 @@ def test_a_reused_client_takes_the_pack_updates(
 ) -> None:
     _set_up(examples, tmp_path)
     clients = tmp_path / "clients"
-    faq = clients / "clinica-sonrisa-pyme-appointment-agent.knowledge" / "clinic_faq.md"
+    faq = (
+        clients
+        / "clinica-sonrisa-pyme-appointment-agent"
+        / "clinica-sonrisa-pyme-appointment-agent.knowledge"
+        / "clinic_faq.md"
+    )
     old = faq.read_text().replace("What is the business about?", "What is the clinic about?")
     faq.write_text(old)  # a client built before the pack's wording changed
-    answers = clients / "clinica-sonrisa-pyme-appointment-agent.answers.yaml"
+    answers = (
+        clients
+        / "clinica-sonrisa-pyme-appointment-agent"
+        / "clinica-sonrisa-pyme-appointment-agent.answers.yaml"
+    )
     answers.write_text(answers.read_text().replace("Limpieza", "Limpieza dental"))
     replies = iter(["", "1", "", "#4a1450", "n"])  # key, client 1, rebuild, a new look, offline
     run = lambda argv: main(argv, provider=FakeProvider([Message.assistant("Hola.")]))  # noqa: E731
@@ -111,7 +120,13 @@ def test_a_reused_client_takes_the_pack_updates(
     assert "What is the business about?" in text and "clinic about" not in text
     assert "Limpieza dental" in text  # an edited answer reaches the FAQ
     assert "Rebuilt clinica-sonrisa-pyme-appointment-agent" in capsys.readouterr().out
-    spec = json.loads((clients / "clinica-sonrisa-pyme-appointment-agent.json").read_text())
+    spec = json.loads(
+        (
+            clients
+            / "clinica-sonrisa-pyme-appointment-agent"
+            / "clinica-sonrisa-pyme-appointment-agent.json"
+        ).read_text()
+    )
     assert spec["values"]["main_model"] == "claude-sonnet-5-5"  # nothing else lost
     assert spec["branding"] == {"colors": {"primary": "#4a1450"}}  # the look given on reuse
     assert "branding" in answers.read_text()  # kept for the next rebuild

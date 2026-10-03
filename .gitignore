@@ -22,3 +22,6 @@ deploy/build/
 .env.*
 *.env
 secrets/
+
+# client solutions: each one is its own git repository (templates/client)
+clients/
