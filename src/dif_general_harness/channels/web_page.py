@@ -19,6 +19,9 @@ TEXTS = {
         "note": "Asistente automático; una persona revisa cuando hace falta.",
         "new": "Nueva conversación",
         "home": "Volver al sitio",
+        "private": "Este chat es privado: escribe el código de acceso que te dieron.",
+        "wrong": "Ese código de acceso no funcionó; revísalo e intenta de nuevo.",
+        "enter": "Entrar",
     },
     "en": {
         "hello": "Hi! How can I help you?",
@@ -32,6 +35,9 @@ TEXTS = {
         "note": "Automated assistant; a person reviews when needed.",
         "new": "New conversation",
         "home": "Back to the site",
+        "private": "This chat is private: type the access code you were given.",
+        "wrong": "That access code did not work; check it and try again.",
+        "enter": "Enter",
     },
 }
 
@@ -75,6 +81,10 @@ textarea:focus{outline:2px solid var(--accent);outline-offset:-1px}
 form button{border:0;border-radius:12px;padding:0 18px;background:var(--accent);color:#fff;
 font:inherit;font-weight:600;cursor:pointer}
 form button:disabled{opacity:.5;cursor:default}
+[hidden]{display:none!important}
+#gate{flex-wrap:wrap}#gate p{flex-basis:100%;margin:0 0 4px;color:var(--muted);font-size:14px}
+#gate input{flex:1;min-width:0;border:1px solid var(--line);border-radius:12px;
+padding:10px 12px;font:inherit;background:var(--panel);color:var(--ink)}
 footer{padding:0 16px 10px;color:var(--muted);font-size:12px;text-align:center}
 </style>
 </head>
@@ -83,6 +93,9 @@ footer{padding:0 16px 10px;color:var(--muted);font-size:12px;text-align:center}
 <header><a id="home" href="/" target="_top" aria-label="__HOME__">←</a>
 <h1>__TITLE__</h1><button id="new" type="button"></button></header>
 <div id="log" aria-live="polite"></div>
+<form id="gate" hidden><p id="gatemsg"></p>
+<input id="code" type="password" autocomplete="off"><button id="enter" type="submit"></button>
+</form>
 <form id="form"><textarea id="text" rows="1" maxlength="2000"></textarea>
 <button id="send" type="submit"></button></form>
 <footer id="note"></footer>
@@ -147,9 +160,18 @@ $("send").textContent = T.send; $("text").placeholder = T.placeholder;
 $("note").textContent = T.note; $("new").textContent = T.new;
 const past = history();
 if (past.length) past.forEach(([k, t]) => add(k, t)); else add("bot", T.hello);
-if (!CFG.public && !code) {
-  code = (prompt(T.code) || "").trim(); if (code) store.set(KEY + "-code", code);
+function gate(message) {  // a private chat: the access code, asked on the page itself
+  $("form").hidden = true; $("gate").hidden = false;
+  $("gatemsg").textContent = message; $("code").value = ""; $("code").focus();
 }
+$("enter").textContent = T.enter; $("code").placeholder = T.code;
+$("gate").onsubmit = (e) => {
+  e.preventDefault();
+  code = $("code").value.trim(); if (!code) return;
+  store.set(KEY + "-code", code);
+  $("gate").hidden = true; $("form").hidden = false; $("text").focus();
+};
+if (!CFG.public && !code) gate(T.private);
 $("new").onclick = () => {
   store.del(KEY + "-log"); visitor = newId(); store.set(KEY + "-id", visitor);
   $("log").innerHTML = ""; add("bot", T.hello);
@@ -166,7 +188,9 @@ $("form").onsubmit = async (e) => {
     const r = await fetch(CFG.post, {method: "POST", headers: headers(),
       body: JSON.stringify({contact: visitor, text})});
     wait.remove();
-    if (r.status === 401) { store.del(KEY + "-code"); code = ""; add("info", T.error); return; }
+    if (r.status === 401) {
+      store.del(KEY + "-code"); code = ""; $("text").value = text; gate(T.wrong); return;
+    }
     if (r.status === 429) { add("info", T.busy); return; }
     if (!r.ok) { add("info", T.error); return; }
     const data = await r.json();

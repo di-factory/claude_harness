@@ -22,6 +22,10 @@ It installs what is missing (Docker, Caddy, uv), then guides you through:
    brand guide (PDF, slides, Word), a CSS theme, a folder of them, colors like `#4a1450`,
    or just words ("navy and gold", "azul marino y blanco", "dark blue plus another blue")
    — and the landing page and the chat take its colors and logo;
+   whether anyone with the link may use the web chat (Enter: yes). Answering `n` closes it
+   for this client: the chat asks for an access code (generated once, in
+   `~/.dif/secrets/web_access_code`; give it only to the people who should chat) and the
+   landing page shows no chat buttons, only a quiet link;
    then the questionnaire: the client's business (what they do, services, prices, address,
    policies) and a few settings, with Di-Factory's defaults filled in. On request a business
    consultant (Opus, a few cents; `DIF_CONSULTANT_MODEL` picks another model) asks one

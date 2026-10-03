@@ -22,7 +22,7 @@ from ..spec.loader import PackCatalog, ResolvedSpec, load_instance
 from ..spec.schema import SolutionSpec, Variable
 from .interview import Ask, Question, business_questions, interview, questions
 
-CARRIED = ("models", "secrets")
+CARRIED = ("models", "secrets", "channels")
 
 
 @dataclass

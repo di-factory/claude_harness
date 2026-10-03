@@ -80,6 +80,8 @@ async def test_a_private_chat_needs_its_access_code(tmp_path: Path) -> None:
     inst, _, client = await env.open()
     async with inst, client:
         assert '"public": false' in (await client.get("/chat/web")).text
+        landing = (await client.get("/")).text  # no chat invitations for every visitor
+        assert 'id="bubble"' not in landing and landing.count('href="/chat/web"') == 1
         body = {"contact": VISITOR, "text": "hola"}
         assert (await client.post("/channels/web", json=body)).status_code == 401
         outbox = await client.get("/channels/web/outbox", params={"contact": VISITOR})
