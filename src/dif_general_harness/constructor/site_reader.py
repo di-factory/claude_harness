@@ -1,7 +1,8 @@
 """A client's web site as one knowledge file: read every page, then a model writes it up.
 
-A site source (``https://site/*``) can be read live by the running instance, page by page.
-For a small business site it is better to read it once here, at setup time, and have a model
+Web addresses given as documents (``https://...``) could be read live by the running
+instance, page by page. It is better to read them once here, at setup time (a site's home:
+every page; any other address: that page), and have a model
 turn its pages into one Markdown file of questions a visitor would ask, each answered only
 from what the pages say, with the page it came from. The file is part of the signed
 solution, so the agent answers from exactly what Di-Factory approved; running the setup
@@ -10,6 +11,7 @@ again (reuse, rebuild) reads the site again on request.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import httpx2
@@ -86,21 +88,31 @@ def raw_markdown(pages: list[Page], name: str) -> str:
 
 
 def site_entries(values: object) -> list[str]:
-    """The ``https://.../*`` site sources among an instance's values."""
+    """The web addresses (``https://...``) among an instance's values."""
     found: list[str] = []
     items = values.values() if isinstance(values, dict) else []
     for value in items:
         for item in value if isinstance(value, list) else [value]:
-            if (
-                isinstance(item, str)
-                and item.startswith(("https://", "http://"))
-                and (item.endswith("/*"))
-            ):
+            if isinstance(item, str) and item.startswith(("https://", "http://")):
                 found.append(item)
     return found
 
 
+def whole_site(url: str) -> bool:
+    """A site's home (or ``.../*``) means every page; any other address, that page only."""
+    if url.endswith("/*"):
+        return True
+    path = url.split("://", 1)[1].partition("/")[2].split("?")[0]
+    return path in ("", "/")
+
+
+def start_of(url: str) -> str:
+    return url.removesuffix("*") if url.endswith("/*") else url
+
+
 def file_for(url: str) -> str:
-    """The knowledge file name for a site, e.g. ``di-factory.biz.md``."""
-    host = url.split("://", 1)[1].split("/", 1)[0]
-    return f"{host.removeprefix('www.')}.md"
+    """The knowledge file for an address: ``di-factory.biz.md``, ``reparo.mx-faq.md``."""
+    rest = start_of(url).split("://", 1)[1].split("?")[0]
+    host, _, path = rest.partition("/")
+    slug = re.sub(r"[^a-z0-9]+", "-", path.lower()).strip("-")[:60]
+    return f"{host.removeprefix('www.')}{'-' + slug if slug else ''}.md"

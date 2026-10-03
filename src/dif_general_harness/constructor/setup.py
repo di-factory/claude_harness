@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.messages import Message
+from ..knowledge.sources import SITE_PAGES
 from ..providers.base import ModelProvider, ModelRequest, ProviderMessage
 from ..runtime.routing import RoutingError, check_anthropic_key
 from ..spec.errors import SpecError
@@ -52,6 +53,8 @@ from .site_reader import (
     raw_markdown,
     read_site,
     site_entries,
+    start_of,
+    whole_site,
 )
 
 Ask = Callable[[str], str]
@@ -776,8 +779,9 @@ class Setup:
                 break
 
     def read_sites(self, result: BuildResult) -> BuildResult:
-        """``https://site/*`` sources: read the whole site now and have a model write it up
-        as one knowledge file (part of the signed solution) in place of the live site."""
+        """Web addresses among the documents: read them now (a site's home: every page) and
+        have a model write each up as a knowledge file, part of the signed solution, in
+        place of the live address."""
         if not result.ok:
             return result
         spec = json.loads(result.spec_path.read_text(encoding="utf-8"))
@@ -794,8 +798,9 @@ class Setup:
                 question = f"Read {url} again (it may have changed)? [y/N] "
                 again = _yes(self.ask(question))
             else:
-                question = (f"Read the whole site {url} now and have a model write the"
-                            " knowledge file from it? [Y/n] ")  # fmt: skip
+                what = "the whole site" if whole_site(url) else "the page"
+                question = (f"Read {what} {url} now and have a model write the knowledge"
+                            " file from it? [Y/n] ")  # fmt: skip
                 again = _yes(self.ask(question), default=True)
             if again and not self._write_site(url, target, spec):
                 again = False
@@ -818,7 +823,8 @@ class Setup:
     def _write_site(self, url: str, target: Path, spec: dict[str, Any]) -> bool:
         _say(f"   Reading {url} ...")
         try:
-            pages = asyncio.run(read_site(url.removesuffix("*"), http=self.site_http))
+            limit = SITE_PAGES if whole_site(url) else 1
+            pages = asyncio.run(read_site(start_of(url), max_pages=limit, http=self.site_http))
         except Exception as exc:  # the site is down or refuses: keep what there was
             _say(f"   Could not read it ({type(exc).__name__}: {exc}).")
             return False
@@ -830,7 +836,7 @@ class Setup:
         name = str((spec.get("tenant") or {}).get("name") or url)
         text = self._ask_model(self.writer, "writer model", WRITER_SYSTEM,
                                f"Business: {name}\n\n{pages_prompt(pages)}",
-                               role="main", max_tokens=8000, timeout=600)  # fmt: skip
+                               role="main", max_tokens=16000, timeout=600)  # fmt: skip
         if not text or "## " not in text:
             text = raw_markdown(pages, name)  # no model: the pages as they are
             _say("   Without the writer model the pages are kept as they are.")
@@ -902,7 +908,7 @@ def anthropic_consultant(key: str) -> ModelProvider:
 def anthropic_writer(key: str) -> ModelProvider:
     from ..providers.anthropic import AnthropicProvider
 
-    return AnthropicProvider(DIFACTORY_DEFAULTS["main_model"], api_key=key, max_tokens=8000,
+    return AnthropicProvider(DIFACTORY_DEFAULTS["main_model"], api_key=key, max_tokens=16000,
                              prompt_cache=False)  # fmt: skip
 
 

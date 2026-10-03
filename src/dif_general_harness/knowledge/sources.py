@@ -220,13 +220,18 @@ class SiteKnowledge:
 
     def _inside(self, url: str) -> bool:
         start, here = urlsplit(self.url), urlsplit(url)
+        if not start.path:
+            start = start._replace(path="/")
         prefix = start.path if start.path.endswith("/") else start.path.rsplit("/", 1)[0] + "/"
         return (here.scheme in ("http", "https") and here.netloc == start.netloc
                 and (here.path or "/").startswith(prefix)
                 and not _NOT_PAGES.search(here.path))  # fmt: skip
 
     async def entries(self) -> list[Entry]:
-        queue, seen = [urldefrag(self.url)[0]], set[str]()
+        start = urldefrag(self.url)[0]
+        if not urlsplit(start).path:
+            start += "/"  # https://site and https://site/ are the same page
+        queue, seen = [start], set[str]()
         out: list[Entry] = []
         limit = max(1, min(int(self.max_pages or SITE_PAGES), SITE_MAX))
         while queue and len(out) < limit:

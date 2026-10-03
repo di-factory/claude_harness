@@ -69,10 +69,10 @@ def test_a_site_source_is_written_with_a_star_and_needs_no_credentials() -> None
     assert not knowledge_sources.is_public_web({"type": "gdrive", "folder_id": "f"})
 
 
-def _answers(tmp_path: Path) -> dict[str, object]:
+def _answers(tmp_path: Path, *sources: str) -> dict[str, object]:
     return {
         "tenant.id": "reparo", "tenant.name": "Reparo", "values.assistant_name": "Reparo",
-        "values.corpus_sources": ["https://reparo.example/*"],
+        "values.corpus_sources": list(sources or ["https://reparo.example"]),
         "values.support_email": "a@reparo.mx", "values.main_model": "m",
         "values.fast_model": "f", **ABOUT,
     }  # fmt: skip
@@ -133,3 +133,25 @@ def test_without_the_writer_model_the_pages_are_kept_as_they_are(
     text = (tmp_path / "reparo-conversational-rag.knowledge" / "reparo.example.md").read_text()
     assert text.startswith("# Reparo") and "## About Reparo" in text
     assert "Source: https://reparo.example/prices/" in text
+
+
+def test_a_page_address_reads_that_page_only(examples: Path, tmp_path: Path) -> None:
+    from dif_general_harness.constructor.site_reader import file_for, whole_site
+
+    assert whole_site("https://reparo.example") and whole_site("https://reparo.example/")
+    assert whole_site("https://reparo.example/blog/*")
+    assert not whole_site("https://reparo.example/prices/")
+    assert file_for("https://www.reparo.example/") == "reparo.example.md"
+    assert file_for("https://reparo.example/prices/?x=1") == "reparo.example-prices.md"
+
+    catalog = PackCatalog(roots=[examples])
+    first = build(catalog, ["conversational-rag"], tmp_path,
+                  answers=_answers(tmp_path, "https://reparo.example/prices/", "docs"))  # fmt: skip
+    writer = FakeProvider([Message.assistant("# Reparo\n\n## Prices?\n900 MXN.\n")])
+    setup = Setup([examples], tmp_path, ask=lambda _: "", writer=lambda _: writer)
+    setup.key = KEY
+    setup.site_http, asked = _site()
+    result = setup.read_sites(first)
+    assert asked == ["https://reparo.example/prices/"]  # that page, no other
+    sources = json.loads(result.spec_path.read_text())["values"]["corpus_sources"]
+    assert sources == ["reparo-conversational-rag.knowledge/reparo.example-prices.md", "docs"]

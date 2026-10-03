@@ -25,8 +25,8 @@
       "required": true,
       "description": "Knowledge sources (files, Drive folders, S3 prefixes)",
       "ask": {
-        "question": "Where are the documents it answers from? A whole web site (https://site.com/*: the setup reads every page and writes the knowledge file from it), single web pages (https://...), files or folders on this server (relative to the client's folder), Drive folders (gdrive://<folder id>) or S3 (s3://bucket/prefix); several: separate with commas.",
-        "example": "https://reparo.mx/*, manual.pdf",
+        "question": "Where are the documents it answers from? Web addresses (https://...: the setup reads them and writes the knowledge files from them; a site's home address reads every page of the site), files or folders on this server (relative to the client's folder), Drive folders (gdrive://<folder id>) or S3 (s3://bucket/prefix); several: separate with commas.",
+        "example": "https://reparo.mx, https://reparo.mx/garantia, manual.pdf",
         "answered_by": "client"
       }
     },
