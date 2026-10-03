@@ -40,11 +40,11 @@ from ..spec.errors import SpecError
 from ..spec.loader import PackCatalog, load_instance
 from ..tenancy import FileSecrets, default_secrets_dir, local_backend
 from .brand import read_brand
-from .build import BuildResult, _extends, build
+from .build import BuildResult, _extends, build, pack_questions
 from .catalog import match
 from .deploy import REPO_ROOT, approve, check_approval, new_key, plan_docker, stage
 from .impact import missing, report
-from .interview import Question, load_answers
+from .interview import AnswerError, Question, load_answers, parse
 
 Ask = Callable[[str], str]
 DIFACTORY_DEFAULTS = {"main_model": "claude-sonnet-5-5", "fast_model": "claude-haiku-4-5"}
@@ -715,11 +715,17 @@ class Setup:
             return reused
         try:
             answers = load_answers(reused.answers_path)
-            branding = self.ask_brand(keeps=bool(answers.get("branding")))
-            if branding:
-                answers["branding"] = branding
             extends = json.loads(reused.spec_path.read_text(encoding="utf-8"))["extends"]
             packs = [str(ref).split("@", 1)[0] for ref in extends]
+            questions = pack_questions(self.catalog, packs)
+        except Exception as exc:  # a broken answers file: keep the client as it is
+            _say(f"Could not rebuild ({exc}); keeping it as it is.")
+            return reused
+        branding = self.ask_brand(keeps=bool(answers.get("branding")))
+        if branding:
+            answers["branding"] = branding
+        self.ask_new_questions(questions, answers)
+        try:
             with tempfile.TemporaryDirectory() as tmp:  # a dry run first: nothing half-written
                 trial = build(self.catalog, packs, Path(tmp), answers=answers)
         except Exception as exc:  # a broken answers file: keep the client as it is
@@ -736,6 +742,26 @@ class Setup:
         result = build(self.catalog, packs, self.out, answers=answers)
         _say(f"Rebuilt {result.instance_id} from {reused.answers_path.name}.")
         return result
+
+    def ask_new_questions(self, questions: list[Question], answers: dict[str, Any]) -> None:
+        """Required questions the pack added since this client was built: asked now, so the
+        rebuild does not fail on them (and the pack's example content never stays in use)."""
+        new = [q for q in questions if q.required and q.default is None
+               and q.key not in answers and q.name not in answers]  # fmt: skip
+        if not new:
+            return
+        _say(f"\nThe pack asks {len(new)} new question(s) since this client was built:")
+        for q in new:
+            error = None
+            while True:
+                raw = self._question(q, error)
+                try:
+                    parse(q, raw)
+                except AnswerError as exc:
+                    error = str(exc)
+                    continue
+                answers[q.key] = raw
+                break
 
     def run_all(self) -> int:
         _say("Di-Factory harness setup. Ctrl+C stops at any time; nothing is half-written.")
