@@ -210,6 +210,35 @@ async def test_invented_citations_become_not_found(tmp_path: Path) -> None:
         assert "not retrieved: zzzzzzzzzz" in env.provider.requests[2].messages[-1].text()
 
 
+async def test_after_two_failures_the_cited_paragraphs_still_reach_the_contact(
+    tmp_path: Path,
+) -> None:
+    def mixed(request: ModelRequest) -> Message:  # what the live assistant did: a cited
+        source = _cite(request).text().split("[")[1].rstrip(".]")  # fact, then a comment
+        return Message.assistant(
+            f"We accept cash, debit and credit cards [{source}].\n\n"
+            "The documents do not say more about this, but I can pass your question to a person."
+        )
+
+    first = calls(("k1", "knowledge.search_faq", {"query": "payment methods"}))
+    env = Env(tmp_path, [first, mixed, lambda req: mixed(_first_result(req))],
+              edit=_kb_spec(_docs(tmp_path)))  # fmt: skip
+    inst, _, client = await env.open()
+    async with inst, client:
+        reply = await _ask(client, "¿Qué formas de pago aceptan?")
+        assert reply == (
+            "We accept cash, debit and credit cards [1].\n\n"
+            "Sources:\n[1] Sonrisa FAQ — Payment methods"
+        )  # the unsourced comment is dropped, the sourced answer is not
+        note = env.provider.requests[2].messages[-1].text()
+        assert "no offers or comments without a marker" in note
+
+
+def _first_result(req: ModelRequest) -> ModelRequest:
+    results = [m for m in req.messages if isinstance(m.content[0], ToolResultBlock)]
+    return ModelRequest(system="", messages=results[:1], tools=[])
+
+
 async def test_not_found_says_so_and_escalates_by_rule(tmp_path: Path) -> None:
     script = [
         calls(("k1", "knowledge.search_faq", {"query": "orthodontic insurance coverage"})),

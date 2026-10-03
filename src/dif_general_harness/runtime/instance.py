@@ -50,6 +50,7 @@ from ..knowledge.store import KnowledgeBase, SyncReport
 from ..knowledge.tools import (
     check_citations,
     citation_checks,
+    keep_cited,
     render_citations,
     repair_note,
     search_tool,
@@ -976,7 +977,8 @@ class AgentRuntime:
                     key="citations",
                     session_id=session.id,
                 )
-                added = session.add_message(Message.assistant(ungrounded_text(inst)))
+                pruned = self._cited_only(session, turn_start)
+                added = session.add_message(Message.assistant(pruned or ungrounded_text(inst)))
                 await inst.store.append(added)
                 yield added
                 return
@@ -988,6 +990,18 @@ class AgentRuntime:
                 yield event
             if reason != "end_turn":
                 return
+
+    def _cited_only(self, session: Session, turn_start: int) -> str | None:
+        """The last answer's cited paragraphs, when they pass every citations check."""
+        answer = next(
+            (m.text() for m in reversed(session.messages) if m.role is Role.ASSISTANT), ""
+        )
+        for check in self.citation_checks:
+            pruned = keep_cited(check, answer, session, turn_start)
+            if pruned is None:
+                return None
+            answer = pruned
+        return answer
 
     def _citation_failure(self, session: Session, turn_start: int) -> str | None:
         answer = next(
