@@ -390,6 +390,19 @@ def load_pack(path: Path | str) -> ResolvedSpec:
     return ResolvedSpec(spec=spec, data=layer.data, layers=[layer.path], issues=issues)
 
 
+def _local_sources(data: dict[str, Any], base: Path) -> None:
+    """Knowledge sources given as plain file names in the instance's values (a client's
+    answer, e.g. ``manual.pdf`` or ``<id>.knowledge/site.md``) are files next to it."""
+    for corpus in ((data.get("knowledge") or {}).get("corpora") or {}).values():
+        sources = (corpus or {}).get("sources") if isinstance(corpus, dict) else None
+        if not isinstance(sources, list):
+            continue
+        for i, src in enumerate(sources):
+            if (isinstance(src, str) and src and "://" not in src and "{{" not in src
+                    and not Path(src).is_absolute()):  # fmt: skip
+                sources[i] = _abs(base, src)
+
+
 def load_instance(path: Path | str, catalog: PackCatalog) -> ResolvedSpec:
     from .validate import validate
 
@@ -437,6 +450,7 @@ def load_instance(path: Path | str, catalog: PackCatalog) -> ResolvedSpec:
             )
 
     resolved = interpolate({k: v for k, v in merged.items() if k != "variables"}, values)
+    _local_sources(resolved, inst.path.parent)
     resolved["variables"] = variables
     resolved["values"] = values
     spec, schema_issues = _parse(resolved, str(inst.path))
