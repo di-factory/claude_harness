@@ -26,7 +26,14 @@ It installs what is missing (Docker, Caddy, uv), then guides you through:
    for this client: the chat asks for an access code (generated once, in
    `~/.dif/secrets/web_access_code`; give it only to the people who should chat) and the
    landing page shows no chat buttons, only a quiet link;
-   then the questionnaire: the client's business (what they do, services, prices, address,
+   then the questionnaire. (A document assistant, `conversational-rag`, can answer from the
+   client's web site: give web addresses as its documents and the setup reads them (a
+   site's home address, e.g. `https://site.com`: every page of the site by its own links, up
+   to 30; any other address: that page) and has a model write a knowledge file of questions
+   and answers from each, every answer with the page it came from
+   (`clients/<id>.knowledge/<address>.md`: read it, edit it if needed; reusing the client
+   offers to read them again.) The
+   questionnaire covers the client's business (what they do, services, prices, address,
    policies) and a few settings, with Di-Factory's defaults filled in. On request a business
    consultant (Opus, a few cents; `DIF_CONSULTANT_MODEL` picks another model) asks one
    follow-up when an answer is too thin for the agent to use, and at the end recommends what

@@ -9,8 +9,8 @@ check on answers, and how citations reach the contact.
   pass it to a person) and evaluates the escalation rules with ``knowledge.not_found``.
 - **Citations check:** after an answer that used retrieved chunks, a ``citations`` check
   (``min_citations``, ``claims_must_cite``) must pass. Citing a source that was never
-  retrieved fails. A failed answer gets one rewrite; if that fails too, the contact gets
-  "not found" instead of an unsupported answer.
+  retrieved fails. A failed answer gets one rewrite; if that fails too, the contact gets its
+  cited paragraphs only (the unsourced ones dropped), or "not found" when none is left.
 - **Rendering:** markers become ``[1]``, ``[2]`` and a "Sources" list (document and section)
   in the reply the contact sees.
 """
@@ -136,12 +136,33 @@ def check_citations(
     if len(set(cited)) < needed:
         return False, f"cites {len(set(cited))} source(s); at least {needed} needed"
     if extra.get("claims_must_cite"):
-        for part in re.split(r"\n\s*\n|\n(?=[-*•\d])", answer):
-            words = MARKER.sub("", part).split()
-            question = part.strip().endswith("?")
-            if len(words) >= MIN_CLAIM_WORDS and not MARKER.search(part) and not question:
+        for part in _parts(answer):
+            if _unsourced(part):
+                words = MARKER.sub("", part).split()
                 return False, f"a statement has no source: {' '.join(words[:12])!r}"
     return True, f"cites {len(set(cited))} retrieved source(s)"
+
+
+def _parts(answer: str) -> list[str]:
+    return re.split(r"\n\s*\n|\n(?=[-*•\d])", answer)
+
+
+def _unsourced(part: str) -> bool:
+    """A statement long enough to be a claim, with no source marker (questions are fine)."""
+    words = MARKER.sub("", part).split()
+    return (len(words) >= MIN_CLAIM_WORDS and not MARKER.search(part)
+            and not part.strip().endswith("?"))  # fmt: skip
+
+
+def keep_cited(check: Check, answer: str, session: Session, turn_start: int) -> str | None:
+    """The answer without its unsourced paragraphs, if what is left passes the check; None
+    when nothing sourced is left (the contact then gets "not found")."""
+    kept = [p.strip() for p in _parts(answer) if p.strip() and not _unsourced(p)]
+    if not any(MARKER.search(p) for p in kept):
+        return None
+    pruned = "\n\n".join(kept)
+    passed, _ = check_citations(check, pruned, session, turn_start)
+    return pruned if passed else None
 
 
 def citation_checks(instance: Instance, agent_name: str) -> list[Check]:
@@ -166,7 +187,8 @@ def ungrounded_text(instance: Instance) -> str:
 def repair_note(reason: str) -> Message:
     return Message.user(
         f"[Automatic check: your last answer {reason}. Rewrite it using only the passages you"
-        " retrieved, with a [kb:<id>] marker after each statement. If they do not support an"
+        " retrieved, with a [kb:<id>] marker after each statement, and leave out anything they"
+        " do not say (no offers or comments without a marker). If they do not support an"
         " answer, say the documents do not cover it.]"
     )
 

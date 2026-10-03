@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.messages import Message
+from ..knowledge.sources import SITE_PAGES
 from ..providers.base import ModelProvider, ModelRequest, ProviderMessage
 from ..runtime.routing import RoutingError, check_anthropic_key
 from ..spec.errors import SpecError
@@ -45,6 +46,16 @@ from .catalog import match
 from .deploy import REPO_ROOT, approve, check_approval, new_key, plan_docker, stage
 from .impact import missing, report
 from .interview import AnswerError, Question, load_answers, parse
+from .site_reader import (
+    WRITER_SYSTEM,
+    file_for,
+    pages_prompt,
+    raw_markdown,
+    read_site,
+    site_entries,
+    start_of,
+    whole_site,
+)
 
 Ask = Callable[[str], str]
 DIFACTORY_DEFAULTS = {"main_model": "claude-sonnet-5-5", "fast_model": "claude-haiku-4-5"}
@@ -213,6 +224,7 @@ class Setup:
         root: Path = REPO_ROOT,
         advisor: Advisor | None = None,
         consultant: Advisor | None = None,
+        writer: Advisor | None = None,
     ) -> None:
         self.root = root  # where deploy/build and .dif live (the repository)
         self.catalog = PackCatalog(roots=packs)
@@ -226,6 +238,8 @@ class Setup:
         self.advisor = advisor  # None: word matching only (tests, or no key)
         self.consultant = consultant  # the business consultant (questionnaire help)
         self.consulting = False
+        self.writer = writer  # writes a site's knowledge file from its pages
+        self.site_http: Any = None  # tests: the transport the site is read with
         self.key: str | None = None
         self.gaps: list[str] = []
         self.request = ""
@@ -286,6 +300,7 @@ class Setup:
         *,
         role: str,
         max_tokens: int,
+        timeout: float = 120,
     ) -> str | None:
         """One model call; None (and a short note) when it cannot answer."""
         if factory is None or not self.key:
@@ -301,7 +316,7 @@ class Setup:
             return final
 
         try:
-            return asyncio.run(asyncio.wait_for(call(), timeout=120))
+            return asyncio.run(asyncio.wait_for(call(), timeout=timeout))
         except Exception as exc:  # the setup goes on without it
             _say(f"(The {who} did not answer: {type(exc).__name__}. Going on without it.)")
             return None
@@ -763,12 +778,81 @@ class Setup:
                 answers[q.key] = raw
                 break
 
+    def read_sites(self, result: BuildResult) -> BuildResult:
+        """Web addresses among the documents: read them now (a site's home: every page) and
+        have a model write each up as a knowledge file, part of the signed solution, in
+        place of the live address."""
+        if not result.ok:
+            return result
+        spec = json.loads(result.spec_path.read_text(encoding="utf-8"))
+        values = spec.get("values") or {}
+        sites = site_entries(values)
+        if not sites:
+            return result
+        folder = result.spec_path.parent
+        changed = False
+        for url in sites:
+            rel = f"{result.instance_id}.knowledge/{file_for(url)}"
+            target = folder / rel
+            if target.exists():
+                question = f"Read {url} again (it may have changed)? [y/N] "
+                again = _yes(self.ask(question))
+            else:
+                what = "the whole site" if whole_site(url) else "the page"
+                question = (f"Read {what} {url} now and have a model write the knowledge"
+                            " file from it? [Y/n] ")  # fmt: skip
+                again = _yes(self.ask(question), default=True)
+            if again and not self._write_site(url, target, spec):
+                again = False
+            if target.exists():
+                for value in values.values():
+                    if isinstance(value, list) and url in value:
+                        value[value.index(url)] = rel
+                changed = True
+            elif not again:
+                _say(f"   {url} stays a live source: the running assistant reads it itself.")
+        if not changed:
+            return result
+        result.spec_path.write_text(
+            json.dumps(spec, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        resolved = load_instance(result.spec_path, self.catalog)
+        return BuildResult(result.instance_id, result.spec_path, result.answers_path,
+                           result.summary_path, resolved, result.problems)  # fmt: skip
+
+    def _write_site(self, url: str, target: Path, spec: dict[str, Any]) -> bool:
+        _say(f"   Reading {url} ...")
+        try:
+            limit = SITE_PAGES if whole_site(url) else 1
+            pages = asyncio.run(read_site(start_of(url), max_pages=limit, http=self.site_http))
+        except Exception as exc:  # the site is down or refuses: keep what there was
+            _say(f"   Could not read it ({type(exc).__name__}: {exc}).")
+            return False
+        if not pages:
+            _say("   No pages found there.")
+            return False
+        _say(f"   {len(pages)} page(s) read; the writer model turns them into questions and"
+             " answers (a minute or two).")  # fmt: skip
+        name = str((spec.get("tenant") or {}).get("name") or url)
+        text = self._ask_model(self.writer, "writer model", WRITER_SYSTEM,
+                               f"Business: {name}\n\n{pages_prompt(pages)}",
+                               role="main", max_tokens=16000, timeout=600)  # fmt: skip
+        if not text or "## " not in text:
+            text = raw_markdown(pages, name)  # no model: the pages as they are
+            _say("   Without the writer model the pages are kept as they are.")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text.strip() + "\n", encoding="utf-8")
+        sections = text.count("\n## ") + text.startswith("## ")
+        _say(f"   Wrote {target} ({sections} sections). Read it: it is what the assistant"
+             " will answer from.")  # fmt: skip
+        return True
+
     def run_all(self) -> int:
         _say("Di-Factory harness setup. Ctrl+C stops at any time; nothing is half-written.")
         self.model_key()
         reused = self.existing()
         if reused is not None:
-            reused = self.refresh(reused)
+            reused = self.read_sites(self.refresh(reused))
             if not self.try_it(reused):
                 return 1
             self.go_online(reused)
@@ -776,7 +860,7 @@ class Setup:
         pack_ids = self.choose_pack()
         if pack_ids is None:
             return 2
-        result = self.questionnaire(pack_ids)
+        result = self.read_sites(self.questionnaire(pack_ids))
         if not result.ok:
             _say("\nNot ready yet:")
             for problem in result.problems:
@@ -821,15 +905,23 @@ def anthropic_consultant(key: str) -> ModelProvider:
     return AnthropicProvider(model, api_key=key, max_tokens=2000, prompt_cache=False)
 
 
+def anthropic_writer(key: str) -> ModelProvider:
+    from ..providers.anthropic import AnthropicProvider
+
+    return AnthropicProvider(DIFACTORY_DEFAULTS["main_model"], api_key=key, max_tokens=16000,
+                             prompt_cache=False)  # fmt: skip
+
+
 def run_setup(
     args: Any,
     run: Callable[[list[str]], int] | None = None,
     advisor: Advisor | None = anthropic_advisor,
     consultant: Advisor | None = anthropic_consultant,
+    writer: Advisor | None = anthropic_writer,
 ) -> int:
     setup = Setup(
         args.packs or default_packs(), args.out, run=run, public_url=args.public_url,
-        advisor=advisor, consultant=consultant,
+        advisor=advisor, consultant=consultant, writer=writer,
     )  # fmt: skip
     try:
         return setup.run_all()
