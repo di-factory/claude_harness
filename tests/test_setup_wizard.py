@@ -395,3 +395,32 @@ def test_a_document_assistant_gets_a_page_and_an_open_or_closed_chat(
     chat = render_chat("web", "Reparo", locale="es", public=False)
     assert 'id="gate"' in chat and "prompt(" not in chat  # asked on the page, not a pop-up
     assert "Este chat es privado" in chat
+
+
+def test_a_reused_client_is_asked_the_packs_new_questions(
+    examples: Path, tmp_path: Path, home: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import yaml
+
+    from dif_general_harness.channels.landing import render_landing
+    from dif_general_harness.constructor import build
+
+    catalog = PackCatalog(roots=[examples])
+    answers = {
+        "tenant.id": "reparo", "tenant.name": "Reparo", "values.assistant_name": "Reparo",
+        "values.corpus_sources": [str(tmp_path)], "values.support_email": "a@reparo.mx",
+        "values.main_model": "m", "values.fast_model": "f", **ABOUT,
+    }  # fmt: skip
+    first = build(catalog, ["conversational-rag"], tmp_path / "clients", answers=answers)
+    saved = yaml.safe_load(first.answers_path.read_text())
+    del saved["knowledge"]["about"]  # built before the pack asked about the business
+    first.answers_path.write_text(yaml.safe_dump(saved, allow_unicode=True))
+
+    replies = iter(["", "", *ABOUT.values()])  # rebuild, same look, the three new answers
+    setup = Setup([examples], tmp_path / "clients", ask=lambda _: next(replies))
+    again = setup.refresh(first)
+    assert "The pack asks 3 new question(s)" in capsys.readouterr().out
+    assert again.ok and again.resolved is not None, again.problems
+    page = render_landing(again.resolved.spec, again.resolved.data, "web")
+    assert "Reparo fixes phones and laptops" in page and "example" not in page.lower()
+    assert "about" in yaml.safe_load(again.answers_path.read_text())["knowledge"]
