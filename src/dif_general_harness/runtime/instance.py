@@ -320,7 +320,9 @@ class Instance:
 
         def build(corpus: str, src: dict[str, Any]) -> Any:
             nonlocal http, guarded
-            raw = src.get("auth") or src.get("credentials") or corpora.get(corpus, {}).get("auth")
+            raw = src.get("auth") or src.get("credentials")
+            if raw is None and not knowledge_sources.is_public_web(src):  # public pages: none
+                raw = corpora.get(corpus, {}).get("auth")
             if raw is not None and _secret_refs(raw) & missing:
                 raise ValueError("a secret is not set")
             secret = self.secrets.resolve(raw) if raw is not None else None

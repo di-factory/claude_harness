@@ -13,6 +13,10 @@ propagate``), exactly as for files.
   read like local files (Markdown, text, HTML, CSV, PDF, DOCX, XLSX).
 - ``{"type": "url", "url"}`` (or an ``https://`` string): one public web page, fetched with
   the same guard as ``http.get`` (no private addresses).
+- ``{"type": "site", "url", "max_pages"}`` (or ``https://site/*``): a public web site, read
+  by following its own links from ``url``: the same host, under the same path, pages only
+  (no images, styles or scripts), up to ``max_pages`` (30 by default, 200 at most). Each
+  page is a document titled by its ``<title>``.
 
 A source's ``auth``/``credentials`` may also be given once for the corpus (``auth``).
 """
@@ -20,9 +24,12 @@ A source's ``auth``/``credentials`` may also be given once for the corpus (``aut
 from __future__ import annotations
 
 import hashlib
+import html
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+from urllib.parse import urldefrag, urljoin, urlsplit
 
 import httpx2
 
@@ -185,6 +192,88 @@ class UrlKnowledge:
         return as_text(body, entry.uri.split("?")[0])
 
 
+SITE_PAGES, SITE_MAX = 30, 200
+_HREF = re.compile(r"""href\s*=\s*["']([^"'#][^"']*)["']""", re.IGNORECASE)
+_TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+_NOT_PAGES = re.compile(
+    r"\.(css|js|mjs|json|xml|png|jpe?g|gif|svg|webp|ico|woff2?|ttf|eot|mp4|mp3|zip|gz)$",
+    re.IGNORECASE,
+)
+_HTML = ("text/html", "application/xhtml+xml")
+
+
+def _page_title(body: str, url: str) -> str:
+    found = _TITLE.search(body)
+    title = " ".join(html.unescape(found.group(1)).split()) if found else ""
+    return title[:120] or (urlsplit(url).path.strip("/") or urlsplit(url).netloc)
+
+
+@dataclass
+class SiteKnowledge:
+    """A public site: the pages reachable by its own links, breadth first."""
+
+    url: str
+    http: httpx2.AsyncClient
+    max_pages: int = SITE_PAGES
+    label: str = ""
+    _cache: dict[str, tuple[bytes, str]] = field(default_factory=dict)
+
+    def _inside(self, url: str) -> bool:
+        start, here = urlsplit(self.url), urlsplit(url)
+        prefix = start.path if start.path.endswith("/") else start.path.rsplit("/", 1)[0] + "/"
+        return (here.scheme in ("http", "https") and here.netloc == start.netloc
+                and (here.path or "/").startswith(prefix)
+                and not _NOT_PAGES.search(here.path))  # fmt: skip
+
+    async def entries(self) -> list[Entry]:
+        queue, seen = [urldefrag(self.url)[0]], set[str]()
+        out: list[Entry] = []
+        limit = max(1, min(int(self.max_pages or SITE_PAGES), SITE_MAX))
+        while queue and len(out) < limit:
+            url = queue.pop(0)
+            if url in seen:
+                continue
+            seen.add(url)
+            try:
+                response = await self.http.get(url, headers={"User-Agent": "dif-general-harness"})
+            except httpx2.HTTPError as exc:
+                if not out:
+                    raise SourceError(f"{url}: {type(exc).__name__}") from exc
+                continue  # one page down: the rest of the site still counts
+            if response.status_code >= 400:
+                if not out:
+                    raise SourceError(f"{url}: HTTP {response.status_code}")
+                continue
+            kind = str(response.headers.get("content-type", "")).split(";")[0].strip()
+            body = response.content[:MAX_BYTES]
+            text = body.decode("utf-8", errors="replace")
+            self._cache[url] = (body, kind)
+            title = _page_title(text, url) if kind in _HTML else url.rsplit("/", 1)[-1]
+            out.append(Entry(url, title, hashlib.sha256(body).hexdigest(),
+                             {"content-type": kind}))  # fmt: skip
+            if kind in _HTML:
+                for href in _HREF.findall(text):
+                    link = urldefrag(urljoin(url, html.unescape(href.strip())))[0]
+                    link = link.split("?", 1)[0]
+                    if link not in seen and self._inside(link):
+                        queue.append(link)
+        return out
+
+    async def read(self, entry: Entry) -> Text | None:
+        body, kind = self._cache.pop(entry.uri, (b"", ""))
+        text = body.decode("utf-8", errors="replace")
+        if kind in _HTML:
+            return Text(html_to_markdown(text), "markdown")
+        if kind.startswith("text/"):
+            return Text(text, "markdown" if kind == "text/markdown" else "text")
+        return as_text(body, entry.uri.split("?")[0])
+
+
+def is_public_web(src: dict[str, Any] | None) -> bool:
+    """A public web page or site: read without credentials."""
+    return bool(src) and (src or {}).get("type") in ("url", "site")
+
+
 def normalize(src: Any) -> dict[str, Any] | None:
     """A source as a dict; string shorthands (``s3://``, ``gdrive://``, ``https://``, paths)."""
     if isinstance(src, dict):
@@ -197,6 +286,8 @@ def normalize(src: Any) -> dict[str, Any] | None:
     if src.startswith("gdrive://"):
         return {"type": "gdrive", "folder_id": src[9:]}
     if src.startswith(("https://", "http://")):
+        if src.endswith("/*"):
+            return {"type": "site", "url": src[:-1]}
         return {"type": "url", "url": src}
     path = src.removeprefix("file://")
     return {"type": "file", "path": path} if path.startswith("/") else None
@@ -226,4 +317,9 @@ def build(
         if not src.get("url"):
             raise SourceError("url sources need a url")
         return UrlKnowledge(str(src["url"]), guarded_http or http, str(src["url"]))
+    if kind == "site":
+        if not src.get("url"):
+            raise SourceError("site sources need a url")
+        return SiteKnowledge(str(src["url"]), guarded_http or http,
+                             int(src.get("max_pages") or SITE_PAGES), str(src["url"]))  # fmt: skip
     raise SourceError(f"unknown knowledge source type {kind!r}")
