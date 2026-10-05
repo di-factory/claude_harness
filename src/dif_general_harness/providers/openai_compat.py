@@ -25,12 +25,14 @@ from ..core.messages import (
     Usage,
 )
 from .base import (
+    ContextOverflow,
     Embeddings,
     ModelRequest,
     ProviderEvent,
     ProviderMessage,
     ProviderTextDelta,
     StopReason,
+    is_overflow,
     tool_name_map,
     wire_name,
 )
@@ -153,7 +155,12 @@ class OpenAICompatibleProvider:
         finish: str | None = None
         usage = Usage()
         served_by: str | None = None
-        stream = await self.client.chat.completions.create(**params)
+        try:
+            stream = await self.client.chat.completions.create(**params)
+        except openai.BadRequestError as exc:
+            if is_overflow(str(exc)) or getattr(exc, "code", None) == "context_length_exceeded":
+                raise ContextOverflow(str(exc)) from exc
+            raise
         async for chunk in stream:
             served_by = getattr(chunk, "model", None) or served_by
             if getattr(chunk, "usage", None):

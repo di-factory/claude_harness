@@ -305,3 +305,16 @@ async def test_invalid_provider_arguments_are_never_executed(scope: Scope) -> No
     events = await _collect(session, "x", provider)
     status = {e.tool_use_id: e.status for e in events if isinstance(e, ToolCallFinished)}
     assert status == {"t1": ToolStatus.ERROR}
+
+
+async def test_a_history_too_long_ends_as_overflow_and_can_continue(scope: Scope) -> None:
+    from dif_general_harness.providers.base import ContextOverflow
+
+    session = Session(scope=scope, agent_id="receptionist")
+    events = await _collect(session, "hola", FakeProvider([ContextOverflow("too long")]))
+    assert isinstance(events[-1], TurnEnded) and events[-1].reason == "overflow"
+    assert not any(isinstance(e, ErrorEvent) for e in events)  # the caller decides
+    provider = FakeProvider([Message.assistant("Hola.")])
+    again = [ev async for ev in run(session, None, provider, _registry())]
+    assert isinstance(again[-1], TurnEnded) and again[-1].reason == "end_turn"
+    assert [m.text() for m in session.messages] == ["hola", "Hola."]  # nothing added twice

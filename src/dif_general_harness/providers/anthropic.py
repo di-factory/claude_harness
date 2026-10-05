@@ -30,11 +30,13 @@ from ..core.messages import (
     Usage,
 )
 from .base import (
+    ContextOverflow,
     ModelRequest,
     ProviderEvent,
     ProviderMessage,
     ProviderTextDelta,
     StopReason,
+    is_overflow,
     tool_name_map,
     wire_name,
 )
@@ -225,6 +227,8 @@ class AnthropicProvider:
             except anthropic.BadRequestError as exc:
                 if "workspace" in str(exc).lower():
                     raise ProviderSetupError(WORKSPACE_HINT) from exc
+                if is_overflow(str(exc)):
+                    raise ContextOverflow(str(exc)) from exc
                 raise
         details = getattr(final, "stop_details", None)
         yield ProviderMessage(

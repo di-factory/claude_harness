@@ -9,6 +9,21 @@ from typing import Any, Literal, Protocol
 from ..core.messages import Message, Usage
 
 
+class ContextOverflow(RuntimeError):
+    """The request does not fit the model's context window (the history is too long)."""
+
+
+_OVERFLOW_HINTS = ("prompt is too long", "context limit", "context window",
+                   "context_length_exceeded", "maximum context length", "context length",
+                   "too many tokens")  # fmt: skip
+
+
+def is_overflow(message: str) -> bool:
+    """A provider error that says the input is too long for the model."""
+    text = message.lower()
+    return any(hint in text for hint in _OVERFLOW_HINTS)
+
+
 @dataclass(frozen=True)
 class ModelRequest:
     system: str

@@ -59,6 +59,7 @@ from ..workflows.render import render as render_value
 
 log = logging.getLogger(__name__)
 _EVENT_REF = re.compile(r"\{\{\s*event((?:\.[A-Za-z0-9_]+)*)\s*\}\}")
+STOPPED = {"error", "budget", "refusal", "max_turns", "stuck", "timeout", "overflow"}
 FALLBACK = "Sorry, I can't answer right now. A person from our team will follow up."
 DAY = 86400.0
 
@@ -331,9 +332,7 @@ class Headless:
             session = target_session
             agent = target
         reply = await agent.reply("\n\n".join(texts)) if texts else None
-        if reason in {"error", "budget", "refusal", "max_turns", "stuck", "timeout"} and not (
-            escalated
-        ):
+        if reason in STOPPED and not escalated:
             item = await inst.inbox.create(
                 "budget" if reason == "budget" else "escalation",
                 f"Turn ended with {reason}",

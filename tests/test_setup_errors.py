@@ -112,3 +112,31 @@ async def test_a_key_without_a_workspace_gets_the_fix() -> None:
     with pytest.raises(ProviderSetupError, match="inside a workspace"):
         async for _ in provider.stream(request):
             pass
+
+
+async def test_a_prompt_too_long_is_a_context_overflow() -> None:
+    import anthropic
+    import httpx2 as httpx
+
+    from dif_general_harness.providers.base import ContextOverflow, ModelRequest
+
+    refused = anthropic.BadRequestError(
+        "prompt is too long: 213512 tokens > 200000 maximum",
+        response=httpx.Response(400, request=httpx.Request("POST", "https://x")), body=None,
+    )  # fmt: skip
+
+    class Messages:
+        def stream(self, **kw: object) -> object:
+            raise refused
+
+    class Client:
+        messages = Messages()
+
+        class beta:
+            messages = Messages()
+
+    provider = AnthropicProvider("claude-haiku-4-5", client=Client())  # type: ignore[arg-type]
+    request = ModelRequest(system="", messages=[Message.user("hola")])
+    with pytest.raises(ContextOverflow, match="prompt is too long"):
+        async for _ in provider.stream(request):
+            pass
