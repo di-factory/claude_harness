@@ -111,7 +111,8 @@ the intent router, file and batch triggers, the documents pack, sampled verifica
 egress proxy and isolated extensions, hybrid retrieval with S3/Drive/web sources, and voice;
 then the web chat page and the setup's advisers (pack advisor, business consultant; 65–66) reading small FAQs whole (67), and
 the client's look from any brand material plus missing-key explanations (68), and the
-handover to a client's own Claude with the `admin` commands and owner FAQ edits (69).
+handover to a client's own Claude with the `admin` commands and owner FAQ edits (69); then
+untrusted-content fences, cheap run caps and the FAQ-gaps list (70–72).
 Next: GCP and Azure profiles.
 Known gaps: streaming (speech-to-speech) voice, knowledge connectors beyond files, S3,
 Drive and web pages (SharePoint, Notion... push through the admin API), pgvector for very

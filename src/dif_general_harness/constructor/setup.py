@@ -48,6 +48,7 @@ from .impact import missing, report
 from .interview import AnswerError, Question, load_answers, parse
 from .site_reader import (
     WRITER_SYSTEM,
+    drop_injections,
     file_for,
     pages_prompt,
     raw_markdown,
@@ -831,6 +832,12 @@ class Setup:
         if not pages:
             _say("   No pages found there.")
             return False
+        pages, dropped = drop_injections(pages)
+        if dropped:
+            _say(f"   Left out {len(dropped)} line(s) that look like instructions to an AI"
+                 " (possible prompt injection); check those pages:")  # fmt: skip
+            for line in dropped[:5]:
+                _say(f"     {line}")
         _say(f"   {len(pages)} page(s) read; the writer model turns them into questions and"
              " answers (a minute or two).")  # fmt: skip
         name = str((spec.get("tenant") or {}).get("name") or url)

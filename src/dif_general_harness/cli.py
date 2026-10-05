@@ -809,12 +809,15 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
     a_reply.add_argument("--by", default="owner", help="who answers (kept in the audit log)")
     a_costs = adm_sub.add_parser("costs", help="model spend by day (list prices)")
     a_costs.add_argument("--since", help="YYYY-MM-DD (default: the last 30 days)")
-    a_faq = adm_sub.add_parser("faq", help="show or replace the FAQ the assistant answers from")
-    a_faq.add_argument("action", choices=["show", "set"])
+    a_faq = adm_sub.add_parser(
+        "faq", help="the FAQ the assistant answers from, and the questions it did not answer"
+    )
+    a_faq.add_argument("action", choices=["show", "set", "gaps", "done", "dismiss"])
     a_faq.add_argument(
-        "file", nargs="?", type=argparse.FileType("r", encoding="utf-8"), default="-",
-        help="for set: the new FAQ (Markdown), or - for standard input",
+        "target", nargs="?", default="-",
+        help="set: the new FAQ (Markdown) or - for standard input; done/dismiss: a gap's id",
     )  # fmt: skip
+    a_faq.add_argument("--all", action="store_true", help="gaps: also the answered/dismissed")
     a_faq.add_argument("--corpus", help="default: the instance's first knowledge corpus")
     a_faq.add_argument("--uri", help="which document, when the FAQ has several")
 

@@ -274,6 +274,12 @@ FAQ edits the client makes (`./negocio faq set`) stand across restarts until Di-
 new release of that FAQ; `docs/operacion.md` tells Claude to log each change in
 `solicitudes/faq-cambios.md` so the next release carries it.
 
+What the FAQ lacks is not guessed: every question the documents did not answer is kept, in
+the customer's words and counted when asked again (`admin faq gaps`, `./negocio faq gaps` for
+the client's Claude). Each fine-tuning round starts there: add the answers, then
+`admin faq done ID` (or `dismiss ID` for what the assistant should not answer). A question
+marked done that customers keep asking comes back: the FAQ still does not cover it.
+
 ## Common mistakes
 
 | You see | Why | Fix |
@@ -283,7 +289,9 @@ new release of that FAQ; `docs/operacion.md` tells Claude to log each change in
 | `secrets.anthropic: not set` | Variables set by hand are gone after a new login | `secrets set anthropic` once; `secrets check` shows what is missing |
 | `nothing was received` | The terminal paste never reached the hidden prompt | `--from-env-file ~/.env`, or pipe it from your Mac (Phase 5) |
 | A handoff although the FAQ has the answer (in other words, or in English) | Older instances match words only | `git pull` and rebuild: the appointment pack now reads small FAQs whole (`read_whole_below`) |
-| "No tengo esa información" and a handoff | The FAQ does not cover the question: the agent never invents | Answer it in the questionnaire and run `build` again |
+| "No tengo esa información" and a handoff | The FAQ does not cover the question: the agent never invents | `admin faq gaps` lists every such question; answer them in the questionnaire (or `admin faq set`) and rebuild |
+| A reply ends with "Turn ended with stuck" or "timeout" in the inbox | The assistant repeated the same tool call or every tool failed three turns in a row, or a reply took longer than 240 s (`max_seconds` per agent): the run stops and a person gets it | Look at the conversation (`admin show SESSION`); usually a connector is down or misconfigured |
+| `knowledge_suspicious` warning | A document or page contains text written like instructions to an AI (a possible prompt injection); the assistant only ever reads it as data | Check the named document and remove that text |
 | `API key is invalid` (401) in the logs, or `holds N keys one after another` | The paste arrived more than once (some terminals repeat it into hidden prompts), so the stored key is several keys glued together | `secrets set anthropic` again and paste once; the setup and `secrets set` now refuse such keys. Then copy it into `deploy/build/<id>/secrets/` (or run `./setup.sh` again) |
 | `claude: command not found` (or `uv`) | They live in `~/.local/bin`; `setup.sh` now links them into `/usr/local/bin` so every terminal finds them | `git pull && ./setup.sh` once; if Claude Code is missing: `curl -fsSL https://claude.ai/install.sh \| bash` and run `./setup.sh` again |
 | `cannot start: secrets.llm: not set` | The pack runs on its own OpenAI-compatible endpoint | The setup now offers, right after the pack choice, to run it on the Anthropic key (Enter = yes); the choice is kept in the answers |

@@ -34,6 +34,7 @@ from pydantic import BaseModel
 from ..channels import ChannelError, Handshake, Inbound, RateLimited, Unauthorized, WebChannel
 from ..channels.landing import favicon, render_landing
 from ..channels.web_page import render_chat
+from ..knowledge.store import GAP_STATUSES
 from ..observability import quality
 from ..runtime import Instance
 from ..tenancy.config_versions import ConfigError, ConfigStore
@@ -488,6 +489,28 @@ def create_app(
     @app.get("/admin/knowledge", dependencies=[Depends(admin)])
     async def knowledge_corpora() -> dict[str, list[str]]:
         return {"corpora": sorted(current().spec.knowledge.corpora)}
+
+    @app.get("/admin/knowledge/gaps", dependencies=[Depends(admin)])
+    async def knowledge_gaps(status: str = "open") -> list[dict[str, Any]]:
+        """Questions the documents did not answer, most asked first (``status``: open,
+        answered, dismissed or all)."""
+        if status not in (*GAP_STATUSES, "all"):
+            raise HTTPException(400, f"status must be one of {', '.join(GAP_STATUSES)}, all")
+        return await current().knowledge.gaps(None if status == "all" else status)
+
+    @app.post("/admin/knowledge/gaps", dependencies=[Depends(admin)])
+    async def knowledge_gap_set(body: dict[str, Any]) -> dict[str, Any]:
+        """Mark a gap (``{"id", "status"}``): answered once the FAQ covers it, dismissed
+        when it is not something the assistant should answer."""
+        gap_id, status = body.get("id"), body.get("status")
+        if not isinstance(gap_id, str) or status not in GAP_STATUSES:
+            raise HTTPException(400, f"a gap needs an id and a status ({', '.join(GAP_STATUSES)})")
+        if not await current().knowledge.set_gap(gap_id, str(status)):
+            raise HTTPException(404, "no such gap")
+        await current().audit.record(
+            scope, "admin", "knowledge_gap", f"gap/{gap_id}", {"status": status}
+        )
+        return {"id": gap_id, "status": status}
 
     @app.get("/admin/knowledge/{corpus}/document", dependencies=[Depends(admin)])
     async def knowledge_document(corpus: str, uri: str) -> dict[str, Any]:

@@ -15,6 +15,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from ...core.untrusted import fence
 from ...documents.extract import DocumentError, extract, format_of, media_type
 from ..registry import Tool, tool
 
@@ -42,7 +43,7 @@ def documents_tools(read: Reader, transcribe: Transcriber) -> list[Tool]:
             "uri": uri,
             "format": found.format,
             "pages": len(found.pages) or None,
-            "text": found.text[:limit],
+            "text": fence(found.text[:limit], uri),
             "truncated": len(found.text) > limit,
             "needs_ocr": found.needs_ocr,
         }
@@ -67,6 +68,6 @@ def documents_tools(read: Reader, transcribe: Transcriber) -> list[Tool]:
         if kind == "application/pdf":
             data, count = pdf_pages(data, pages or None)
         text = await transcribe(data, kind)
-        return {"uri": uri, "pages": count, "text": text, "method": "ocr"}
+        return {"uri": uri, "pages": count, "text": fence(text, uri), "method": "ocr"}
 
     return [documents_read, documents_ocr]

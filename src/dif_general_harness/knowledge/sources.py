@@ -33,7 +33,6 @@ from urllib.parse import urldefrag, urljoin, urlsplit
 
 import httpx2
 
-from ..documents.extract import DocumentError, extract, format_of
 from ..triggers.files import FileSource, build_source
 from .chunk import TEXT_SUFFIXES, html_to_markdown
 
@@ -83,6 +82,8 @@ def as_text(data: bytes, name: str) -> Text | None:
             return Text(data.decode("utf-8-sig"), fmt)
         except UnicodeDecodeError:
             return Text(data.decode("latin-1"), fmt)
+    from ..documents.extract import DocumentError, extract, format_of  # extract imports chunk
+
     if format_of(name) in ("pdf", "docx", "xlsx"):
         try:
             found = extract(data, name)

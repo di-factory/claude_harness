@@ -38,7 +38,7 @@ from ..tenancy import local_backend
 from .impact import missing
 
 LANGUAGES = {"es": "Spanish", "en": "English", "pt": "Portuguese", "fr": "French"}
-SKILLS = ("estado", "bandeja", "responder", "faq", "costos")
+SKILLS = ("estado", "bandeja", "responder", "faq", "preguntas", "costos")
 
 
 @dataclass
@@ -185,6 +185,8 @@ Everything goes through one command, run from this folder (never curl, never tok
 | Answer a customer as the owner | `./negocio reply SESSION "text"` |
 | The FAQ, exactly as the assistant knows it | `./negocio faq show` |
 | Replace the FAQ | `./negocio faq set borradores/faq.md` |
+| Questions customers asked that the FAQ did not answer | `./negocio faq gaps` |
+| Mark one answered (or not for the assistant) | `./negocio faq done ID` (`dismiss ID`) |
 | Model spend by day | `./negocio costs` |
 
 Routines, step by step: `docs/operacion.md`. Skills in `.claude/skills/` cover the usual
@@ -314,6 +316,14 @@ All commands run from this folder. They talk to the assistant on this server.
 5. Write the change in `solicitudes/faq-cambios.md` (date and what) so Di-Factory carries it
    into the next release of the solution; their next release replaces the live FAQ.
 
+## Questions the FAQ did not answer (once a week)
+1. `./negocio faq gaps` lists what customers asked that the FAQ did not cover, most asked
+   first, in their own words.
+2. For each one {self.owner} can answer, add it to the FAQ (above), with their words.
+3. Then `./negocio faq done ID`. If it is something the assistant should not answer (a
+   medical question, a joke), `./negocio faq dismiss ID`. A question marked done that
+   customers keep asking comes back to the list: the FAQ still does not answer it.
+
 ## Costs
 `./negocio costs` shows model spend by day at list prices. A normal conversation turn costs
 a fraction of a cent. If a day looks unusual, look at that day's conversations.
@@ -436,11 +446,13 @@ exec uv run --quiet --project "{self.harness}" dif-general-harness admin "$@"
             "permissions": {
                 "allow": [
                     "Bash(./negocio status)", "Bash(./negocio inbox)", "Bash(./negocio show:*)",
-                    "Bash(./negocio faq show:*)", "Bash(./negocio costs:*)",
+                    "Bash(./negocio faq show:*)", "Bash(./negocio faq gaps:*)",
+                    "Bash(./negocio costs:*)",
                     "Read(./**)", "Edit(./borradores/**)", "Write(./borradores/**)",
                     "Edit(./solicitudes/**)", "Write(./solicitudes/**)",
                 ],
-                "ask": ["Bash(./negocio reply:*)", "Bash(./negocio faq set:*)"],
+                "ask": ["Bash(./negocio reply:*)", "Bash(./negocio faq set:*)",
+                        "Bash(./negocio faq done:*)", "Bash(./negocio faq dismiss:*)"],
                 "deny": [
                     "Read(~/.dif/**)", f"Read({harness}/deploy/build/**/secrets/**)",
                     f"Edit({harness}/**)", f"Write({harness}/**)",
@@ -483,6 +495,15 @@ exec uv run --quiet --project "{self.harness}" dif-general-harness admin "$@"
                 " get an explicit OK.\n4. `./negocio faq set borradores/faq.md`.\n5. Add"
                 " a line to `solicitudes/faq-cambios.md` (date, what) for Di-Factory."
                 "\nNever invent prices, policies or promises.",
+            ),
+            "preguntas": (
+                "What customers asked that the FAQ did not answer, and adding the answers.",
+                "1. `./negocio faq gaps`.\n2. Summarize: the most asked first, in the"
+                " customers' words.\n3. Ask the owner for the answer to each one they"
+                " want covered (never invent it).\n4. Add the answers to the FAQ (skill"
+                " faq), then `./negocio faq done ID` for each one covered, or"
+                " `./negocio faq dismiss ID` for what the assistant should not answer;"
+                " both only with the owner's OK.",
             ),
             "costos": (
                 "Model spend by day, and whether anything looks unusual.",

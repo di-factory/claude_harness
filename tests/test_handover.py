@@ -76,6 +76,11 @@ def test_the_documents_a_clients_claude_starts_from(
     assert "Bash(./negocio status)" in settings["allow"]
     skill = (out / ".claude" / "skills" / "responder" / "SKILL.md").read_text()
     assert skill.startswith("---\nname: responder\n") and "Only after a clear yes" in skill
+    assert "Bash(./negocio faq gaps:*)" in settings["allow"]  # reading the list: free
+    assert "Bash(./negocio faq done:*)" in settings["ask"]  # marking it: with the owner's OK
+    gaps = (out / ".claude" / "skills" / "preguntas" / "SKILL.md").read_text()
+    assert "./negocio faq gaps" in gaps and "never invent it" in gaps
+    assert "## Questions the FAQ did not answer" in (out / "docs" / "operacion.md").read_text()
 
     checks = dict((what.split(" (")[0], ok) for ok, what in result.checks)
     assert checks["Jag's approver key is not on this server"] is True
