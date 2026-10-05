@@ -41,6 +41,7 @@ from ..core.loop import LoopConfig, run
 from ..core.messages import Message, Role, ToolResultBlock, ToolStatus, ToolUseBlock, Usage
 from ..core.scope import Scope
 from ..core.session import Session
+from ..core.untrusted import NOTICE as UNTRUSTED_NOTICE
 from ..feedback.store import ALL_AGENTS, ConstraintStore, pinned_block
 from ..governance import AuditLog, ConsentStore, GovernedTools, PiiPolicy, Tokenizer, TokenVault
 from ..governance.contacts import ContactStore
@@ -103,6 +104,18 @@ from .routing import ProviderFactory, build_router
 LOCAL_TENANT = "local"
 HANDOFF_TOOL = "handoff.human"
 Notify = Callable[[str, str], Awaitable[None]]  # (inbox item id, one-line summary)
+
+
+def last_question(session: Session) -> str:
+    """The contact's latest message (as stored: PII already tokenized)."""
+    for message in reversed(session.messages):
+        text = message.text().strip() if message.role is Role.USER else ""
+        if text and not text.startswith("[Automatic check:"):
+            return text
+    return ""
+
+
+MAX_SECONDS = 240  # one reply's wall-clock limit unless the agent sets max_seconds
 Emit = Callable[[str, dict[str, Any]], Awaitable[Any]]
 
 
@@ -377,6 +390,15 @@ class Instance:
                 f"{len(report.skipped)} file(s) without readable text (images, scans,"
                 f" unsupported formats): {', '.join(report.skipped[:5])}",
             )
+        if report.suspicious:
+            self._warn("knowledge_suspicious", where,
+                       f"{len(report.suspicious)} document(s) contain text that looks like"
+                       " instructions to the assistant (it only ever reads them as data);"
+                       f" check them: {'; '.join(report.suspicious[:3])}")  # fmt: skip
+            await self.audit.record(
+                self.scope, "system", "knowledge_suspicious", f"knowledge/{corpus}",
+                {"documents": report.suspicious[:20]},
+            )  # fmt: skip
         if report.added or report.updated or report.removed:
             await self.audit.record(
                 self.scope, "system", "knowledge_sync", f"knowledge/{corpus}",
@@ -385,11 +407,13 @@ class Instance:
         return report
 
     async def knowledge_not_found(self, session: Session, corpus: str, query: str) -> None:
-        """Nothing in the corpus answers: audit it and apply the escalation rules."""
+        """Nothing in the corpus answers: audit it, add the question to the list of what
+        the documents lack, and apply the escalation rules."""
         await self.audit.record(
             self.scope, f"agent:{session.agent_id}", "knowledge_not_found",
             f"knowledge/{corpus}", {"session": session.id, "query": query[:300]},
         )  # fmt: skip
+        await self.knowledge.record_gap(corpus, last_question(session) or query, session.id)
         escalation = self.spec.policies.escalation or {}
         contact = (
             await self.contacts.get(self.scope, session.contact_key) if session.contact_key else {}
@@ -803,7 +827,7 @@ class AgentRuntime:
         self.instance = instance
         self.name = name
         self.spec = spec
-        self.system = render(load_text(spec.prompt), instance.spec)
+        self.system = render(load_text(spec.prompt), instance.spec) + "\n\n" + UNTRUSTED_NOTICE
         registry = instance.tools
         patterns = [
             *spec.tools,
@@ -843,8 +867,9 @@ class AgentRuntime:
         self.per_tenant_day = Limits.from_spec(budgets.get("per_tenant_day"))
         self.per_agent_day = Limits.from_spec(own.get("per_day"))
         self.config = LoopConfig(
-            system=self.system, model_role=spec.model_role, max_turns=spec.max_turns or 12
-        )
+            system=self.system, model_role=spec.model_role, max_turns=spec.max_turns or 12,
+            max_seconds=spec.max_seconds or MAX_SECONDS,
+        )  # fmt: skip
 
     async def new_session(self, contact_key: str | None = None) -> Session:
         inst = self.instance
@@ -980,6 +1005,10 @@ class AgentRuntime:
                     session_id=session.id,
                 )
                 pruned = self._cited_only(session, turn_start)
+                if pruned is None and self.spec.knowledge:  # nothing sourced: a gap too
+                    await inst.knowledge.record_gap(
+                        self.spec.knowledge[0], last_question(session), session.id
+                    )
                 added = session.add_message(Message.assistant(pruned or ungrounded_text(inst)))
                 await inst.store.append(added)
                 yield added

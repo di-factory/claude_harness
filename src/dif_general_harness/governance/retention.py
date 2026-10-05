@@ -39,6 +39,11 @@ async def purge(
                 "DELETE FROM sessions WHERE tenant_id = ? AND instance_id = ? AND last_active < ?",
                 (*key, cutoff),
             )
+            removed["knowledge_gaps"] = await conn.execute(  # contacts' questions, too
+                "DELETE FROM knowledge_gaps WHERE tenant_id = ? AND instance_id = ?"
+                " AND last_seen < ?",
+                (*key, cutoff),
+            )
         if "audit" in retention:
             cutoff = now - duration_days(retention["audit"]) * DAY
             removed["audit"] = await conn.execute(

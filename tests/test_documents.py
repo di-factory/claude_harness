@@ -12,6 +12,7 @@ import pytest
 
 from dif_general_harness.core.messages import MediaBlock, Message, Role, ToolResultBlock
 from dif_general_harness.core.scope import Scope
+from dif_general_harness.core.untrusted import fence
 from dif_general_harness.documents import DocumentError, extract, page_range
 from dif_general_harness.documents.ocr import pdf_pages
 from dif_general_harness.knowledge import KnowledgeBase
@@ -201,7 +202,8 @@ async def test_agents_read_and_ocr_their_own_documents(tmp_path: Path) -> None:
         assert media.media_type == "image/png" and base64.b64decode(media.data) == PNG
         [ocr] = _results(env.provider.requests[3])[-1:]
         assert ocr.content == {"uri": f"{base}/ticket.png", "pages": 1,
-                               "text": "OXXO 12/09/2026 TOTAL 85.50", "method": "ocr"}  # fmt: skip
+                               "text": fence("OXXO 12/09/2026 TOTAL 85.50", f"{base}/ticket.png"),
+                               "method": "ocr"}  # fmt: skip
         usage = await inst.db.fetchall("SELECT role FROM usage")
         assert "ocr" in {r["role"] for r in usage}  # OCR is charged like any model call
 

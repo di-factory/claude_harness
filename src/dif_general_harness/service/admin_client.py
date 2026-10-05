@@ -9,6 +9,8 @@ the instance's admin API, so nobody needs curl, tokens or JSON:
     reply SESSION TEXT  answer as a person; the customer gets it on their channel
     faq show            the FAQ exactly as the agent knows it
     faq set FILE|-      replace it (the owner's edit stands until Di-Factory ships a new one)
+    faq gaps            questions customers asked that the FAQ did not answer, most asked first
+    faq done|dismiss ID mark one answered (once the FAQ covers it) or not for the assistant
     costs               model spend at list prices, by day
 
 The admin token is read from the local secrets (``~/.dif/secrets/admin_token``), never
@@ -18,7 +20,9 @@ printed; the address defaults to the instance on this machine.
 from __future__ import annotations
 
 import os
-from datetime import date
+import sys
+from datetime import date, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx2
@@ -134,6 +138,28 @@ class Admin:
                 " restarts until Di-Factory ships a new FAQ release; tell them about it so the"
                 " client's answers file is updated too.")  # fmt: skip
 
+    async def faq_gaps(self, everything: bool = False) -> str:
+        gaps = await self._get("/admin/knowledge/gaps", status="all" if everything else "open")
+        if not gaps:
+            return ("No open questions: everything customers asked was in the FAQ."
+                    if not everything else "No questions recorded yet.")  # fmt: skip
+        lines = [f"{len(gaps)} question(s) customers asked that the FAQ did not answer"
+                 " (most asked first):"]  # fmt: skip
+        for gap in gaps:
+            day = datetime.fromtimestamp(float(gap["last_seen"])).strftime("%Y-%m-%d")
+            state = "" if gap["status"] == "open" else f" [{gap['status']}]"
+            lines.append(f"  {gap['id']}  x{gap['asked']}  last {day}{state}  {gap['question']}")
+        lines.append("Add the answers to the FAQ (admin faq show > faq.md; edit; admin faq set"
+                     " faq.md), then mark each one: admin faq done ID (or dismiss ID when the"
+                     " assistant should not answer it).")  # fmt: skip
+        return "\n".join(lines)
+
+    async def faq_mark(self, gap_id: str, status: str) -> str:
+        await self._send("POST", "/admin/knowledge/gaps", {"id": gap_id, "status": status})
+        if status == "answered":
+            return f"{gap_id} marked answered; if a customer asks it again, it opens again."
+        return f"{gap_id} dismissed: it stays out of the list."
+
     async def costs(self, since: str | None = None) -> str:
         data = await self._get("/admin/costs", since=since, by="day")
         lines = [f"Model spend {data['since']} to {data['until']} (list prices):"]
@@ -142,6 +168,15 @@ class Admin:
                          f" ({row.get('calls', 0)} calls)")  # fmt: skip
         lines.append(f"Total: ${float((data.get('total') or {}).get('usd') or 0):.4f}")
         return "\n".join(lines)
+
+
+def _read(target: str) -> str:
+    if target == "-":
+        return sys.stdin.read()
+    try:
+        return Path(target).read_text(encoding="utf-8")
+    except OSError as exc:
+        raise AdminError(f"cannot read {target}: {exc.strerror}") from None
 
 
 def admin_client(url: str | None, token: str | None) -> httpx2.AsyncClient:
@@ -167,7 +202,16 @@ async def run(admin: Admin, args: Any) -> str:
     if cmd == "costs":
         return await admin.costs(args.since)
     if cmd == "faq":
-        if args.action == "show":
+        action, target = args.action, getattr(args, "target", "-")
+        if action == "show":
             return await admin.faq_show(args.corpus)
-        return await admin.faq_set(args.file.read(), args.corpus, args.uri)
+        if action == "gaps":
+            return await admin.faq_gaps(bool(getattr(args, "all", False)))
+        if action in ("done", "dismiss"):
+            if not target or target == "-":
+                raise AdminError(f"which one? admin faq {action} ID (see: admin faq gaps)")
+            return await admin.faq_mark(target, "answered" if action == "done" else "dismissed")
+        source = getattr(args, "file", None)
+        text = source.read() if source is not None else _read(target)
+        return await admin.faq_set(text, args.corpus, args.uri)
     raise AdminError(f"unknown command {cmd!r}")

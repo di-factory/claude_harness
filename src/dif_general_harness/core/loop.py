@@ -4,6 +4,10 @@ The loop owns control flow only. Policy lives behind two small interfaces:
 - ``ToolGate`` decides, per tool call, whether it may run (permissions, approvals).
 - ``Meter`` prices each model call and stops the run when a budget is exhausted.
 
+Cheap caps stop a run that is going nowhere (``stuck``): the same tool call with the same input
+again after ``max_repeats`` times, or ``max_tool_errors`` turns in a row whose tool calls all
+failed; and one reply's wall-clock limit (``timeout``), checked between model calls.
+
 Invariants:
 - Every tool call in the history gets exactly one result, so the next request is valid.
 - Tools never run from a refused turn or from a turn cut off by ``max_tokens``.
@@ -13,6 +17,7 @@ Invariants:
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -65,7 +70,10 @@ class NoBudget:
         return None
 
 
-EndReason = Literal["end_turn", "max_turns", "max_tokens", "refusal", "budget", "error"]
+EndReason = Literal[
+    "end_turn", "max_turns", "max_tokens", "refusal", "budget", "error", "stuck", "timeout"
+]
+FAILED = {ToolStatus.ERROR, ToolStatus.TIMEOUT}
 
 
 @dataclass(frozen=True)
@@ -73,6 +81,9 @@ class LoopConfig:
     system: str = ""
     model_role: str = "main"
     max_turns: int = 12
+    max_repeats: int = 3  # the same call, same input, more times than this: stuck
+    max_tool_errors: int = 3  # this many turns in a row with every tool call failed: stuck
+    max_seconds: float | None = None  # one reply's wall-clock limit
 
 
 async def run(
@@ -92,6 +103,9 @@ async def run(
     yield session.add_message(Message.user(user_input))
     usage = Usage()
     turns = 0
+    started = time.monotonic()
+    calls_seen: dict[str, int] = {}
+    failed_turns = 0
 
     def end(reason: EndReason) -> TurnEnded:
         return session.stamp(
@@ -112,6 +126,10 @@ async def run(
         if (why := meter.exceeded(turns)) is not None:
             yield error(f"budget exhausted: {why}")
             yield end("budget")
+            return
+        if cfg.max_seconds is not None and time.monotonic() - started > cfg.max_seconds:
+            yield error(f"no answer within {cfg.max_seconds:g} s")
+            yield end("timeout")
             return
         turns += 1
 
@@ -163,6 +181,19 @@ async def run(
             yield end("end_turn")
             return
 
+        repeated = None
+        for call in calls:
+            key = call.name + json.dumps(call.input, sort_keys=True, default=str)
+            calls_seen[key] = calls_seen.get(key, 0) + 1
+            if calls_seen[key] > cfg.max_repeats:
+                repeated = call
+        if repeated is not None:
+            times = calls_seen[repeated.name + json.dumps(repeated.input, sort_keys=True,
+                                                          default=str)]  # fmt: skip
+            yield session.add_message(_not_run(calls, "the same call was repeated"))
+            yield error(f"stuck: {repeated.name} called {times} times with the same input")
+            yield end("stuck")
+            return
         for call in calls:
             yield session.stamp(
                 ToolCallStarted(
@@ -186,6 +217,11 @@ async def run(
                 )
             )
         yield session.add_message(Message(role=Role.USER, content=[r for r, _ in results]))
+        failed_turns = failed_turns + 1 if all(r.status in FAILED for r, _ in results) else 0
+        if failed_turns >= cfg.max_tool_errors:
+            yield error(f"stuck: every tool call failed {failed_turns} turns in a row")
+            yield end("stuck")
+            return
 
 
 def _not_run(calls: list[ToolUseBlock], why: str) -> Message:

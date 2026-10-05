@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.scope import Scope
+from ..core.untrusted import suspicious
 from ..store.db import Database
 from .chunk import chunk, format_of, title_of
 from .sources import normalize
@@ -119,6 +120,9 @@ class Hit:
     score: float
 
 
+GAP_STATUSES = ("open", "answered", "dismissed")
+
+
 @dataclass
 class SyncReport:
     added: int = 0
@@ -129,6 +133,7 @@ class SyncReport:
     unavailable: list[str] = field(default_factory=list)  # sources not synced here
     embedded: int = 0  # chunks that got a vector
     embedding_error: str = ""
+    suspicious: list[str] = field(default_factory=list)  # documents with injection-like text
 
 
 @dataclass
@@ -159,6 +164,62 @@ class KnowledgeBase:
     def _check(self, corpus: str) -> None:
         if corpus not in self.corpora:
             raise KeyError(f"unknown corpus {corpus!r}; defined: {sorted(self.corpora)}")
+
+    # --- gaps: what the documents did not answer --------------------------------------
+
+    async def record_gap(self, corpus: str, question: str, session_id: str | None) -> str | None:
+        """A contact's question the documents did not answer. The same question in other
+        words of the same terms counts again instead of adding a row; a gap marked answered
+        that is asked again opens again (the answer did not reach the documents). Returns the
+        gap's id, or None for a question without searchable words."""
+        key = " ".join(sorted(set(terms(question))))[:500]
+        if not key:
+            return None
+        now = time.time()
+        scope = (self.scope.tenant_id, self.scope.instance_id)
+        row = await self.db.fetchone(
+            "SELECT id, status FROM knowledge_gaps"
+            " WHERE tenant_id = ? AND instance_id = ? AND corpus = ? AND gap_key = ?",
+            (*scope, corpus, key),
+        )
+        if row is None:
+            gap_id = uuid.uuid4().hex[:8]
+            await self.db.execute(
+                "INSERT INTO knowledge_gaps (id, tenant_id, instance_id, corpus, gap_key,"
+                " question, asked, status, session_id, first_seen, last_seen)"
+                " VALUES (?, ?, ?, ?, ?, ?, 1, 'open', ?, ?, ?)",
+                (gap_id, *scope, corpus, key, question[:1000], session_id, now, now),
+            )
+            return gap_id
+        status = "open" if row["status"] == "answered" else str(row["status"])
+        await self.db.execute(
+            "UPDATE knowledge_gaps SET asked = asked + 1, question = ?, status = ?,"
+            " session_id = ?, last_seen = ? WHERE id = ?",
+            (question[:1000], status, session_id, now, row["id"]),
+        )
+        return str(row["id"])
+
+    async def gaps(self, status: str | None = "open", limit: int = 100) -> list[dict[str, Any]]:
+        """The gaps, most asked first (``status`` None: all of them)."""
+        where = "" if status is None else " AND status = ?"
+        rows = await self.db.fetchall(
+            "SELECT id, corpus, question, asked, status, session_id, first_seen, last_seen"
+            " FROM knowledge_gaps WHERE tenant_id = ? AND instance_id = ?" + where
+            + " ORDER BY asked DESC, last_seen DESC LIMIT ?",
+            (self.scope.tenant_id, self.scope.instance_id,
+             *([] if status is None else [status]), limit),
+        )  # fmt: skip
+        return [dict(r) for r in rows]
+
+    async def set_gap(self, gap_id: str, status: str) -> bool:
+        if status not in GAP_STATUSES:
+            raise ValueError(f"status must be one of {', '.join(GAP_STATUSES)}")
+        changed = await self.db.execute(
+            "UPDATE knowledge_gaps SET status = ? WHERE id = ? AND tenant_id = ?"
+            " AND instance_id = ?",
+            (status, gap_id, self.scope.tenant_id, self.scope.instance_id),
+        )
+        return bool(changed)
 
     # --- documents ---------------------------------------------------------------------
 
@@ -413,6 +474,7 @@ class KnowledgeBase:
                 corpus, uri, text, fmt=fmt, origin="file", embed=False, source_version=release
             )
             setattr(report, outcome, getattr(report, outcome) + 1)
+            _flag(report, outcome, uri, text)
         on_delete = str((spec.get("sync") or {}).get("on_delete") or "propagate")
         if on_delete == "propagate":
             for doc in await self.documents(corpus):
@@ -461,6 +523,7 @@ class KnowledgeBase:
                 source_version=entry.version, embed=False,
             )  # fmt: skip
             setattr(report, outcome, getattr(report, outcome) + 1)
+            _flag(report, outcome, entry.uri, text.text)
         listed[origin] = listed.get(origin, set()) | uris
 
     async def _versions(self, corpus: str) -> list[dict[str, Any]]:
@@ -588,6 +651,13 @@ class KnowledgeBase:
             score = round(max(cov, sim), 3)
             hits.append(Hit(cid, corpus, r["uri"], r["title"], r["section"], r["text"], score))
         return hits
+
+
+def _flag(report: SyncReport, outcome: str, uri: str, text: str) -> None:
+    """A new or changed document with text that looks like instructions: reported, so a
+    person sees it (the agent only ever gets it as fenced data)."""
+    if outcome in ("added", "updated") and (found := suspicious(text, limit=1)):
+        report.suspicious.append(f"{uri}: {found[0][:120]}")
 
 
 def _file_path(src: Any) -> Path | None:

@@ -18,6 +18,7 @@ from typing import Any
 import httpx2
 
 from ...core.scope import Scope
+from ...core.untrusted import fence
 from ..registry import Effect, Tool, tool
 
 MAX_BODY = 50_000
@@ -104,7 +105,7 @@ def general_tools(
             "status": response.status_code,
             "content_type": response.headers.get("content-type", ""),
             "url": str(response.url),
-            "body": body,
+            "body": fence(body, str(response.url)),
         }
 
     @tool("notes.write", effect=Effect.WRITE)

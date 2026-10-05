@@ -64,7 +64,9 @@ class ToolCallFinished(_EventBase):
 
 class TurnEnded(_EventBase):
     type: Literal["turn_ended"] = "turn_ended"
-    reason: Literal["end_turn", "max_turns", "max_tokens", "refusal", "budget", "error"]
+    reason: Literal[
+        "end_turn", "max_turns", "max_tokens", "refusal", "budget", "error", "stuck", "timeout"
+    ]
     turns: int
     usage: Usage
 

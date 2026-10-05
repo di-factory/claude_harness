@@ -331,7 +331,9 @@ class Headless:
             session = target_session
             agent = target
         reply = await agent.reply("\n\n".join(texts)) if texts else None
-        if reason in {"error", "budget", "refusal", "max_turns"} and not escalated:
+        if reason in {"error", "budget", "refusal", "max_turns", "stuck", "timeout"} and not (
+            escalated
+        ):
             item = await inst.inbox.create(
                 "budget" if reason == "budget" else "escalation",
                 f"Turn ended with {reason}",

@@ -126,10 +126,40 @@ async def test_parallel_tools_return_structured_observations(scope: Scope) -> No
 
 async def test_max_turns_stops_a_looping_model(scope: Scope) -> None:
     session = Session(scope=scope, agent_id="receptionist")
-    looping = [_calls((f"t{i}", "calendar.find_slots", {"day": "d"})) for i in range(5)]
+    looping = [_calls((f"t{i}", "calendar.find_slots", {"day": f"d{i}"})) for i in range(5)]
     events = await _collect(session, "loop", FakeProvider(looping), LoopConfig(max_turns=3))
     end = events[-1]
     assert isinstance(end, TurnEnded) and end.reason == "max_turns" and end.turns == 3
+
+
+async def test_the_same_call_a_fourth_time_stops_the_run(scope: Scope) -> None:
+    session = Session(scope=scope, agent_id="receptionist")
+    looping = [_calls((f"t{i}", "calendar.find_slots", {"day": "d"})) for i in range(5)]
+    events = await _collect(session, "loop", FakeProvider(looping))
+    assert isinstance(events[-1], TurnEnded) and events[-1].reason == "stuck"
+    assert events[-1].turns == 4  # three calls ran; the fourth identical one did not
+    assert isinstance(events[-2], ErrorEvent) and "called 4 times" in events[-2].message
+    assert sum(isinstance(e, ToolCallFinished) for e in events) == 3
+    last = session.messages[-1].content[0]  # the history stays valid
+    assert isinstance(last, ToolResultBlock) and "repeated" in (last.error or "")
+
+
+async def test_turns_where_every_tool_fails_stop_the_run(scope: Scope) -> None:
+    session = Session(scope=scope, agent_id="receptionist")
+    failing = [_calls((f"t{i}", "calendar.move_event", {"event_id": f"e{i}", "slot": "s"}))
+               for i in range(5)]  # fmt: skip
+    events = await _collect(session, "move it", FakeProvider(failing))
+    assert isinstance(events[-1], TurnEnded) and events[-1].reason == "stuck" and (
+        events[-1].turns == 3)  # fmt: skip
+    assert "failed 3 turns in a row" in events[-2].message  # type: ignore[attr-defined]
+
+
+async def test_a_reply_has_a_time_limit(scope: Scope) -> None:
+    session = Session(scope=scope, agent_id="receptionist")
+    slow = [_calls(("t1", "slow.tool", {})), Message.assistant("late")]
+    events = await _collect(session, "go", FakeProvider(slow), LoopConfig(max_seconds=0.01))
+    assert isinstance(events[-1], TurnEnded) and events[-1].reason == "timeout"
+    assert "no answer within 0.01 s" in events[-2].message  # type: ignore[attr-defined]
 
 
 async def test_provider_failure_is_an_event_not_a_crash(scope: Scope) -> None:

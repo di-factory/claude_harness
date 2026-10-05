@@ -187,6 +187,15 @@ MIGRATIONS: list[list[str]] = [
     [  # a document's own text, so an owner can read and edit exactly what the agent knows
         "ALTER TABLE knowledge_docs ADD COLUMN body TEXT",
     ],
+    [  # questions the documents did not answer: the owner's list of what the FAQ lacks
+        """CREATE TABLE IF NOT EXISTS knowledge_gaps (
+            id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, instance_id TEXT NOT NULL,
+            corpus TEXT NOT NULL, gap_key TEXT NOT NULL, question TEXT NOT NULL,
+            asked INTEGER NOT NULL, status TEXT NOT NULL, session_id TEXT,
+            first_seen DOUBLE PRECISION NOT NULL, last_seen DOUBLE PRECISION NOT NULL)""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS knowledge_gaps_by_key
+            ON knowledge_gaps (tenant_id, instance_id, corpus, gap_key)""",
+    ],
 ]
 
 
