@@ -140,3 +140,56 @@ async def test_no_compaction_role_means_nothing_is_cut(tmp_path: Path) -> None:
         await _say(client, headless, "hola " * 800, "SM1")
         await _say(client, headless, "sigue", "SM2")
         assert len(env.provider.requests[1].messages) == 3
+
+
+TOO_LONG = "prompt is too long: 213512 tokens > 200000 maximum"
+
+
+async def test_a_turn_too_long_for_the_model_is_compacted_and_retried(tmp_path: Path) -> None:
+    from dif_general_harness.providers.base import ContextOverflow
+
+    def edit(spec: dict[str, Any]) -> None:
+        spec["models"]["roles"]["compaction"] = ROLE  # the default budget: no early compaction
+
+    script = [
+        Message.assistant("Hola Ana."),
+        Message.assistant("La limpieza cuesta 600 MXN."),
+        ContextOverflow(TOO_LONG),  # the provider refuses the third turn as too long
+        Message.assistant("Ana preguntó el precio de la limpieza (600 MXN)."),  # the summary
+        Message.assistant("¿Qué día prefieres?"),
+    ]
+    env = Env(tmp_path, script, edit=edit)
+    inst, headless, client = await env.open()
+    async with inst, client:
+        await _say(client, headless, "Hola, soy Ana", "SM1")
+        await _say(client, headless, "¿Cuánto cuesta la limpieza?", "SM2")
+        await _say(client, headless, "Quiero una cita", "SM3")
+        assert env.provider.requests[3].model_role == "compaction"
+        retry = env.provider.requests[4]
+        assert retry.messages[0].text().startswith(SUMMARY_HEADER)
+        assert [m.text() for m in retry.messages].count("Quiero una cita") == 1  # not re-added
+        assert retry.messages[-1].text() == "Quiero una cita"
+        assert await inst.inbox.list() == []  # recovered: nobody needs to step in
+        [session_id] = await inst.store.list_sessions(inst.scope)
+        resumed = await inst.store.load(inst.scope, session_id)
+        assert resumed.messages[-1].text() == "¿Qué día prefieres?"
+
+
+async def test_without_compaction_a_turn_too_long_goes_to_a_person(tmp_path: Path) -> None:
+    from dif_general_harness.providers.base import ContextOverflow
+
+    env = Env(tmp_path, [ContextOverflow(TOO_LONG)])
+    inst, headless, client = await env.open()
+    async with inst, client:
+        await _say(client, headless, "Hola", "SM1")
+        [item] = await inst.inbox.list()
+        assert item.title == "Turn ended with overflow"
+
+
+def test_providers_say_when_the_history_is_too_long() -> None:
+    from dif_general_harness.providers.base import is_overflow
+
+    assert is_overflow(TOO_LONG)
+    assert is_overflow("This model's maximum context length is 128000 tokens.")
+    assert is_overflow("input length and `max_tokens` exceed context limit: 199000 + 64000")
+    assert not is_overflow("Invalid API key")

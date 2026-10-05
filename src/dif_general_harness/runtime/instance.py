@@ -1059,45 +1059,60 @@ class AgentRuntime:
         pinned = pinned_block(await inst.constraints.active(self.name))
         remembered = await memory_block(inst, self.name, session)
         config = dataclasses.replace(self.config, system=self.system + pinned + remembered)
-        async for event in run(
-            session, safe_text, inst.provider, self.tools, config, gate=self.gate, meter=meter
-        ):
-            await inst.store.append(event)
-            if isinstance(event, ToolCallStarted):
-                started[event.tool_use_id] = event
-                tool_starts[event.tool_use_id] = time.time_ns()
-            elif isinstance(event, ToolCallFinished):
-                tool = self.tools.get(event.name)
-                effect = tool.effect if tool else Effect.EXTERNAL
-                if inst.tracer is not None:
-                    span = inst.tracer.start(
-                        f"execute_tool {event.name}",
-                        gen_ai__operation__name="execute_tool",
-                        gen_ai__tool__name=event.name,
-                        gen_ai__tool__call__id=event.tool_use_id,
-                        dif__tool_status=str(event.status),
-                        dif__tool_effect=str(effect),
-                    )
-                    span.start_ns = tool_starts.pop(event.tool_use_id, span.start_ns)
-                    if event.status is not ToolStatus.OK:
-                        span.error = str(event.status)
-                    inst.tracer.finish(span)
-                if full or effect is not Effect.READ:
-                    call = started.get(event.tool_use_id)
-                    await inst.audit.record(
-                        scope,
-                        f"agent:{self.name}",
-                        "tool_call",
-                        event.name,
-                        {"session": session.id, "effect": str(effect), "status": str(event.status),
-                         "input": inst.redactor.redact_obj(call.input if call else {})},
-                    )  # fmt: skip
-            elif isinstance(event, TurnEnded):
-                await record_episode(inst, self.name, session)
-                for model, usage in meter.pending:  # each call once, even across rewrites
-                    await inst.record_usage(self.name, self.config.model_role, model, usage)
-                meter.pending.clear()
-            yield event
+        text: str | None = safe_text
+        for retry in (True, False):
+            overflowed = False
+            async for event in run(
+                session, text, inst.provider, self.tools, config, gate=self.gate, meter=meter
+            ):
+                if isinstance(event, TurnEnded) and event.reason == "overflow" and retry:
+                    # too long for the model: compact now and continue this turn, once
+                    compacted = await compact_if_needed(self, session, force=True)
+                    if compacted is not None:
+                        await inst.store.append(compacted)
+                        yield compacted
+                        overflowed = True
+                        break
+                await inst.store.append(event)
+                if isinstance(event, ToolCallStarted):
+                    started[event.tool_use_id] = event
+                    tool_starts[event.tool_use_id] = time.time_ns()
+                elif isinstance(event, ToolCallFinished):
+                    tool = self.tools.get(event.name)
+                    effect = tool.effect if tool else Effect.EXTERNAL
+                    if inst.tracer is not None:
+                        span = inst.tracer.start(
+                            f"execute_tool {event.name}",
+                            gen_ai__operation__name="execute_tool",
+                            gen_ai__tool__name=event.name,
+                            gen_ai__tool__call__id=event.tool_use_id,
+                            dif__tool_status=str(event.status),
+                            dif__tool_effect=str(effect),
+                        )
+                        span.start_ns = tool_starts.pop(event.tool_use_id, span.start_ns)
+                        if event.status is not ToolStatus.OK:
+                            span.error = str(event.status)
+                        inst.tracer.finish(span)
+                    if full or effect is not Effect.READ:
+                        call = started.get(event.tool_use_id)
+                        await inst.audit.record(
+                            scope,
+                            f"agent:{self.name}",
+                            "tool_call",
+                            event.name,
+                            {"session": session.id, "effect": str(effect),
+                             "status": str(event.status),
+                             "input": inst.redactor.redact_obj(call.input if call else {})},
+                        )  # fmt: skip
+                elif isinstance(event, TurnEnded):
+                    await record_episode(inst, self.name, session)
+                    for model, usage in meter.pending:  # each call once, even across rewrites
+                        await inst.record_usage(self.name, self.config.model_role, model, usage)
+                    meter.pending.clear()
+                yield event
+            if not overflowed:
+                return
+            text = None  # the contact's message is already in the history
 
     async def reply(self, text: str) -> str:
         """What the contact may see: tokens of ``reveal_in_output`` classes resolved, others

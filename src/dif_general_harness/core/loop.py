@@ -23,7 +23,13 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from ..providers.base import ModelProvider, ModelRequest, ProviderMessage, ProviderTextDelta
+from ..providers.base import (
+    ContextOverflow,
+    ModelProvider,
+    ModelRequest,
+    ProviderMessage,
+    ProviderTextDelta,
+)
 from ..tools.registry import ToolRegistry
 from .events import (
     ErrorEvent,
@@ -71,7 +77,15 @@ class NoBudget:
 
 
 EndReason = Literal[
-    "end_turn", "max_turns", "max_tokens", "refusal", "budget", "error", "stuck", "timeout"
+    "end_turn",
+    "max_turns",
+    "max_tokens",
+    "refusal",
+    "budget",
+    "error",
+    "stuck",
+    "timeout",
+    "overflow",
 ]
 FAILED = {ToolStatus.ERROR, ToolStatus.TIMEOUT}
 
@@ -88,7 +102,7 @@ class LoopConfig:
 
 async def run(
     session: Session,
-    user_input: str,
+    user_input: str | None,
     provider: ModelProvider,
     tools: ToolRegistry,
     config: LoopConfig | None = None,
@@ -96,11 +110,14 @@ async def run(
     gate: ToolGate | None = None,
     meter: Meter | None = None,
 ) -> AsyncIterator[Event]:
-    """Run one user turn to completion, yielding every event."""
+    """Run one user turn to completion, yielding every event. ``user_input`` None continues
+    the history as it is (after compaction made room for a turn that did not fit). A history
+    the model's context cannot hold ends the run as ``overflow``, for the caller to compact."""
     cfg = config or LoopConfig()
     gate = gate or AllowAll()
     meter = meter or NoBudget()
-    yield session.add_message(Message.user(user_input))
+    if user_input is not None:
+        yield session.add_message(Message.user(user_input))
     usage = Usage()
     turns = 0
     started = time.monotonic()
@@ -148,6 +165,9 @@ async def run(
                     )
                 else:
                     final = pev
+        except ContextOverflow:
+            yield end("overflow")
+            return
         except Exception as exc:
             yield error(f"provider error: {type(exc).__name__}: {exc}")
             yield end("error")

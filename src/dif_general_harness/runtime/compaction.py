@@ -13,6 +13,10 @@ of the history is summarised by that role and replaced by the summary:
 - the summary keeps PII tokens as they are and is recorded as a ``ContextCompacted`` event,
   so a resumed session sees exactly the same history.
 
+When the provider refuses a turn as too long for the model's context (``overflow``), the
+same routine runs at once with half the history's size as the budget, and the turn is
+retried once on the compacted history.
+
 Without a ``compaction`` role nothing is cut: the model's own limit applies.
 """
 
@@ -72,14 +76,20 @@ def _transcript(messages: list[Message]) -> str:
     return "\n".join(lines)
 
 
-async def compact_if_needed(agent: AgentRuntime, session: Session) -> ContextCompacted | None:
+async def compact_if_needed(
+    agent: AgentRuntime, session: Session, *, force: bool = False
+) -> ContextCompacted | None:
+    """Compact when the history is over budget; ``force``: the model already refused it as
+    too long, so compact now to half its size whatever the estimate says."""
     inst = agent.instance
     roles = inst.spec.models.roles if inst.spec.models else {}
     if "compaction" not in roles or inst.provider is None:
         return None
     budget = agent.spec.context_tokens or DEFAULT_CONTEXT_TOKENS
     before = estimate_tokens(session.messages)
-    if before <= budget:
+    if force:
+        budget = min(budget, before // 2)
+    elif before <= budget:
         return None
     cut = split_point(session.messages, int(budget * KEEP_FRACTION))
     if cut <= 0:
