@@ -413,7 +413,7 @@ class Headless:
                              instance=scope.instance_id, at=float(job.payload["at"]))  # fmt: skip
         stamp = str(int(time.time()))
         headers = {"content-type": "application/json", "x-dif-event": event,
-                   "x-dif-timestamp": stamp,
+                   "x-dif-delivery": job.id, "x-dif-timestamp": stamp,
                    "x-dif-signature": hooks.sign(secret, stamp, payload)}  # fmt: skip
         client = self._http
         if client is None:

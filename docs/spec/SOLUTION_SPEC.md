@@ -256,6 +256,17 @@ evals decide whether it passes.
 - `verify` names a check from `policies.verification.checks` that must pass
   before the call commits.
 - `config` passes settings and secrets to a tool pack.
+- `overrides.<tool>.retry` (`check`, `safe` or `never`) says what happens when a call that
+  writes or acts is made again in the same conversation. Every such call is recorded before
+  it runs and carries its idempotency key (HTTP connectors send it as `Idempotency-Key`).
+  - `check` (the default for writes): an identical call that already succeeded returns the
+    earlier result instead of running again. One whose outcome is unknown (a timeout, a lost
+    answer, a crash) is not run until the agent has checked with a read tool.
+  - `safe`: the tool is idempotent, so it always runs.
+  - `never`: a second identical call in a conversation is refused, whatever happened to the
+    first.
+
+  Workflow tool steps whose outcome is unknown are escalated instead of re-run.
 - The `documents` pack gives `documents.read` (the text of PDF, DOCX, XLSX, HTML, XML, CSV
   and text files, with `needs_ocr` for photos and scans) and `documents.ocr` (images and
   scanned PDFs, read by the `ocr` model role, or `main` when there is none; at most 20

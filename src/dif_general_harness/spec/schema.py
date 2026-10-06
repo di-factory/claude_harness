@@ -161,6 +161,7 @@ class ToolOverride(Strict):
     permission: Literal["allow", "ask", "deny"] | None = None
     verify: str | None = None
     effect: Literal["read", "write", "external"] | None = None
+    retry: Literal["safe", "check", "never"] | None = None  # runtime/intents.py
 
 
 class Tools(Strict):

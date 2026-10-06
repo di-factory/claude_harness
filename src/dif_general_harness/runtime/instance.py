@@ -100,6 +100,8 @@ from ..triggers.files import FileSource, build_source
 from ..verify import Verifier
 from .compaction import compact_if_needed
 from .context import current_session
+from .history import history_tool
+from .intents import IntentLog, IntentTools
 from .prompts import load_text, render
 from .router import short_circuit
 from .routing import ProviderFactory, build_router
@@ -813,6 +815,7 @@ class Instance:
         allow.append("memory.*")  # remembering is internal, scoped and reviewed (contradictions)
         allow.append("knowledge.*")  # reading the solution's own documents
         allow.append("skills.*")  # reading the solution's own skills
+        allow.append("history.*")  # reading this conversation's own earlier messages
         allow.append("graph.*")  # reading the solution's own research graphs
         for name, o in overrides.items():
             if o.permission:
@@ -862,12 +865,19 @@ class AgentRuntime:
             selected.register(t)
         if instance.skills:
             selected.register(skills_tool(instance.skills))
+        roles = instance.spec.models.roles if instance.spec.models else {}
+        if "compaction" in roles:  # a summary loses detail; the log keeps it
+            selected.register(history_tool(instance))
         for corpus in instance.spec.knowledge.corpora:
             name_ = f"knowledge.search_{corpus}"
             if corpus in spec.knowledge or _matches(name_, spec.tools):
                 selected.register(search_tool(instance, corpus))
         self.citation_checks = citation_checks(instance, name)
-        self.tools = GovernedTools(selected, instance.pii)
+        self.tools = IntentTools(
+            GovernedTools(selected, instance.pii),
+            IntentLog(instance.db, instance.scope),
+            instance.spec.tools.overrides,
+        )
         self.missing_tools = [
             p for p in spec.tools if not any(_matches(n, [p]) for n in self.tools.names())
         ]

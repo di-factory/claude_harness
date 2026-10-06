@@ -30,7 +30,7 @@ from ..providers.base import (
     ProviderMessage,
     ProviderTextDelta,
 )
-from ..tools.registry import ToolRegistry
+from ..tools.registry import UNKNOWN_HINT, Effect, ToolRegistry
 from .events import (
     ErrorEvent,
     Event,
@@ -39,7 +39,15 @@ from .events import (
     ToolCallStarted,
     TurnEnded,
 )
-from .messages import Message, Role, ToolResultBlock, ToolStatus, ToolUseBlock, Usage
+from .messages import (
+    Message,
+    Role,
+    TextBlock,
+    ToolResultBlock,
+    ToolStatus,
+    ToolUseBlock,
+    Usage,
+)
 from .session import Session
 
 
@@ -116,8 +124,10 @@ async def run(
     cfg = config or LoopConfig()
     gate = gate or AllowAll()
     meter = meter or NoBudget()
-    if user_input is not None:
-        yield session.add_message(Message.user(user_input))
+    repaired = _interrupted(session, tools)
+    if repaired or user_input is not None:  # results first: they must follow their calls
+        text = [TextBlock(text=user_input)] if user_input is not None else []
+        yield session.add_message(Message(role=Role.USER, content=[*repaired, *text]))
     usage = Usage()
     turns = 0
     started = time.monotonic()
@@ -244,6 +254,27 @@ async def run(
             return
 
 
+def _interrupted(session: Session, tools: ToolRegistry) -> list[ToolResultBlock]:
+    """Results for calls that never got one (the process stopped while they ran): a call
+    that only reads may simply be made again; any other may have taken effect."""
+    answered = {b.tool_use_id for m in session.messages for b in m.content
+                if isinstance(b, ToolResultBlock)}  # fmt: skip
+    out = []
+    for message in session.messages:
+        for call in message.tool_uses():
+            if call.id in answered:
+                continue
+            tool = tools.get(call.name)
+            reads = tool is not None and tool.effect is Effect.READ
+            out.append(ToolResultBlock(
+                tool_use_id=call.id, status=ToolStatus.ERROR, reason="interrupted",
+                error="the call was interrupted before its result came back",
+                retryable=reads, side_effects="none" if reads else "unknown",
+                hint=None if reads else UNKNOWN_HINT,
+            ))  # fmt: skip
+    return out
+
+
 def _not_run(calls: list[ToolUseBlock], why: str) -> Message:
     return Message(
         role=Role.USER,
@@ -266,6 +297,9 @@ async def _run_one(
         result = await tools.execute(call)
     else:
         result = ToolResultBlock(
-            tool_use_id=call.id, status=ToolStatus.DENIED, error=decision.reason or "denied"
-        )
+            tool_use_id=call.id, status=ToolStatus.DENIED, error=decision.reason or "denied",
+            reason="denied", retryable=False, side_effects="none",
+            hint="not allowed here: do not try another way to do the same thing; tell the"
+            " contact what you can do instead, or hand over to a person",
+        )  # fmt: skip
     return result, int((time.monotonic() - start) * 1000)

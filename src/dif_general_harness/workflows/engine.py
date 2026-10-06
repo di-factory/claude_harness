@@ -608,7 +608,7 @@ class WorkflowEngine:
             raise _Wait("approval")
         if decision.verdict is Verdict.ASK and not (approved or {}).get("approved"):
             raise WorkflowError(f"{name} was not approved: {(approved or {}).get('note', '')}")
-        result = await inst.tools.execute(call)
+        result = await self._once(run, step, tool, call)
         await inst.audit.record(
             inst.scope, f"workflow:{run.workflow}", "tool_call", name,
             {"run": run.id, "step": step.id, "status": str(result.status),
@@ -617,6 +617,40 @@ class WorkflowEngine:
         if result.status is not ToolStatus.OK:
             raise WorkflowError(f"{name} {result.status}: {result.error}")
         return result.content
+
+    async def _once(self, run: Run, step: Step, tool: Any, call: ToolUseBlock) -> Any:
+        """A side-effecting tool step through the intent log: one that crashed half way is
+        not run again (a person checks), one that finished returns its recorded result."""
+        from ..core.messages import ToolResultBlock
+        from ..runtime.intents import IntentLog, intent_key, policy_for
+        from ..tools.registry import IDEMPOTENCY_KEY
+
+        inst = self.host.instance
+        if policy_for(tool, inst.spec.tools.overrides) == "safe":
+            return await inst.tools.execute(call)
+        log = IntentLog(inst.db, inst.scope)
+        key = intent_key(inst.scope, f"workflow:{run.id}", f"{step.id}:{call.name}", call.input)
+        prior = await log.get(key, within=30 * DAY)
+        if prior is not None and prior.status in ("started", "unknown"):
+            raise WorkflowError(
+                f"{call.name} may already have run (its outcome is unknown); a person must check"
+                " before this step runs again"
+            )
+        if prior is not None and prior.status == "done":
+            return ToolResultBlock(tool_use_id=call.id, status=ToolStatus.OK,
+                                   content=prior.result)  # fmt: skip
+        await log.start(key, f"workflow:{run.id}", call.name)
+        token = IDEMPOTENCY_KEY.set(key)
+        try:
+            result = await inst.tools.execute(call)
+        finally:
+            IDEMPOTENCY_KEY.reset(token)
+        if result.status is ToolStatus.OK:
+            await log.finish(key, "done", result.content)
+        else:
+            unknown = result.side_effects in ("unknown", "committed")
+            await log.finish(key, "unknown" if unknown else "failed")
+        return result
 
     async def _send(
         self, run: Run, kind: str, x: dict[str, Any], ctx: dict[str, Any]

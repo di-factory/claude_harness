@@ -91,7 +91,7 @@ def _media_part(b: MediaBlock) -> dict[str, Any]:
 def _result(b: ToolResultBlock) -> str:
     if b.status is ToolStatus.OK:
         return b.content if isinstance(b.content, str) else json.dumps(b.content, default=str)
-    return f"[{b.status.value}] {b.error or ''}".strip()
+    return b.error_text()
 
 
 def to_openai_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:

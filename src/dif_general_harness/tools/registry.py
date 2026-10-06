@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, get_type_hints
@@ -18,14 +19,38 @@ from typing import Any, get_type_hints
 from jsonschema import Draft202012Validator
 from pydantic import BaseModel, ValidationError, create_model
 
-from ..core.messages import ToolResultBlock, ToolStatus, ToolUseBlock
+from ..core.messages import SideEffects, ToolResultBlock, ToolStatus, ToolUseBlock
 
 Handler = Callable[..., Awaitable[Any]]
 InputCheck = Callable[[dict[str, Any]], dict[str, Any]]
 
 
+IDEMPOTENCY_KEY: ContextVar[str | None] = ContextVar("dif_idempotency_key", default=None)
+"""The key of the side-effecting call being run (``runtime/intents.py``): a handler that
+calls an outside API sends it, so a retried intent is one operation there."""
+
+
 class InputError(ValueError):
     """Tool input that does not match the tool's schema."""
+
+
+class ToolFailure(Exception):
+    """A tool's failure with what the model needs to recover: raise it from a handler to say
+    precisely whether it can be retried and whether anything changed (an HTTP 4xx changed
+    nothing; a lost response may have). Any other exception is reported as a failure whose
+    side effects are unknown, unless the tool only reads."""
+
+    def __init__(
+        self, message: str, *, reason: str = "failed", retryable: bool = False,
+        side_effects: SideEffects = "unknown", hint: str | None = None,
+    ) -> None:  # fmt: skip
+        super().__init__(message)
+        self.reason, self.retryable, self.side_effects, self.hint = (
+            reason,
+            retryable,
+            side_effects,
+            hint,
+        )
 
 
 class Effect(StrEnum):
@@ -123,33 +148,52 @@ class ToolRegistry:
     async def execute(self, call: ToolUseBlock) -> ToolResultBlock:
         """Run one call. Always returns a structured observation; never raises."""
         if call.input_error:
-            return ToolResultBlock(
-                tool_use_id=call.id, status=ToolStatus.ERROR, error=call.input_error
-            )
+            return _failed(call, call.input_error, "invalid_input", True, "none",
+                           "send the call again with complete, valid arguments")  # fmt: skip
         t = self._tools.get(call.name)
         if t is None:
-            return ToolResultBlock(
-                tool_use_id=call.id, status=ToolStatus.ERROR, error=f"unknown tool {call.name!r}"
-            )
+            names = ", ".join(self.names()[:30])
+            return _failed(call, f"unknown tool {call.name!r}", "unknown_tool", False, "none",
+                           f"use one of the tools you have: {names}")  # fmt: skip
         try:
             args = t.check_input(call.input) if t.check_input else call.input
         except InputError as exc:
-            return ToolResultBlock(
-                tool_use_id=call.id, status=ToolStatus.ERROR, error=f"invalid input: {exc}"
-            )
+            return _failed(call, f"invalid input: {exc}", "invalid_input", True, "none",
+                           "fix the arguments named in the error and call it again")  # fmt: skip
+        reads = t.effect is Effect.READ
         try:
             result = await asyncio.wait_for(t.handler(**args), timeout=t.timeout_s)
         except TimeoutError:
             return ToolResultBlock(
-                tool_use_id=call.id,
-                status=ToolStatus.TIMEOUT,
-                error=f"timed out after {t.timeout_s}s",
-            )
+                tool_use_id=call.id, status=ToolStatus.TIMEOUT,
+                error=f"timed out after {t.timeout_s}s", reason="timeout", retryable=reads,
+                side_effects="none" if reads else "unknown",
+                hint=None if reads else UNKNOWN_HINT,
+            )  # fmt: skip
+        except ToolFailure as exc:
+            return _failed(call, str(exc), exc.reason, exc.retryable,
+                           "none" if reads else exc.side_effects,
+                           exc.hint or (UNKNOWN_HINT if exc.side_effects == "unknown" and not reads
+                                        else None))  # fmt: skip
         except Exception as exc:  # a tool failure is an observation for the model, not a crash
-            return ToolResultBlock(
-                tool_use_id=call.id, status=ToolStatus.ERROR, error=f"{type(exc).__name__}: {exc}"
-            )
+            return _failed(call, f"{type(exc).__name__}: {exc}", "failed", reads,
+                           "none" if reads else "unknown",
+                           None if reads else UNKNOWN_HINT)  # fmt: skip
         return ToolResultBlock(tool_use_id=call.id, status=ToolStatus.OK, content=result)
+
+
+UNKNOWN_HINT = (
+    "it may or may not have taken effect: check with a read tool (or ask the person) before"
+    " trying it again"
+)
+
+
+def _failed(call: ToolUseBlock, error: str, reason: str, retryable: bool,
+            side_effects: SideEffects, hint: str | None) -> ToolResultBlock:  # fmt: skip
+    return ToolResultBlock(
+        tool_use_id=call.id, status=ToolStatus.ERROR, error=error, reason=reason,
+        retryable=retryable, side_effects=side_effects, hint=hint,
+    )  # fmt: skip
 
 
 def schema_check(schema: dict[str, Any]) -> InputCheck:

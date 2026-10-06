@@ -21,7 +21,7 @@ from urllib.parse import quote, urlsplit
 import httpx2
 
 from ..spec.schema import HttpConnector, HttpOperation
-from .registry import Effect, Tool, schema_check
+from .registry import IDEMPOTENCY_KEY, Effect, Tool, ToolFailure, schema_check
 
 MAX_RESPONSE_CHARS = 20_000
 _SHORT_TYPES = {"string", "number", "integer", "boolean", "object", "array"}
@@ -33,8 +33,33 @@ class ConnectorError(ValueError):
     """A connector that cannot be built from its spec."""
 
 
-class HttpStatusError(RuntimeError):
-    pass
+class HttpStatusError(ToolFailure):
+    """An error status from the client's API, with what it means for a retry."""
+
+
+def _status_failure(status: int, text: str, reads: bool) -> HttpStatusError:
+    message = f"HTTP {status}: {text[:500]}"
+    if status in (401, 403):
+        return HttpStatusError(message, reason="not_authorized", side_effects="none",
+                               hint="a person must fix this connector's access; tell the contact"
+                               " it cannot be done right now")  # fmt: skip
+    if status == 429:
+        return HttpStatusError(message, reason="rate_limited", retryable=True, side_effects="none",
+                               hint="wait a moment and try once more")  # fmt: skip
+    if status == 409:
+        return HttpStatusError(
+            message,
+            reason="conflict",
+            side_effects="none",
+            hint="read the current state first; it may already be done",
+        )
+    if status < 500:
+        return HttpStatusError(message, reason="rejected", side_effects="none",
+                               hint="the request was refused as sent; check the arguments"
+                               " against the error")  # fmt: skip
+    return HttpStatusError(
+        message, reason="server_error", retryable=reads, side_effects="none" if reads else "unknown"
+    )
 
 
 def input_schema(short: dict[str, Any], path: str) -> dict[str, Any]:
@@ -125,6 +150,7 @@ def _operation_tool(
     schema = input_schema(op.input, op.path)
     method = op.method.upper()
     placeholders = set(_PLACEHOLDER.findall(op.path))
+    reads = op.effect == "read"
 
     async def handler(**args: Any) -> Any:
         path = _PLACEHOLDER.sub(lambda m: quote(str(args[m.group(1)]), safe=""), op.path)
@@ -133,8 +159,21 @@ def _operation_tool(
         url = httpx2.URL(base + path)
         if in_query and rest:  # merge, so a query already in the path template is kept
             url = url.copy_merge_params({k: _query_value(v) for k, v in rest.items()})
-        response = await http.request(method, url, headers=headers, json=None if in_query else rest)
-        return _observation(response)
+        sent = dict(headers)
+        key = IDEMPOTENCY_KEY.get()
+        if key and method not in {"GET", "HEAD"}:
+            sent["Idempotency-Key"] = key  # the same intent, retried, is one operation
+        try:
+            response = await http.request(method, url, headers=sent,
+                                          json=None if in_query else rest)  # fmt: skip
+        except httpx2.ConnectError as exc:
+            raise ToolFailure(f"could not reach the service: {exc}", reason="unreachable",
+                              retryable=True, side_effects="none") from None  # fmt: skip
+        except httpx2.TransportError as exc:  # sent, but the answer was lost
+            raise ToolFailure(f"the connection failed: {type(exc).__name__}: {exc}",
+                              reason="connection_lost", retryable=reads,
+                              side_effects="none" if reads else "unknown") from None  # fmt: skip
+        return _observation(response, reads)
 
     return Tool(
         name=tool_name,
@@ -155,10 +194,10 @@ def _query_value(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value)
 
 
-def _observation(response: httpx2.Response) -> Any:
+def _observation(response: httpx2.Response, reads: bool = True) -> Any:
     text = response.text
     if response.status_code >= 400:
-        raise HttpStatusError(f"HTTP {response.status_code}: {text[:500]}")
+        raise _status_failure(response.status_code, text, reads)
     if "json" in response.headers.get("content-type", ""):
         try:
             data = response.json()
