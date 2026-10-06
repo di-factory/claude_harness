@@ -194,6 +194,7 @@ class UrlKnowledge:
 
 
 SITE_PAGES, SITE_MAX = 30, 200
+_MD_LINK = re.compile(r"^\[[^\]]*\]\((https?://[^)\s]+)\)$")
 _HREF = re.compile(r"""href\s*=\s*["']([^"'#][^"']*)["']""", re.IGNORECASE)
 _TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 _NOT_PAGES = re.compile(
@@ -286,6 +287,8 @@ def normalize(src: Any) -> dict[str, Any] | None:
         return src
     if not isinstance(src, str):
         return None
+    if link := _MD_LINK.match(src.strip()):  # a Markdown link pasted from a chat app
+        src = link.group(1)
     if src.startswith("s3://"):
         bucket, _, prefix = src[5:].partition("/")
         return {"type": "s3", "bucket": bucket, "prefix": prefix}

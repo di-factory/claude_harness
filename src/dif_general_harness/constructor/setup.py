@@ -56,6 +56,7 @@ from .site_reader import (
     read_site,
     site_entries,
     start_of,
+    web_address,
     whole_site,
 )
 
@@ -477,6 +478,9 @@ class Setup:
             self.business[q.heading or q.text] = answer
         self.given[q.key] = answer
         if q.key == "values.corpus_sources" and answer.strip():
+            answer = ", ".join(web_address(p) for p in answer.replace("\n", ",").split(",")
+                               if p.strip())  # fmt: skip
+            self.given[q.key] = answer
             self._read_sites_early(answer)
         return answer
 
@@ -821,7 +825,17 @@ class Setup:
         if branding:
             answers["branding"] = branding
         self.draft_questions = questions
+        sources = answers.get("values.corpus_sources")
+        if isinstance(sources, list):  # links pasted from a chat app, bare domains
+            answers["values.corpus_sources"] = [
+                web_address(s) if isinstance(s, str) else s for s in sources
+            ]
         self._load_site_files(reused, answers)
+        unread = [u for u in site_entries({"s": answers.get("values.corpus_sources") or []})
+                  if u not in self.site_texts]  # fmt: skip
+        if unread:  # given but never read (or not yet): read now, so answers can use it
+            self.given["tenant.name"] = str(answers.get("tenant.name") or "")
+            self._read_sites_early(", ".join(unread))
         business = [q.key for q in questions if q.key.startswith("knowledge.")]
         if self.site_texts and any(k in answers for k in business) and _yes(self.ask(
             "Answer the questions about the business again, from what the web site says?"

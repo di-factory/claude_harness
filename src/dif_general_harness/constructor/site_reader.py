@@ -103,6 +103,29 @@ def raw_markdown(pages: list[Page], name: str) -> str:
     return "\n".join(parts)
 
 
+_MD_LINK = re.compile(r"^\[[^\]]*\]\((https?://[^)\s]+)\)$")
+_DOMAIN = re.compile(r"^[a-z0-9-]+(\.[a-z0-9-]+)*\.([a-z]{2,24})(/\S*)?$", re.IGNORECASE)
+_FILE_SUFFIXES = {"md", "txt", "pdf", "docx", "xlsx", "csv", "html", "htm", "json", "xml",
+                  "doc", "xls", "pptx", "rtf", "png", "jpg", "jpeg"}  # fmt: skip
+
+
+def web_address(item: str) -> str:
+    """A document source as typed or pasted, with web addresses made explicit: a Markdown
+    link (``[www.x.com](https://www.x.com)``, what chat apps copy) or a bare domain
+    (``www.x.com``, ``x.com/faq``) becomes ``https://...``; anything else is unchanged."""
+    text = item.strip().strip("<>")
+    if found := _MD_LINK.match(text):
+        return found.group(1)
+    if text.startswith(("https://", "http://")):
+        return text
+    if text.lower().startswith("www.") and " " not in text:
+        return "https://" + text
+    domain = _DOMAIN.match(text)
+    if domain and domain.group(2).lower() not in _FILE_SUFFIXES:
+        return "https://" + text
+    return item.strip()
+
+
 def site_entries(values: object) -> list[str]:
     """The web addresses (``https://...``) among an instance's values."""
     found: list[str] = []

@@ -279,3 +279,51 @@ def test_a_reused_client_can_answer_the_business_questions_again_from_its_site(
                      "topics": "Screen repairs and their prices.",
                      "contact": "hola@reparo.mx, 33 1234 5678"}  # fmt: skip
     assert load_answers(again.answers_path)["values.corpus_sources"] == ["https://reparo.example"]
+
+
+@pytest.mark.parametrize(
+    ("typed", "address"),
+    [
+        ("[www.di-factory.biz](https://www.di-factory.biz)", "https://www.di-factory.biz"),
+        ("www.di-factory.biz", "https://www.di-factory.biz"),
+        ("di-factory.biz", "https://di-factory.biz"),
+        ("reparo.mx/garantia", "https://reparo.mx/garantia"),
+        ("<https://reparo.mx>", "https://reparo.mx"),
+        ("manual.pdf", "manual.pdf"),
+        ("docs/faq.md", "docs/faq.md"),
+        ("s3://bucket/kb", "s3://bucket/kb"),
+    ],
+)
+def test_web_addresses_are_recognised_however_they_were_pasted(typed: str, address: str) -> None:
+    from dif_general_harness.constructor.site_reader import web_address
+
+    assert web_address(typed) == address
+    if address.startswith("https://"):
+        assert knowledge_sources.normalize(typed.strip("<>")) is not None or "[" not in typed
+
+
+def test_a_reused_client_whose_site_was_never_read_gets_it_read(
+    examples: Path, tmp_path: Path
+) -> None:
+    import yaml
+
+    catalog = PackCatalog(roots=[examples])
+    pasted = "[reparo.example](https://reparo.example)"  # what a chat app copies
+    first = build(catalog, ["conversational-rag"], tmp_path, answers=_answers(tmp_path, pasted))
+    assert first.ok
+    drafts = DRAFTS.replace("null", '"hola@reparo.mx"')
+    writer = FakeProvider([Message.assistant(WRITTEN), Message.assistant(drafts)])
+    # rebuild, same look, read the site now, answer again from it, 3 x Enter
+    replies = iter(["", "", "", "y", "", "", ""])
+    setup = Setup([examples], tmp_path, ask=lambda _: next(replies), writer=lambda _: writer)
+    setup.key = KEY
+    setup.site_http, _ = _site()
+    rebuilt = setup.read_sites(setup.refresh(first))
+    assert rebuilt.ok, rebuilt.problems
+    saved = yaml.safe_load(rebuilt.answers_path.read_text())
+    assert saved["values"]["corpus_sources"] == ["https://reparo.example"]
+    assert saved["knowledge"]["about"]["contact"] == "hola@reparo.mx"
+    site = tmp_path / f"{first.instance_id}.knowledge" / "reparo.example.md"
+    assert site.read_text() == WRITTEN  # written from the same reading, nothing asked again
+    spec = json.loads(rebuilt.spec_path.read_text())
+    assert spec["values"]["corpus_sources"] == [f"{first.instance_id}.knowledge/reparo.example.md"]
