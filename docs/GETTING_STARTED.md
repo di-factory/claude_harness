@@ -32,7 +32,10 @@ It installs what is missing (Docker, Caddy, uv), then guides you through:
    to 30; any other address: that page) and has a model write a knowledge file of questions
    and answers from each, every answer with the page it came from
    (`clients/<id>.knowledge/<address>.md`: read it, edit it if needed; reusing the client
-   offers to read them again.) The
+   offers to read them again). The site is read as soon as its address is given, so the
+   questions about the business that follow come with an answer drafted from it ("From the
+   site: ...", Enter keeps it); reusing the client offers to answer them again from the
+   site. A block pasted into any question (several lines) stays one answer.) The
    questionnaire covers the client's business (what they do, services, prices, address,
    policies) and a few settings, with Di-Factory's defaults filled in. On request a business
    consultant (Opus, a few cents; `DIF_CONSULTANT_MODEL` picks another model) asks one

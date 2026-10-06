@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core.messages import Message
+from ..core.untrusted import fence
 from ..knowledge.sources import SITE_PAGES
 from ..providers.base import ModelProvider, ModelRequest, ProviderMessage
 from ..runtime.routing import RoutingError, check_anthropic_key
@@ -101,6 +102,13 @@ use it, so it is never white, near-white or black (move those later). The second
 accent. Give 2 to 5 colors.
 Answer with JSON only: {"colors": ["#rrggbb", "#rrggbb", ...]}"""
 _HEX = re.compile(r"#[0-9a-fA-F]{6}")
+
+_DRAFT_SYSTEM = """You fill in a business's questionnaire from its own web site, already
+written up as a knowledge file. For each question, answer only from the file, in its
+language: what a visitor of the business's web page should read (two or three sentences, or
+a short list), with names, prices, emails, phone numbers and addresses copied exactly. When
+the file does not answer a question, give null; never invent. Answer with JSON only:
+{"answers": {"<question key>": "<answer>" | null}}"""
 
 _CONSULTANT_FOLLOW_UP = """You are a senior business consultant helping a small business set up
 the assistant that will answer its customers. The business answers a questionnaire; its
@@ -241,6 +249,11 @@ class Setup:
         self.consulting = False
         self.writer = writer  # writes a site's knowledge file from its pages
         self.site_http: Any = None  # tests: the transport the site is read with
+        self.given: dict[str, str] = {}  # this questionnaire's answers so far, by key
+        self.site_texts: dict[str, str] = {}  # web addresses read early: their write-up
+        self.sites_declined: set[str] = set()
+        self.drafts: dict[str, str] | None = None  # business answers drafted from a site
+        self.draft_questions: list[Question] = []
         self.key: str | None = None
         self.gaps: list[str] = []
         self.request = ""
@@ -448,14 +461,80 @@ class Setup:
             _say(f"   Enter keeps: {json.dumps(q.default, ensure_ascii=False)}")
         elif later:
             _say("   Enter leaves it pending: Di-Factory sets it later")
-        answer = self.ask("> ")
+        draft = self._draft_for(q) if error is None else None
+        if draft:
+            _say(f"   From the site: {draft}")
+            _say("   Enter keeps it; or type the answer")
+        answer = self._read_answer()
         if not answer.strip() and later:
             self.pending.append(q.name)
             return "pending"  # Di-Factory fills it in later (adjust --set)
-        if q.key.startswith("knowledge.") and answer.strip() and error is None:
+        if not answer.strip() and draft:
+            answer = draft
+        elif q.key.startswith("knowledge.") and answer.strip() and error is None:
             answer = self._follow_up(q, answer)
+        if q.key.startswith("knowledge.") and answer.strip():
             self.business[q.heading or q.text] = answer
+        self.given[q.key] = answer
+        if q.key == "values.corpus_sources" and answer.strip():
+            self._read_sites_early(answer)
         return answer
+
+    def _read_answer(self) -> str:
+        """One answer; a block pasted into a terminal (several lines at once) stays one
+        answer instead of answering the next questions with its other lines."""
+        answer = self.ask("> ")
+        if self.ask is input:
+            extra = _pending_lines()
+            if extra:
+                answer = "\n".join([answer, *extra])
+        return answer
+
+    # --- answers drafted from the client's web site -----------------------------------
+
+    def _read_sites_early(self, answer: str) -> None:
+        """Web addresses given as documents are read now, so the questions about the
+        business that follow can be answered from what the site says."""
+        urls = [u.strip() for u in answer.replace("\n", ",").split(",")
+                if u.strip().startswith(("https://", "http://"))]  # fmt: skip
+        for url in urls:
+            if url in self.site_texts or url in self.sites_declined:
+                continue
+            what = "the whole site" if whole_site(url) else "the page"
+            if not _yes(self.ask(f"Read {what} {url} now and have a model write the knowledge"
+                                 " file from it (and draft the answers about the business)?"
+                                 " [Y/n] "), default=True):  # fmt: skip
+                self.sites_declined.add(url)
+                continue
+            name = self.given.get("tenant.name") or url
+            text = self._site_markdown(url, name)
+            if text is not None:
+                self.site_texts[url] = text
+                self.drafts = None  # drafted again with this site too
+
+    def _draft_for(self, q: Question) -> str | None:
+        if not q.key.startswith("knowledge.") or not self.site_texts:
+            return None
+        if self.drafts is None:
+            self.drafts = self._draft_answers()
+        return self.drafts.get(q.key)
+
+    def _draft_answers(self) -> dict[str, str]:
+        questions = [q for q in self.draft_questions if q.key.startswith("knowledge.")]
+        if not questions:
+            return {}
+        listed = "\n".join(f"- {q.key}: {q.text}" for q in questions)
+        files = "\n\n".join(self.site_texts.values())[:60_000]
+        text = self._ask_model(
+            self.writer, "writer model", _DRAFT_SYSTEM,
+            f"Questions:\n{listed}\n\nKnowledge file:\n{fence(files, 'the web site')}",
+            role="main", max_tokens=2000,
+        )  # fmt: skip
+        raw = _json_object(text or "") or {}
+        answers = raw.get("answers") if isinstance(raw.get("answers"), dict) else {}
+        keys = {q.key for q in questions}
+        return {k: str(v).strip() for k, v in (answers or {}).items()
+                if k in keys and isinstance(v, str) and v.strip()}  # fmt: skip
 
     def _follow_up(self, q: Question, answer: str) -> str:
         """The consultant asks at most one question that makes a thin answer useful."""
@@ -521,6 +600,7 @@ class Setup:
             _say("A business consultant (a top model) can help: one follow-up when an answer"
                  " is thin, and recommendations at the end. Costs a few cents.")  # fmt: skip
             self.consulting = _yes(self.ask("Use the consultant? [Y/n] "), default=True)
+        self.draft_questions = pack_questions(self.catalog, pack_ids)
         variables = {k for p in pack_ids for k in self.catalog.find(p).data.get("variables", {})}
         defaults: dict[str, Any] = {
             f"values.{k}": v for k, v in DIFACTORY_DEFAULTS.items() if k in variables
@@ -740,6 +820,15 @@ class Setup:
         branding = self.ask_brand(keeps=bool(answers.get("branding")))
         if branding:
             answers["branding"] = branding
+        self.draft_questions = questions
+        self._load_site_files(reused, answers)
+        business = [q.key for q in questions if q.key.startswith("knowledge.")]
+        if self.site_texts and any(k in answers for k in business) and _yes(self.ask(
+            "Answer the questions about the business again, from what the web site says?"
+            " [y/N] "
+        )):  # fmt: skip
+            for key in business:
+                answers.pop(key, None)
         self.ask_new_questions(questions, answers)
         try:
             with tempfile.TemporaryDirectory() as tmp:  # a dry run first: nothing half-written
@@ -758,6 +847,14 @@ class Setup:
         result = build(self.catalog, packs, self.out, answers=answers)
         _say(f"Rebuilt {result.instance_id} from {reused.answers_path.name}.")
         return result
+
+    def _load_site_files(self, reused: BuildResult, answers: dict[str, Any]) -> None:
+        """The knowledge files a reused client's web addresses were written up as."""
+        sources = answers.get("values.corpus_sources") or []
+        for url in site_entries({"sources": sources}):
+            path = reused.spec_path.parent / f"{reused.instance_id}.knowledge" / file_for(url)
+            if path.is_file():
+                self.site_texts[url] = path.read_text(encoding="utf-8")
 
     def ask_new_questions(self, questions: list[Question], answers: dict[str, Any]) -> None:
         """Required questions the pack added since this client was built: asked now, so the
@@ -795,7 +892,11 @@ class Setup:
         for url in sites:
             rel = f"{result.instance_id}.knowledge/{file_for(url)}"
             target = folder / rel
-            if target.exists():
+            if url in self.sites_declined:
+                again = False
+            elif url in self.site_texts and not target.exists():
+                again = True  # read during the questionnaire: write it as it is
+            elif target.exists():
                 question = f"Read {url} again (it may have changed)? [y/N] "
                 again = _yes(self.ask(question))
             else:
@@ -822,16 +923,31 @@ class Setup:
                            result.summary_path, resolved, result.problems)  # fmt: skip
 
     def _write_site(self, url: str, target: Path, spec: dict[str, Any]) -> bool:
+        text = self.site_texts.get(url) if not target.exists() else None
+        if text is None:
+            text = self._site_markdown(url, str((spec.get("tenant") or {}).get("name") or url))
+        if text is None:
+            return False
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text.strip() + "\n", encoding="utf-8")
+        sections = text.count("\n## ") + text.startswith("## ")
+        _say(f"   Wrote {target} ({sections} sections). Read it: it is what the assistant"
+             " will answer from.")  # fmt: skip
+        return True
+
+    def _site_markdown(self, url: str, name: str) -> str | None:
+        """Read the site (or page) and have the writer model write it up; None when it
+        cannot be read."""
         _say(f"   Reading {url} ...")
         try:
             limit = SITE_PAGES if whole_site(url) else 1
             pages = asyncio.run(read_site(start_of(url), max_pages=limit, http=self.site_http))
         except Exception as exc:  # the site is down or refuses: keep what there was
             _say(f"   Could not read it ({type(exc).__name__}: {exc}).")
-            return False
+            return None
         if not pages:
             _say("   No pages found there.")
-            return False
+            return None
         pages, dropped = drop_injections(pages)
         if dropped:
             _say(f"   Left out {len(dropped)} line(s) that look like instructions to an AI"
@@ -840,19 +956,13 @@ class Setup:
                 _say(f"     {line}")
         _say(f"   {len(pages)} page(s) read; the writer model turns them into questions and"
              " answers (a minute or two).")  # fmt: skip
-        name = str((spec.get("tenant") or {}).get("name") or url)
         text = self._ask_model(self.writer, "writer model", WRITER_SYSTEM,
                                f"Business: {name}\n\n{pages_prompt(pages)}",
                                role="main", max_tokens=16000, timeout=600)  # fmt: skip
         if not text or "## " not in text:
             text = raw_markdown(pages, name)  # no model: the pages as they are
             _say("   Without the writer model the pages are kept as they are.")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text.strip() + "\n", encoding="utf-8")
-        sections = text.count("\n## ") + text.startswith("## ")
-        _say(f"   Wrote {target} ({sections} sections). Read it: it is what the assistant"
-             " will answer from.")  # fmt: skip
-        return True
+        return text
 
     def run_all(self) -> int:
         _say("Di-Factory harness setup. Ctrl+C stops at any time; nothing is half-written.")
@@ -891,6 +1001,22 @@ class Setup:
         if self.gaps:
             _say("Not covered yet (in the summary, for Di-Factory): " + "; ".join(self.gaps))
         return 0
+
+
+def _pending_lines() -> list[str]:
+    """Lines already waiting on a terminal's input: the rest of a pasted block."""
+    import select
+    import sys
+
+    if not sys.stdin.isatty():
+        return []
+    lines = []
+    while select.select([sys.stdin], [], [], 0.05)[0]:
+        line = sys.stdin.readline()
+        if not line:
+            break
+        lines.append(line.rstrip("\n"))
+    return lines
 
 
 def default_packs() -> list[Path]:
