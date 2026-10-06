@@ -27,6 +27,39 @@ DAY = 86400.0
 REASON_CHARS = 300
 
 
+# what kind of failure, in the handbook's terms (decision 92): what the weekly review counts
+STOP_CLASSES = {
+    "budget": "budget", "max_turns": "budget", "timeout": "budget", "cap_agents": "budget",
+    "cap_minutes": "budget", "stuck": "selection", "needs_human": "verification",
+    "failed": "environment", "error": "environment", "refusal": "authorization",
+    "overflow": "context", "max_tokens": "contract",
+}  # fmt: skip
+GATE_CLASSES = {"schema": "contract", "verifier": "verification", "threshold": "verification"}
+
+
+def failure_class(failure: dict[str, Any]) -> str:
+    gate = str(failure.get("gate") or "")
+    if gate in GATE_CLASSES:
+        return GATE_CLASSES[gate]
+    reason = str(failure.get("reason") or "").lower()
+    for word, kind in (
+        ("denied", "authorization"),
+        ("not allowed", "authorization"),
+        ("injection", "provenance"),
+        ("suspicious", "provenance"),
+        ("unknown tool", "selection"),
+        ("invalid input", "contract"),
+        ("outcome unknown", "recovery"),
+        ("may already have run", "recovery"),
+        ("budget", "budget"),
+        ("timed out", "budget"),
+        ("stuck", "selection"),
+    ):
+        if word in reason:
+            return kind
+    return "environment"
+
+
 class RunRecords:
     def __init__(self, db: Database, scope: Scope) -> None:
         self.db, self.scope = db, scope
@@ -46,8 +79,10 @@ class RunRecords:
         record_id = uuid.uuid4().hex[:16]
         body = {
             "counts": dict(counts or {}),
-            "failures": [{k: (str(v)[:REASON_CHARS] if k == "reason" else v)
-                          for k, v in f.items()} for f in (failures or [])][:200],
+            "failures": [{**{k: (str(v)[:REASON_CHARS] if k == "reason" else v)
+                             for k, v in f.items()}, "class": failure_class(f)}
+                         for f in (failures or [])][:200],
+            "stop_class": STOP_CLASSES.get(stop_reason),
             **{k: v for k, v in extra.items() if v not in (None, [], {})},
         }  # fmt: skip
         await self.db.execute(

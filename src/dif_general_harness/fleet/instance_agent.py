@@ -77,8 +77,9 @@ def evaluator(options: RuntimeOptions) -> Evaluate:
         suites = [Path(s) for s in resolved.spec.evals.suites]
         with tempfile.TemporaryDirectory(prefix="dif-gate-") as work:
             return await run_suites(
-                open_instance, suites, resolved.spec.evals.thresholds, work=Path(work)
-            )
+                open_instance, suites, resolved.spec.evals.thresholds, work=Path(work),
+                repeat=resolved.spec.evals.trials,
+            )  # fmt: skip
 
     return evaluate
 

@@ -97,6 +97,7 @@ class CaseResult:
     reasons: list[str] = field(default_factory=list)
     unsafe_actions: int = 0
     cost_usd: float = 0.0
+    trial: int = 1
 
 
 @dataclass
@@ -118,11 +119,34 @@ class EvalReport:
         return sum(r.unsafe_actions for r in self.results)
 
     @property
+    def trials(self) -> int:
+        return max((r.trial for r in self.results), default=1)
+
+    @property
+    def pass_k(self) -> float | None:
+        """pass^k: the share of cases that passed in every one of their trials (with one
+        trial, the pass rate). Consistency, not a lucky run."""
+        by_case: dict[tuple[str, str], list[bool]] = {}
+        for r in self.ran:
+            by_case.setdefault((r.suite, r.case), []).append(r.status == "passed")
+        if not by_case:
+            return None
+        return sum(all(v) for v in by_case.values()) / len(by_case)
+
+    @property
+    def cost_usd(self) -> float:
+        return sum(r.cost_usd for r in self.results)
+
+    @property
     def ok(self) -> bool:
         need = self.thresholds.get("pass_rate", 1.0)
         rate = self.pass_rate
-        return (rate is None or rate >= need) and self.unsafe_actions <= self.thresholds.get(
-            "unsafe_actions", 0
+        consistent = self.pass_k
+        need_k = self.thresholds.get("pass_k")
+        return (
+            (rate is None or rate >= need)
+            and (need_k is None or consistent is None or consistent >= need_k)
+            and self.unsafe_actions <= self.thresholds.get("unsafe_actions", 0)
         )
 
 
@@ -481,7 +505,9 @@ async def run_suites(
     thresholds: dict[str, float] | None = None,
     *,
     work: Path,
+    repeat: int = 1,
 ) -> EvalReport:
+    """Every case of every suite, ``repeat`` times (each trial in a fresh instance)."""
     results: list[CaseResult] = []
     index = 0
     for path in suites:
@@ -490,8 +516,11 @@ async def run_suites(
             results.append(CaseResult(path.name, "*", "skipped", ["suite not written yet"]))
             continue
         for case in load_suite(path):
-            index += 1
-            results.append(await run_case(open_instance, path.name, case, work, index))
+            for trial in range(1, max(1, repeat) + 1):
+                index += 1
+                result = await run_case(open_instance, path.name, case, work, index)
+                result.trial = trial
+                results.append(result)
     return EvalReport(results, thresholds or {})
 
 
@@ -508,7 +537,18 @@ class EvalStore:
     async def record(self, report: EvalReport, config_version: str) -> str:
         run_id = uuid.uuid4().hex[:12]
         now = time.time()
-        for r in report.results:
+        merged: dict[tuple[str, str], CaseResult] = {}  # trials: passed only if all passed
+        for t in report.results:
+            seen = merged.get((t.suite, t.case))
+            if seen is None:
+                merged[(t.suite, t.case)] = replace(t, reasons=list(t.reasons))
+                continue
+            if t.status == "failed" or seen.status == "skipped":
+                seen.status = t.status
+            seen.reasons += [r for r in t.reasons if r not in seen.reasons]
+            seen.unsafe_actions += t.unsafe_actions
+            seen.cost_usd += t.cost_usd
+        for r in merged.values():
             await self.db.execute(
                 "INSERT INTO eval_results (run_id, tenant_id, instance_id, config_version, suite,"
                 " case_id, status, reasons, unsafe_actions, cost_usd, created_at)"

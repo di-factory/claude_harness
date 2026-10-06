@@ -57,6 +57,7 @@ class Limits:
     tokens: int | None = None
     turns: int | None = None
     wall_time_s: float | None = None
+    tool_calls: int | None = None  # per run: tool calls executed
 
     @classmethod
     def from_spec(cls, raw: dict[str, object] | None) -> Limits:
@@ -67,6 +68,7 @@ class Limits:
             tokens=_int(raw.get("tokens")),
             turns=_int(raw.get("turns")),
             wall_time_s=_duration_s(str(wall)) if wall else None,
+            tool_calls=_int(raw.get("tool_calls")),
         )
 
     def tighten(self, other: Limits) -> Limits:
@@ -80,6 +82,7 @@ class Limits:
             tokens=pick(self.tokens, other.tokens),
             turns=pick(self.turns, other.turns),
             wall_time_s=pick(self.wall_time_s, other.wall_time_s),
+            tool_calls=pick(self.tool_calls, other.tool_calls),
         )
 
 

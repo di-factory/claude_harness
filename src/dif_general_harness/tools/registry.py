@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -179,7 +180,27 @@ class ToolRegistry:
             return _failed(call, f"{type(exc).__name__}: {exc}", "failed", reads,
                            "none" if reads else "unknown",
                            None if reads else UNKNOWN_HINT)  # fmt: skip
-        return ToolResultBlock(tool_use_id=call.id, status=ToolStatus.OK, content=result)
+        return ToolResultBlock(tool_use_id=call.id, status=ToolStatus.OK, content=_capped(result))
+
+
+MAX_RESULT_CHARS = 40_000  # what one tool result may put into the model's context
+
+
+def _capped(result: Any) -> Any:
+    """A result that fits the context budget; a cut one says how to get the rest."""
+    text = result if isinstance(result, str) else None
+    if text is None:
+        try:
+            text = json.dumps(result, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            return result
+        if len(text) <= MAX_RESULT_CHARS:
+            return result
+    if len(text) <= MAX_RESULT_CHARS:
+        return result
+    left = len(text) - MAX_RESULT_CHARS
+    return (text[:MAX_RESULT_CHARS] + f"\n[truncated: {left} more characters. Ask for less:"
+            " a filter, a page, a narrower query or fewer fields]")  # fmt: skip
 
 
 UNKNOWN_HINT = (

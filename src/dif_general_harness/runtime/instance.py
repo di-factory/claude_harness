@@ -27,6 +27,7 @@ from __future__ import annotations
 import dataclasses
 import fnmatch
 import os
+import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack
@@ -157,6 +158,9 @@ DOCUMENTS_STORAGE = "documents:storage"  # the documents pack's own source, by t
 def scope_for(spec: SolutionSpec) -> Scope:
     tenant = spec.tenant.id if spec.tenant else LOCAL_TENANT
     return Scope(tenant_id=tenant, instance_id=spec.solution.id)
+
+
+MANY_TOOLS = 30  # past this, choosing the right tool gets harder than the tools help
 
 
 def _matches(name: str, patterns: list[str]) -> bool:
@@ -317,6 +321,27 @@ class Instance:
         for name in sorted({s for a in spec.agents.values() for s in a.subagents}):
             tools.append(subagent_tool(self, name))
         self._configure(tools)
+        self._check_tool_surface()
+
+    def _check_tool_surface(self) -> None:
+        """More tools are not more capability: every tool is one more choice. Warn when an
+        agent sees many, or two whose descriptions say nearly the same thing."""
+        for name, agent in self.spec.agents.items():
+            seen = [t for n in self.tools.names() if _matches(n, agent.tools)
+                    and (t := self.tools.get(n)) is not None]  # fmt: skip
+            if len(seen) > MANY_TOOLS:
+                why = f"{len(seen)} tools: narrow the globs to what this agent needs"
+                self._warn("many_tools", f"agents.{name}.tools", why)
+            words = {t.name: set(re.findall(r"\w{3,}", t.description.lower())) for t in seen}
+            for i, a in enumerate(seen):
+                for b in seen[i + 1 :]:
+                    wa, wb = words[a.name], words[b.name]
+                    same = a.description.strip().lower() == b.description.strip().lower()
+                    close = len(wa) >= 4 and len(wb) >= 4 and len(wa & wb) / len(wa | wb) >= 0.8
+                    if same or close:
+                        self._warn("overlapping_tools", f"agents.{name}.tools",
+                                   f"{a.name} and {b.name} are described almost the same:"
+                                   " the model may pick the wrong one")  # fmt: skip
 
     def _handoff_tool(self) -> Tool:
         from ..tools.registry import tool
@@ -894,6 +919,7 @@ class AgentRuntime:
         self.config = LoopConfig(
             system=self.system, model_role=spec.model_role, max_turns=spec.max_turns or 12,
             max_seconds=spec.max_seconds or MAX_SECONDS,
+            max_tool_calls=self.per_run.tool_calls,
         )  # fmt: skip
 
     async def new_session(self, contact_key: str | None = None) -> Session:

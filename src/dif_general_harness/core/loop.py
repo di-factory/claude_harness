@@ -105,6 +105,7 @@ class LoopConfig:
     max_turns: int = 12
     max_repeats: int = 3  # the same call, same input, more times than this: stuck
     max_tool_errors: int = 3  # this many turns in a row with every tool call failed: stuck
+    max_tool_calls: int | None = None  # tool calls one run may execute (budgets.tool_calls)
     max_seconds: float | None = None  # one reply's wall-clock limit
 
 
@@ -132,6 +133,7 @@ async def run(
     turns = 0
     started = time.monotonic()
     calls_seen: dict[str, int] = {}
+    executed = 0
     failed_turns = 0
 
     def end(reason: EndReason) -> TurnEnded:
@@ -224,6 +226,12 @@ async def run(
             yield error(f"stuck: {repeated.name} called {times} times with the same input")
             yield end("stuck")
             return
+        if cfg.max_tool_calls is not None and executed + len(calls) > cfg.max_tool_calls:
+            yield session.add_message(_not_run(calls, "the run's tool-call budget is spent"))
+            yield error(f"budget exhausted: {cfg.max_tool_calls} tool calls")
+            yield end("budget")
+            return
+        executed += len(calls)
         for call in calls:
             yield session.stamp(
                 ToolCallStarted(
