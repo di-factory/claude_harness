@@ -14,6 +14,9 @@ the instance's admin API, so nobody needs curl, tokens or JSON:
     faq gaps            questions customers asked that the FAQ did not answer, most asked first
     faq done|dismiss ID mark one answered (once the FAQ covers it) or not for the assistant
     costs               model spend at list prices, by day
+    runs                why each run of the last week stopped, and what failed
+    review [--now]      the edits the weekly review proposes (nothing is applied)
+    graph NAME [QUERY]  a research graph: by state, with sources and evidence
 
 The admin token is read from the local secrets (``~/.dif/secrets/admin_token``), never
 printed; the address defaults to the instance on this machine.
@@ -189,6 +192,55 @@ class Admin:
             return f"{gap_id} marked answered; if a customer asks it again, it opens again."
         return f"{gap_id} dismissed: it stays out of the list."
 
+    async def runs(self, days: float = 7.0) -> str:
+        records = await self._get("/admin/records", days=days)
+        if not records:
+            return f"No runs in the last {days:g} day(s)."
+        out = []
+        for r in records:
+            when = datetime.fromtimestamp(float(r["ended"])).strftime("%Y-%m-%d %H:%M")
+            counts = ", ".join(f"{k} {v}" for k, v in (r.get("counts") or {}).items())
+            out.append(f"- {when} {r['kind']} {r['name']}: {r['stop_reason']}"
+                       + (f" ({counts})" if counts else ""))  # fmt: skip
+            for f in (r.get("failures") or [])[:3]:
+                out.append(f"    {f.get('gate')}: {f.get('item', '')} - {_short(f.get('reason'))}")
+        return "\n".join(out)
+
+    async def review(self, now: bool = False) -> str:
+        if now:
+            done = await self._send("POST", "/admin/review", {})
+            if not done.get("proposals"):
+                return "Reviewed the last week: nothing repeated enough to propose an edit."
+        items = await self._get("/admin/inbox", kind="proposal")
+        if not items:
+            return "No proposed edits waiting (the review runs weekly; --now runs it now)."
+        out = []
+        for item in items:
+            out.append(f"# {item['title']} (item {item['id']})")
+            for p in (item.get("payload") or {}).get("proposals") or []:
+                out += [f"\n## {p['target']}: {p.get('why', '')}", p.get("diff", "")]
+        out.append("\nNothing was changed. Apply what you accept with the setup or adjust;"
+                   " then close the item: admin inbox.")  # fmt: skip
+        return "\n".join(out)
+
+    async def graph(self, name: str, query: str | None = None) -> str:
+        if query:
+            found = await self._get(f"/admin/graphs/{name}", q=query)
+            if not found:
+                return f"Nothing in {name} matches {query!r}."
+            out = []
+            for n in found:
+                out.append(f"- {n['label']} ({n['type']}, {n['state']}, confidence"
+                           f" {float(n['confidence']):.2f})")  # fmt: skip
+                out += [f"    source: {s.get('url')}" for s in n.get("sources", [])[:3]]
+                out += [f"    {e['from']} --{e['type']}--> {e['to']}: {e['evidence']}"
+                        for e in n.get("edges", [])[:5]]  # fmt: skip
+            return "\n".join(out)
+        r = await self.http.get(f"/admin/graphs/{name}", params={"format": "md"})
+        if r.status_code >= 400:
+            raise AdminError(f"{r.status_code}: {r.text[:200]}")
+        return r.text
+
     async def costs(self, since: str | None = None) -> str:
         data = await self._get("/admin/costs", since=since, by="day")
         lines = [f"Model spend {data['since']} to {data['until']} (list prices):"]
@@ -235,6 +287,12 @@ async def run(admin: Admin, args: Any) -> str:
         return await admin.reply(args.session, args.text, args.by)
     if cmd == "costs":
         return await admin.costs(args.since)
+    if cmd == "runs":
+        return await admin.runs(args.days)
+    if cmd == "review":
+        return await admin.review(args.now)
+    if cmd == "graph":
+        return await admin.graph(args.name, args.query)
     if cmd == "faq":
         action, target = args.action, getattr(args, "target", "-")
         if action == "show":

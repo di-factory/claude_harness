@@ -704,6 +704,47 @@ def create_app(
             for r in await headless.engine.runs(workflow, status)
         ]  # fmt: skip
 
+    @app.get("/admin/records", dependencies=[Depends(admin)])
+    async def records(days: float = 7.0) -> list[dict[str, Any]]:
+        """Run records: why each run stopped, what failed, what it changed (append only)."""
+        from ..workflows.records import RunRecords
+
+        return await RunRecords(current().db, scope).recent(days)
+
+    @app.post("/admin/review", dependencies=[Depends(admin)])
+    async def review_now() -> dict[str, Any]:
+        """The weekly review, now: proposed edits go to the inbox; nothing is applied."""
+        from .review import review
+
+        if current().provider is None:
+            raise HTTPException(501, "no model to review with")
+        done = await review(current())
+        return {"proposals": len(done["proposals"]), "item": done.get("item")}
+
+    @app.get("/admin/graphs/{name}", dependencies=[Depends(admin)])
+    async def graph(name: str, format: str = "json", q: str | None = None) -> Response:
+        from ..graph.store import GraphStore
+
+        spec = current().spec.graphs.get(name)
+        if spec is None:
+            raise HTTPException(404, f"no graph {name!r}")
+        store = GraphStore(current().db, scope, name, spec)
+        if format == "md":
+            return Response(await store.markdown(), media_type="text/markdown; charset=utf-8")
+        if q:
+            body: Any = await store.search(q, limit=50)
+        else:
+            nodes = await store.nodes()
+            by_id = {n.id: n.label for n in nodes}
+            body = {
+                "nodes": [{**n.public(), "state": store.state(n)} for n in nodes],
+                "edges": [{"from": by_id.get(e.from_id), "to": by_id.get(e.to_id),
+                           "type": e.type, "evidence": e.evidence, "confidence": e.confidence}
+                          for e in await store.edges()],
+            }  # fmt: skip
+        return Response(json.dumps(body, ensure_ascii=False, default=str),
+                        media_type="application/json")  # fmt: skip
+
     @app.get("/admin/runs/{run_id}", dependencies=[Depends(admin)])
     async def run(run_id: str) -> dict[str, Any]:
         found = await headless.engine.get(run_id)

@@ -2,7 +2,7 @@
 
 Di-Factory's general solution template: an agent runtime where every client
 solution is a declarative **solution spec** (a pack plus a client instance).
-Read `docs/ARCHITECTURE.md` (81 decisions, §7) before changing behaviour;
+Read `docs/ARCHITECTURE.md` (86 decisions, §7) before changing behaviour;
 `docs/spec/SOLUTION_SPEC.md` is the spec contract.
 
 ## Commands
@@ -26,7 +26,7 @@ uv run dif-general-harness replay INSTANCE.json --packs DIR # real conversations
 uv run dif-general-harness keys new jag | approve ... | deploy ... --target docker|aws
 uv run dif-general-harness adjust|upgrade INSTANCE.json ... --dry-run     # constructor v3
 uv run dif-general-harness costs INSTANCE.json --by vendor,model         # spend + quality
-uv run dif-general-harness admin status|inbox|show|reply|faq|costs         # a running instance
+uv run dif-general-harness admin status|inbox|show|reply|faq|costs|runs|review|graph  # running
 uv run dif-general-harness handover INSTANCE.json --owner NAME --lang es  # the client's Claude
                                           # the whole handover, guided: /handover (.claude/skills)
 uv run dif-general-harness fleet register|offer|rollout|rollback|status  # via the control plane
@@ -55,19 +55,22 @@ setup mistakes the harness now catches early). Keep it in step with the CLI.
 - `src/dif_general_harness/tenancy/`: secret backends and `$secret` resolution
 - `src/dif_general_harness/store/`: database layer (SQLite/Postgres, migrations), SQL and JSONL
   session stores (redacted)
-- `src/dif_general_harness/workflows/`: durable job queue and worker, workflow engine, `render`
+- `src/dif_general_harness/workflows/`: durable job queue and worker, workflow engine (`foreach`,
+  `stop`), `gates.py` (checks on returns), `records.py` (run records), `render`
 - `src/dif_general_harness/verify/`: verification checks (tool, condition, command, verifier)
 - `src/dif_general_harness/teams/`: ledger, sub-agent tools, `handoff.agent`, `runs.*`
 - `src/dif_general_harness/memory/`: scoped episodic/semantic/procedural store, `memory.*` tools
 - `src/dif_general_harness/knowledge/`: chunking, sync, retrieval, citations, `knowledge.search_*`
 - `src/dif_general_harness/documents/`: text from PDF/DOCX/XLSX, OCR with a vision role
 - `src/dif_general_harness/feedback/`: candidate and pinned constraints
+- `src/dif_general_harness/graph/`: research graphs (nodes with sources, edges with evidence,
+  aliases), `graph.query`
 - `src/dif_general_harness/governance/`: PII tokenization, consent, audit chain, retention
 - `src/dif_general_harness/runtime/`: `Instance` (spec to runnable agents), role routing, prompts, skills
 - `src/dif_general_harness/channels/`, `triggers/`, `hitl/`: adapters (gateway, Telegram,
   API/web, email, Slack, voice), cron, file sources, the inbox
 - `src/dif_general_harness/service/`: the headless runtime (`Headless`), FastAPI app, config boot,
-  `hooks.py` (signed events to client systems)
+  `hooks.py` (signed events to client systems), `review.py` (the weekly review)
 - `src/dif_general_harness/tenancy/`: secrets (env, file, AWS) and config versions
 - `src/dif_general_harness/fleet/`: the outbound-only instance agent (signed, eval-gated offers)
 - `src/dif_general_harness/control/`: the control plane (fleet view, offers, rollouts, audit)
@@ -77,7 +80,7 @@ setup mistakes the harness now catches early). Keep it in step with the CLI.
 - `deploy/docker/`, `deploy/terraform/aws/`: the image and the AWS module (profiles, alarms,
   `tests/*.tftest.hcl` against a mocked provider)
 - `integrations/openclaw-skill/`: the wrapper Teky uses to drive the constructor
-- `docs/spec/examples/`: six example packs + one instance, which are also the **test fixtures**
+- `docs/spec/examples/`: seven example packs + one instance, which are also the **test fixtures**
 - `tests/test_acceptance_m1.py` … `tests/test_acceptance_m4.py`: the milestone gates;
   `tests/support.py` holds the service test fixtures
 
@@ -120,9 +123,10 @@ shown to its customers (74), and real conversations replayed on every rebuild be
 online (75); then the running client watched nightly and after document changes, and the
 same replay gating fleet offers (76–77), an OpenAI-compatible endpoint (78), skills in packs
 (79), repository instructions and wrapper-aware shell rules (80), and signed hooks to the
-client's systems (81).
+client's systems (81); then run records, gates outside the agent, counted stops and caps, a
+weekly review that proposes and never writes (82–85), and research graphs (86).
 Next: GCP and Azure profiles.
 Known gaps: streaming (speech-to-speech) voice, knowledge connectors beyond files, S3,
 Drive and web pages (SharePoint, Notion... push through the admin API), pgvector for very
 large corpora, and a first apply of the AWS module in a real account. See
-`docs/ARCHITECTURE.md` §6 and decisions 43–81.
+`docs/ARCHITECTURE.md` §6 and decisions 43–86.

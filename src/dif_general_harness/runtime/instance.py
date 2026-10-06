@@ -308,6 +308,10 @@ class Instance:
         if any("human" in a.handoffs for a in spec.agents.values()):
             tools.append(self._handoff_tool())
         tools += runs_tools(self)
+        if spec.graphs:
+            from ..graph.tools import graph_tools
+
+            tools += graph_tools(self)
         for name in sorted({s for a in spec.agents.values() for s in a.subagents}):
             tools.append(subagent_tool(self, name))
         self._configure(tools)
@@ -809,6 +813,7 @@ class Instance:
         allow.append("memory.*")  # remembering is internal, scoped and reviewed (contradictions)
         allow.append("knowledge.*")  # reading the solution's own documents
         allow.append("skills.*")  # reading the solution's own skills
+        allow.append("graph.*")  # reading the solution's own research graphs
         for name, o in overrides.items():
             if o.permission:
                 {"allow": allow, "ask": ask, "deny": deny}[o.permission].append(name)

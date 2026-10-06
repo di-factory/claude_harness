@@ -820,6 +820,15 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
     a_reply.add_argument("--by", default="owner", help="who answers (kept in the audit log)")
     a_costs = adm_sub.add_parser("costs", help="model spend by day (list prices)")
     a_costs.add_argument("--since", help="YYYY-MM-DD (default: the last 30 days)")
+    a_runs = adm_sub.add_parser("runs", help="why each recent run stopped, what failed")
+    a_runs.add_argument("--days", type=float, default=7.0)
+    a_review = adm_sub.add_parser(
+        "review", help="the edits the weekly review proposes from the week's failures"
+    )
+    a_review.add_argument("--now", action="store_true", help="run the review now")
+    a_graph = adm_sub.add_parser("graph", help="a research graph, or what it says about X")
+    a_graph.add_argument("name")
+    a_graph.add_argument("query", nargs="?")
     a_faq = adm_sub.add_parser(
         "faq", help="the FAQ the assistant answers from, and the questions it did not answer"
     )

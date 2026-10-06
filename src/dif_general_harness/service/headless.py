@@ -56,8 +56,10 @@ from ..triggers import files as file_sources
 from ..verify.output import review_output, wants_review
 from ..workflows import Job, JobQueue, Worker
 from ..workflows.engine import WorkflowEngine
+from ..workflows.records import RunRecords
 from ..workflows.render import render as render_value
 from . import hooks
+from . import review as weekly_review
 
 log = logging.getLogger(__name__)
 _EVENT_REF = re.compile(r"\{\{\s*event((?:\.[A-Za-z0-9_]+)*)\s*\}\}")
@@ -232,6 +234,7 @@ class Headless:
             "batch_run": lambda job: self.run_batch(job.payload["trigger"]),
             "replay_watch": self._job_replay_watch,
             "hook": self._job_hook,
+            "weekly_review": self._job_weekly_review,
         }
 
     def worker(self, **kw: Any) -> Worker:
@@ -266,6 +269,12 @@ class Headless:
             await self.queue.enqueue(
                 self.scope, "replay_watch", {"reason": "the nightly check", "daily": True},
                 delay_s=DAY, dedupe_key=f"replay_watch:{tomorrow}",
+            )  # fmt: skip
+        if weekly_review.enabled(self.instance):
+            week = datetime.fromtimestamp(now, UTC).strftime("%G-W%V")
+            await self.queue.enqueue(
+                self.scope, "weekly_review", {"weekly": True}, delay_s=7 * DAY,
+                dedupe_key=f"weekly_review:{week}",
             )  # fmt: skip
 
     @property
@@ -633,6 +642,11 @@ class Headless:
         await self.instance.audit.record(
             self.scope, f"trigger:{name}", "batch_started", name, summary
         )
+        await RunRecords(self.instance.db, self.scope).append(
+            "batch", name, started=time.time(), stop_reason="queued",
+            counts={"items": len(items), "queued": queued, "skipped": skipped,
+                    "truncated": max(0, len(items) - limit)},
+        )  # fmt: skip
         return summary
 
     async def _batch_items(self, name: str, trig: Trigger) -> list[Any]:
@@ -765,10 +779,15 @@ class Headless:
         agent = self.agent(agent_name)
         text = render_event(trig.input or f"Trigger {name} fired.", event)
         session = await agent.new_session()
+        started = time.time()
         texts, reason = await answer(agent.send(session, text))
         await self.instance.audit.record(
             self.scope, f"trigger:{name}", "trigger_run", trig.agent or "",
             {"session": session.id, "reason": reason},
+        )  # fmt: skip
+        await RunRecords(self.instance.db, self.scope).append(
+            "trigger", name, started=started, stop_reason=reason,
+            counts={"agents": 1, "escalated": int(reason in STOPPED)}, session=session.id,
         )  # fmt: skip
         if trig.channel and texts:
             cfg = self.instance.spec.channels[trig.channel]
@@ -1181,6 +1200,18 @@ class Headless:
             "review", title, {"reason": reason, "summary": summary(done), "worse": worse[:10]}
         )
         await self.notify(item, f"{title}: {len(worse)} reply(ies); see the inbox")
+
+    async def _job_weekly_review(self, job: Job) -> None:
+        """A week of failures, turned into proposed edits for a person (never applied)."""
+        if job.payload.get("weekly"):
+            later = self.queue.clock() + 7 * DAY
+            week = datetime.fromtimestamp(later, UTC).strftime("%G-W%V")
+            await self.queue.enqueue(
+                self.scope, "weekly_review", dict(job.payload), delay_s=7 * DAY,
+                dedupe_key=f"weekly_review:{week}",
+            )  # fmt: skip
+        if weekly_review.enabled(self.instance):
+            await weekly_review.review(self.instance)
 
     async def _job_retention(self, job: Job) -> None:
         inst = self.instance

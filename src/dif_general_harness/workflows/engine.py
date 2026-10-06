@@ -37,6 +37,8 @@ from ..spec.loader import duration_days
 from ..spec.schema import Step, Workflow
 from ..store.db import Row
 from ..tools.registry import Effect
+from .gates import Failure, Gate, Rules, run_gated
+from .records import RunRecords
 from .render import render
 
 if TYPE_CHECKING:
@@ -71,6 +73,22 @@ class Run:
     def steps(self) -> dict[str, Any]:
         out: dict[str, Any] = self.state.setdefault("steps", {})
         return out
+
+
+class _Stop(Exception):
+    """The run's stop condition held or a cap was hit."""
+
+    def __init__(self, reason: str, unfinished: list[str] | None = None) -> None:
+        super().__init__(reason)
+        self.reason, self.unfinished = reason, unfinished or []
+
+
+class _NeedsHuman(Exception):
+    """A gated return failed twice (or was malformed): a person takes it from here."""
+
+    def __init__(self, what: str, failures: list[Failure]) -> None:
+        super().__init__(what)
+        self.what, self.failures = what, failures
 
 
 class _Wait(Exception):
@@ -108,7 +126,7 @@ class WorkflowEngine:
     ) -> str:  # fmt: skip
         self.workflow(name)
         run_id = uuid.uuid4().hex[:16]
-        state: dict[str, Any] = {"pc": 0, "steps": {}}
+        state: dict[str, Any] = {"pc": 0, "steps": {}, "started": time.time(), "counts": {}}
         if contact and channel:
             state["contact"] = {"key": contact, "channel": channel}
         now = time.time()
@@ -253,6 +271,7 @@ class WorkflowEngine:
             "var": inst.spec.values,
             "contact": run.state.get("contact", {}),
             "run": {"id": run.id, "workflow": run.workflow},
+            "counts": run.state.get("counts") or {},
         }
 
     async def advance(self, run_id: str) -> None:
@@ -277,6 +296,11 @@ class WorkflowEngine:
                 break
             step = wf.steps[pc]
             ctx = self._ctx(run)
+            try:
+                self._check_caps(run, wf)
+            except _Stop as stop:
+                await self._stopped(run, wf, stop)
+                return
             if step.when and not cel.holds(step.when, ctx):
                 run.steps[step.id] = {"skipped": True}
                 run.state["pc"] = pc + 1
@@ -296,6 +320,12 @@ class WorkflowEngine:
                         run_at=wait.deadline, dedupe_key=key,
                     )  # fmt: skip
                 return
+            except _Stop as stop:
+                await self._stopped(run, wf, stop)
+                return
+            except _NeedsHuman as needs:
+                await self._needs_human(run, wf, step, needs)
+                return
             except Exception as exc:
                 await self._fail(run, wf, step, exc)
                 return
@@ -303,12 +333,16 @@ class WorkflowEngine:
                 break
             run.state["pc"] = ids.index(goto) if goto else pc + 1
             await self._save(run)
+            if wf.stop and wf.stop.when and cel.holds(wf.stop.when, self._ctx(run)):
+                run.status, run.outcome = "done", "condition"
+                break
         else:
             await self._fail(
                 run, wf, wf.steps[int(run.state["pc"])], WorkflowError("too many steps")
             )
             return
         await self._save(run)
+        await self._record(run, run.outcome or run.status)
         await self.host.instance.audit.record(
             self.scope, "workflow", f"workflow_{run.status}", run.workflow,
             {"run": run.id, "outcome": run.outcome},
@@ -316,6 +350,69 @@ class WorkflowEngine:
         await self.emit(
             f"workflow.{run.workflow}.{run.status}", {"run": run.id, "outcome": run.outcome}
         )
+
+    # --- counts, caps and the run record ------------------------------------------------
+
+    def count(self, run: Run, key: str, n: int = 1) -> None:
+        counts = run.state.setdefault("counts", {})
+        counts[key] = int(counts.get(key, 0)) + n
+
+    def failed(self, run: Run, item: str, failure: Failure) -> None:
+        run.state.setdefault("failures", []).append(
+            {"item": item, "gate": failure.gate, "reason": failure.reason[:300]}
+        )
+
+    def _check_caps(self, run: Run, wf: Workflow, unfinished: list[str] | None = None) -> None:
+        stop = wf.stop
+        if stop is None:
+            return
+        counts = run.state.get("counts") or {}
+        if stop.max_agents is not None and int(counts.get("agents", 0)) >= stop.max_agents:
+            raise _Stop("cap_agents", unfinished)
+        started = float(run.state.get("started") or time.time())
+        if stop.max_minutes is not None and time.time() - started >= stop.max_minutes * 60:
+            raise _Stop("cap_minutes", unfinished)
+
+    async def _stopped(self, run: Run, wf: Workflow, stop: _Stop) -> None:
+        """A cap: record the run, give the unfinished list to a person, exit."""
+        run.status, run.outcome = "done", stop.reason
+        if stop.reason.startswith("cap_"):
+            ids = [s.id for s in wf.steps]
+            left = stop.unfinished or ids[int(run.state.get("pc", 0)) :]
+            if left:
+                item = await self.host.instance.inbox.create(
+                    "review", f"{run.workflow} stopped at its cap ({stop.reason}): "
+                    f"{len(left)} left", {"run": run.id, "unfinished": left[:200]},
+                )  # fmt: skip
+                await self.host.notify(item, f"{run.workflow}: {len(left)} item(s) unfinished")
+            run.state["unfinished"] = left[:200]
+        await self._save(run)
+        await self._record(run, stop.reason)
+        await self.host.instance.audit.record(
+            self.scope, "workflow", "workflow_done", run.workflow,
+            {"run": run.id, "outcome": run.outcome},
+        )  # fmt: skip
+
+    async def _needs_human(self, run: Run, wf: Workflow, step: Step, needs: _NeedsHuman) -> None:
+        run.status, run.outcome = "escalated", "needs_human"
+        self.count(run, "escalated")
+        item = await self.host.instance.inbox.create(
+            "review", f"{run.workflow}: {needs.what} needs a person",
+            {"run": run.id, "step": step.id,
+             "failures": [{"gate": f.gate, "reason": f.reason} for f in needs.failures]},
+        )  # fmt: skip
+        await self.host.notify(item, f"{run.workflow}: {needs.what} failed its checks twice")
+        await self._save(run)
+        await self._record(run, "needs_human")
+
+    async def _record(self, run: Run, stop_reason: str) -> None:
+        state = run.state
+        await RunRecords(self.db, self.scope).append(
+            "workflow", run.workflow, started=float(state.get("started") or time.time()),
+            stop_reason=stop_reason, counts=state.get("counts"), failures=state.get("failures"),
+            run=run.id, unfinished=state.get("unfinished"),
+            alias_collisions=state.get("alias_collisions"), diff=state.get("diff"),
+        )  # fmt: skip
 
     async def _slot(self, run: Run, limit: int) -> bool:
         rows = await self.db.fetchall(
@@ -338,6 +435,7 @@ class WorkflowEngine:
                 item, f"Workflow {run.workflow} needs a person: {run.error[:120]}"
             )
         await self._save(run)
+        await self._record(run, "failed")
         await self.host.instance.audit.record(
             self.scope,
             "workflow",
@@ -354,7 +452,7 @@ class WorkflowEngine:
         kind = step.type
         if kind == "agent":
             run.steps[step.id] = await self._agent(
-                run, str(x["agent"]), render(x.get("input"), ctx)
+                run, str(x["agent"]), render(x.get("input"), ctx), gate=x.get("gate")
             )
         elif kind == "tool":
             run.steps[step.id] = await self._tool(
@@ -381,6 +479,8 @@ class WorkflowEngine:
             run.steps[step.id] = {"goto": None}
         elif kind == "parallel":
             run.steps[step.id] = await self._parallel(run, x.get("branches", []), ctx)
+        elif kind == "foreach":
+            run.steps[step.id] = await self._foreach(run, step, x, ctx)
         elif kind == "handoff":
             run.steps[step.id] = await self._handoff(run, step, x, ctx)
         elif kind == "timer":
@@ -416,14 +516,22 @@ class WorkflowEngine:
             raise _Wait("time", deadline=until)
         raise WorkflowError(f"cannot wait for {what!r}")
 
-    async def _agent(self, run: Run, name: str, given: Any) -> dict[str, Any]:
+    async def _agent(
+        self, run: Run, name: str, given: Any, *, gate: Any = None, fresh: bool = False,
+        label: str | None = None, rules: Rules | None = None,
+    ) -> dict[str, Any]:  # fmt: skip
         host = self.host
         agent = host.agent(name)
+        wf = self.workflow(run.workflow)
+        checks = Gate.from_step(gate, agent.spec.output_schema) if gate is not None or (
+            agent.spec.output_schema) else None  # fmt: skip
+        if checks is not None and rules is not None:
+            checks.rules = rules
         text = (
             given if isinstance(given, str) else json.dumps(given, ensure_ascii=False, default=str)
         )
         target = run.state.get("contact") or {}
-        session_id = run.state.setdefault("sessions", {}).get(name)
+        session_id = None if fresh else run.state.setdefault("sessions", {}).get(name)
         if session_id:
             session = await agent.resume(session_id)
         else:
@@ -432,17 +540,40 @@ class WorkflowEngine:
                 await host.instance.store.bind(
                     host.scope, session.id, target["channel"], target["key"]
                 )
-            run.state["sessions"][name] = session.id
+            if not fresh:
+                run.state.setdefault("sessions", {})[name] = session.id
         from ..runtime import answer  # the runtime imports the workflow engine's host
 
-        texts, reason = await answer(agent.send(session, text))
-        final = texts[-1] if texts else ""
-        output: dict[str, Any] = {"text": final, "reason": reason, "session": session.id}
+        texts: list[str] = []
+
+        async def attempt(message: str) -> str:
+            self._check_caps(run, wf)
+            self.count(run, "agents")
+            said, why = await answer(agent.send(session, message))
+            if why != "end_turn":
+                raise WorkflowError(f"agent {name} ended with {why}")
+            texts[:] = said
+            return said[-1] if said else ""
+
+        what = label or name
+        if checks is not None:
+            gated = await run_gated(host.instance, checks, text, attempt)
+            for failure in gated.failures:
+                self.failed(run, what, failure)
+            if gated.retried:
+                self.count(run, "retried")
+            if not gated.passed:
+                raise _NeedsHuman(what, gated.failures)
+            self.count(run, "passed")
+            final = json.dumps(gated.output, ensure_ascii=False)
+            output: dict[str, Any] = {**(gated.output or {}), "text": final, "reason": "end_turn",
+                                      "session": session.id, "output": gated.output}  # fmt: skip
+            return output
+        final = await attempt(text)
+        output = {"text": final, "reason": "end_turn", "session": session.id}
         parsed = _json_in(final)
         if isinstance(parsed, dict):
             output = {**parsed, **output, "output": parsed}
-        if reason != "end_turn":
-            raise WorkflowError(f"agent {name} ended with {reason}")
         if target.get("key") and target.get("channel") and texts and parsed is None:
             replied = any(isinstance(v, dict) and v.get("replied") for v in run.steps.values())
             await host.message(
@@ -516,7 +647,10 @@ class WorkflowEngine:
             step = Step.model_validate(branch)
             if step.type == "agent":
                 return step.id, await self._agent(
-                    run, str(branch["agent"]), render(branch.get("input"), ctx)
+                    run,
+                    str(branch["agent"]),
+                    render(branch.get("input"), ctx),
+                    gate=branch.get("gate"),
                 )
             if step.type == "tool":
                 return step.id, await self._tool(
@@ -527,6 +661,160 @@ class WorkflowEngine:
         results = dict(await asyncio.gather(*(one(b) for b in branches)))
         run.steps.update(results)
         return results
+
+    async def _foreach(
+        self, run: Run, step: Step, x: dict[str, Any], ctx: dict[str, Any]
+    ) -> dict[str, Any]:
+        """One agent per graph node the launch query selects, routed by the node's state,
+        each return gated; nodes land first, then the pass's edges; passes until nothing is
+        left, the run's stop condition holds, or a cap. See ``graph/store.py``."""
+        from ..graph.store import RETURN_SCHEMA, GraphStore
+        from ..graph.tools import return_rules
+
+        inst = self.host.instance
+        wf = self.workflow(run.workflow)
+        name = str(x["graph"])
+        store = GraphStore(inst.db, inst.scope, name, inst.spec.graphs[name])
+        launch = str(x.get("launch") or "state != 'fresh'")
+        limit = int(x.get("limit") or 20)
+        passes = int(x.get("passes") or 3)
+        width = int(x.get("concurrency") or 4)
+        diff = run.state.setdefault("diff", {"nodes_added": [], "nodes_verified": [],
+                                             "edges_added": [], "needs_human": []})  # fmt: skip
+        for label in _labels(render(x.get("seed"), ctx)):
+            node, created = await store.ensure(label)
+            if created:
+                diff["nodes_added"].append(node.label)
+        only = {store.key(lbl) for lbl in _labels(render(x.get("only"), ctx))}
+        gate_cfg = {"schema": RETURN_SCHEMA, "verify": True, "threshold": store.spec.threshold,
+                    **(x.get("gate") or {})}  # fmt: skip
+        touched: set[str] = set()
+        quiet = 0
+        done = {"passes": 0, "researched": 0}
+        for _ in range(passes):
+            nodes = [n for n in await store.nodes() if n.id not in touched
+                     and (not only or store.key(n.label) in only)]  # fmt: skip
+            facts = {n.id: store.facts(n) for n in nodes}
+            chosen = [
+                n
+                for n in nodes
+                if facts[n.id]["state"] not in ("fresh", "needs_human")
+                and cel.holds(launch, {**ctx, "node": facts[n.id], **facts[n.id]})
+            ]
+            chosen.sort(key=lambda n: (-n.inbound, n.label))  # most connected first
+            chosen = chosen[:limit]
+            if not chosen:
+                break
+            done["passes"] += 1
+            self.count(run, "passes")
+            slots = asyncio.Semaphore(width)
+            unfinished: list[str] = []
+
+            async def research(
+                node: Any, state: str, slots: asyncio.Semaphore = slots,
+                unfinished: list[str] = unfinished,
+            ) -> tuple[Any, str, list[dict[str, Any]]]:  # fmt: skip
+                async with slots:
+                    returns: list[dict[str, Any]] = []
+                    for look in ROUTES[state]:
+                        try:
+                            self._check_caps(run, wf)
+                            task = self._research_task(node, state, look, x, ctx)
+                            out = await self._agent(
+                                run, str(x["agent"]), task, gate=gate_cfg, fresh=True,
+                                label=node.label, rules=return_rules(store, node.label),
+                            )  # fmt: skip
+                            returns.append(out["output"])
+                        except _Stop:
+                            unfinished.append(node.label)
+                            return node, "unfinished", []
+                        except _NeedsHuman:
+                            return node, "needs_human", []
+                        except WorkflowError as exc:
+                            self.failed(run, node.label, Failure("agent", str(exc)))
+                            return node, "needs_human", []
+                    return node, state, returns
+
+            results = await asyncio.gather(*(research(n, facts[n.id]["state"]) for n in chosen))
+            verified_now = 0
+            landed: list[tuple[Any, list[dict[str, Any]]]] = []
+            for node, state, returns in results:
+                touched.add(node.id)
+                if state == "unfinished":
+                    continue
+                if state == "needs_human":
+                    await store.set_status(node, "needs_human")
+                    diff["needs_human"].append(node.label)
+                    self.count(run, "escalated")
+                    continue
+                result = await store.land(node, returns, recheck=state == "contradicted")
+                done["researched"] += 1
+                self.count(run, "researched")
+                if result.verified:
+                    verified_now += 1
+                    diff["nodes_verified"].append(node.label)
+                    self.count(run, "verified")
+                if result.contradicted:
+                    self.count(run, "contradicted")
+                landed.append((node, returns))
+            known = await store.nodes()
+            for node, returns in landed:  # every node of the pass is in: now the edges
+                drawn = await store.draw(node, returns, run.id, known)
+                diff["edges_added"] += drawn.added
+                diff["nodes_added"] += drawn.discovered
+                if drawn.dropped:
+                    self.count(run, "edges_dropped", drawn.dropped)
+                if drawn.collisions:
+                    run.state.setdefault("alias_collisions", []).extend(drawn.collisions)
+                if drawn.discovered:
+                    known = await store.nodes()
+            quiet = 0 if verified_now else quiet + 1
+            counts = run.state.setdefault("counts", {})
+            counts["passes_without_new"] = quiet
+            counts["graph_verified"] = sum(1 for n in known if n.status == "verified")
+            await self._save(run)
+            if unfinished:
+                raise _Stop(self._cap_reason(run, wf), unfinished)
+            if wf.stop and wf.stop.when and cel.holds(wf.stop.when, self._ctx(run)):
+                break
+        if diff["needs_human"]:
+            item = await inst.inbox.create(
+                "review", f"{run.workflow}: {len(diff['needs_human'])} item(s) failed their"
+                " checks twice", {"run": run.id, "graph": name, "items": diff["needs_human"],
+                                  "failures": run.state.get("failures", [])[-50:]},
+            )  # fmt: skip
+            await self.host.notify(item, f"{run.workflow}: some items need a person")
+        if x.get("report", True) and (diff["nodes_added"] or diff["nodes_verified"]
+                                      or diff["edges_added"]):  # fmt: skip
+            item = await inst.inbox.create(
+                "report", f"{run.workflow}: +{len(diff['nodes_added'])} node(s),"
+                f" {len(diff['nodes_verified'])} verified, +{len(diff['edges_added'])} edge(s)",
+                {"run": run.id, "graph": name, "diff": diff},
+            )  # fmt: skip
+            await self.host.notify(item, f"{run.workflow}: the {name} graph changed")
+        return {**done, "graph": name}
+
+    def _cap_reason(self, run: Run, wf: Workflow) -> str:
+        try:
+            self._check_caps(run, wf)
+        except _Stop as stop:
+            return stop.reason
+        return "cap_agents"
+
+    def _research_task(
+        self, node: Any, state: str, look: str, x: dict[str, Any], ctx: dict[str, Any]
+    ) -> str:
+        extra = render(x.get("input"), {**ctx, "node": {"label": node.label, "type": node.type}})
+        known = json.dumps({"sources": node.sources, "fields": node.fields},
+                           ensure_ascii=False, default=str)  # fmt: skip
+        parts = [
+            f"Research: {node.label} ({node.type}).",
+            ROUTE_TASKS[look].format(checked=node.last_checked or "never"),
+            "" if state == "new" else f"What the graph has now: {known[:4000]}",
+            str(extra or ""),
+            RETURN_FORMAT,
+        ]
+        return "\n\n".join(p for p in parts if p)
 
     async def _handoff(
         self, run: Run, step: Step, x: dict[str, Any], ctx: dict[str, Any]
@@ -552,6 +840,43 @@ class WorkflowEngine:
             await self.host.notify(item, f"Escalation: {reason[:120]}")
         run.status, run.outcome = "done", str(x.get("outcome") or "handoff")
         return {"escalation": item}
+
+
+# a node's state -> the looks it gets (two independent looks for a contradiction)
+ROUTES: dict[str, list[str]] = {
+    "new": ["full"], "thin": ["sources"], "stale": ["delta"],
+    "contradicted": ["primary", "secondary"],
+}  # fmt: skip
+ROUTE_TASKS = {
+    "full": "Full research: identify it, pull primary sources, extract the fields.",
+    "sources": "Sources only: find independent sources (other sites) for what the graph has;"
+    " do not research it again from scratch.",
+    "delta": "Changes only: what changed since it was last checked ({checked})? Keep what"
+    " still holds; return the current values with dates.",
+    "primary": "Start from primary sources only (filings, the entity's own site and"
+    " documents), and settle the conflicting fields with what they state.",
+    "secondary": "Start from independent coverage (not the entity's own pages), and settle"
+    " the conflicting fields with what it states.",
+}
+RETURN_FORMAT = """Return JSON only, nothing else:
+{"label": "<the entity's name>", "type": "<node type>", "sources": [{"url": "...", "date":
+"YYYY-MM-DD"}] (at most 3), "fields": {...}, "candidate_edges": [{"target": "<other entity>",
+"relation": "<edge type>", "evidence": "<the source line that shows it>", "confidence": 0-1}],
+"confidence": 0-1, "flagged": false}
+Conflicting values: return both, each with its date; never average. Under 0.6 confidence:
+return it with "flagged": true rather than leaving it out."""
+
+
+def _labels(value: Any) -> list[str]:
+    if value is None or value == "":
+        return []
+    items = value if isinstance(value, list) else [value]
+    out = []
+    for item in items:
+        label = item.get("label") if isinstance(item, dict) else item
+        if isinstance(label, str) and label.strip():
+            out.append(label.strip())
+    return out
 
 
 def _json_in(text: str) -> Any:

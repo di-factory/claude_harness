@@ -22,6 +22,7 @@ PACK_IDS = [
     "pyme-receipt-processing",
     "dev-cell",
     "opc-c-suite",
+    "research-graph",
 ]
 
 

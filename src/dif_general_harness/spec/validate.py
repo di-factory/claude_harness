@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from ..core import cel
+from ..graph.store import aliases_problem
 from ..policy.permissions import Rule
 from ..tools import python as python_tools
 from ..triggers.cron import Cron, CronError
@@ -83,7 +84,7 @@ def _covered(rules: list[str], tool: str, *, unconditional: bool = False) -> boo
     return any(fnmatch.fnmatch(tool, b) for b in bases)
 
 
-_CONDITION_KEYS = {"when", "unless", "expr"}
+_CONDITION_KEYS = {"when", "unless", "expr", "launch"}
 
 
 def _conditions(obj: Any, path: str = "") -> Iterator[tuple[str, str]]:
@@ -153,6 +154,16 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
         if not (isinstance(hook.secret, dict) and set(hook.secret) == {"$secret"}):
             err("invalid_hook", f"hooks.{hname}.secret",
                 'sign with a declared secret: {"$secret": "<name>"}')  # fmt: skip
+    for gname, graph in spec.graphs.items():
+        where = f"graphs.{gname}"
+        if graph.primary not in graph.node_types:
+            err("invalid_graph", f"{where}.primary",
+                f"{graph.primary!r} is not one of node_types {graph.node_types}")  # fmt: skip
+        if graph.aliases:
+            if not Path(graph.aliases).is_file():
+                err("missing_file", f"{where}.aliases", f"file not found: {graph.aliases}")
+            elif (problem := aliases_problem(graph.aliases)) is not None:
+                err("invalid_graph", f"{where}.aliases", problem)
     for code, spot, trouble in discover_skills(spec.skills)[1]:
         err(code, spot, trouble)
     for i, suite in enumerate(spec.evals.suites):
@@ -191,6 +202,8 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
     for pack in spec.tools.packs:
         namespaces |= PACK_NAMESPACES.get(pack, {pack.rsplit("/", 1)[-1]})
     namespaces |= {ns for r in spec.tools.python if (ns := python_tools.namespace(r))}
+    if spec.graphs:
+        namespaces.add("graph")  # graph.query, read only
 
     # --- agents ----------------------------------------------------------------
     for name, agent in agents.items():
@@ -503,6 +516,11 @@ def _check_step(
         for case in extra.get("cases", []):
             if case.get("goto") not in ids:
                 err("unknown_step", where, f"branch goes to unknown step {case.get('goto')!r}")
+    elif step.type == "foreach":
+        if extra.get("graph") not in spec.graphs:
+            err("unknown_graph", where, f"unknown graph {extra.get('graph')!r}")
+        if extra.get("agent") not in spec.agents:
+            err("unknown_agent", where, f"unknown agent {extra.get('agent')!r}")
     elif step.type == "parallel":
         for branch in extra.get("branches", []):
             if branch.get("type") == "agent" and branch.get("agent") not in spec.agents:
