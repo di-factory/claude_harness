@@ -79,6 +79,17 @@ the `api` channel's token as the bearer and `user` naming the conversation) answ
 assistant, and `hooks` in the instance (`docs/spec/SOLUTION_SPEC.md` §5.19) send signed events
 (escalations, tool calls, replies) to the client's CRM. Packs can carry `skills` (§5.18).
 
+Every run leaves a record (`admin runs`: why it stopped, what failed). Once a week, with a
+`verifier` role, the service reads those records, the inbox and the FAQ gaps. If something
+repeated, it files proposed edits as one inbox item (`admin review`; `--now` runs it
+immediately). It never applies them: apply what you accept with the setup or `adjust`.
+`DIF_REVIEW=off` turns it off.
+
+For recurring research (competitors, suppliers, leads), the `research-graph` pack keeps a
+verified map of a market. It runs weekly from the watched companies, checks each one at two
+independent sites, and gives every relationship its evidence line. `admin graph market`
+shows it by state; `admin graph market "Acme"` shows what it says about one entity.
+
 ## The step-by-step way
 
 The same path, one piece at a time, using the example dental clinic as a stand-in client.

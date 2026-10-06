@@ -241,6 +241,7 @@ class Step(Loose):
         "wait",
         "branch",
         "parallel",
+        "foreach",
         "handoff",
         "timer",
         "end",
@@ -248,11 +249,20 @@ class Step(Loose):
     when: str | None = None
 
 
+class RunStop(Strict):
+    """When a run stops on its own: counts, not adjectives (``workflows/engine.py``)."""
+
+    when: str | None = None  # CEL over counts, steps, input: "counts.verified >= 40"
+    max_agents: int | None = Field(default=None, ge=1)  # agent calls in one run
+    max_minutes: float | None = Field(default=None, gt=0)  # wall clock from the start
+
+
 class Workflow(Strict):
     input: dict[str, Any] | None = None
     steps: list[Step]
     concurrency: int | None = Field(default=None, ge=1)
     on_error: str | None = None
+    stop: RunStop | None = None
 
 
 # --- policies, governance, hitl, evals, deploy -------------------------------------
@@ -341,6 +351,18 @@ class BrandColors(Strict):
     accent: str | None = None  # a second color for highlights
 
 
+class GraphSpec(Strict):
+    """A research graph (``graph/store.py``): one primary node type, fixed edge types."""
+
+    primary: str
+    node_types: list[str] = Field(min_length=1)
+    edge_types: list[str] = Field(min_length=1)
+    threshold: float = Field(default=0.6, ge=0, le=1)  # drop candidate edges below it
+    verified_sources: int = Field(default=2, ge=1)  # independent sources for "verified"
+    stale_days: float = Field(default=30, gt=0)  # a verified node is checked again after
+    aliases: str | None = None  # canonical,alias lines, checked before every merge
+
+
 class Hook(Strict):
     """A client system told what happened (``service/hooks.py``): signed JSON POSTs."""
 
@@ -386,6 +408,7 @@ class SolutionSpec(Strict):
     extensions: list[str] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)  # skill folders (each with a SKILL.md)
     hooks: dict[str, Hook] = Field(default_factory=dict)
+    graphs: dict[str, GraphSpec] = Field(default_factory=dict)
     branding: Branding | None = None
 
 

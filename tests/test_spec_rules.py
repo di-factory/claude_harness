@@ -225,6 +225,28 @@ PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
         lambda d: d["agents"]["developer"]["tools"].append("jira.create_issue"),
     ),
     ("pyme-appointment-agent", "missing_file", lambda d: d["skills"].append("prompts")),
+    ("research-graph", "invalid_graph", lambda d: d["graphs"]["market"].update(primary="fund")),
+    ("research-graph", "missing_file", lambda d: d["graphs"]["market"].update(aliases="no.csv")),
+    (
+        "research-graph",
+        "unknown_graph",
+        lambda d: d["workflows"]["scan"]["steps"][0].update(graph="nope"),
+    ),
+    (
+        "research-graph",
+        "unknown_agent",
+        lambda d: d["workflows"]["scan"]["steps"][0].update(agent="nobody"),
+    ),
+    (
+        "research-graph",
+        "invalid_condition",
+        lambda d: d["workflows"]["scan"]["steps"][0].update(launch="state ==="),
+    ),
+    (
+        "research-graph",
+        "invalid_condition",
+        lambda d: d["workflows"]["scan"]["stop"].update(when="counts.verified >>> 3"),
+    ),
     (
         "pyme-appointment-agent",
         "invalid_hook",
@@ -280,6 +302,14 @@ def test_planted_skill_errors_are_caught(examples: Path, skill_md: str) -> None:
     (pack / "skills" / "bad").mkdir()
     (pack / "skills" / "bad" / "SKILL.md").write_text(skill_md)
     assert "invalid_skill" in _codes(pack)
+
+
+def test_planted_alias_errors_are_caught(examples: Path) -> None:
+    pack = examples / "research-graph"
+    (pack / "aliases.csv").write_text("canonical,alias\nAlphabet Inc,Google\nGoogle LLC,Google\n")
+    assert "invalid_graph" in _codes(pack)  # one alias naming two entities
+    (pack / "aliases.csv").write_text("canonical,alias\nAlphabet Inc\n")
+    assert "invalid_graph" in _codes(pack)
 
 
 INSTANCE_MUTATIONS: list[tuple[str, Mutator]] = [

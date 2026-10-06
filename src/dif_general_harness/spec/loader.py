@@ -106,6 +106,9 @@ def _absolutize(data: dict[str, Any], base: Path) -> None:
         tools["python"] = [
             python_tools.absolutize(r, base) if isinstance(r, str) else r for r in tools["python"]
         ]
+    for graph in (data.get("graphs") or {}).values():
+        if isinstance(graph, dict) and isinstance(graph.get("aliases"), str):
+            graph["aliases"] = _abs(base, graph["aliases"])
     if isinstance(data.get("skills"), list):
         data["skills"] = [_abs(base, s) for s in data["skills"]]
     evals = data.get("evals") or {}

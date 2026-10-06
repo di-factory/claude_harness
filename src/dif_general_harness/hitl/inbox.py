@@ -24,7 +24,17 @@ from ..core.scope import Scope
 from ..policy import ApprovalDecision, ApprovalRequest
 from ..store.db import Database, Row
 
-Kind = Literal["approval", "escalation", "budget", "memory", "skill", "constraint", "review"]
+Kind = Literal[
+    "approval",
+    "escalation",
+    "budget",
+    "memory",
+    "skill",
+    "constraint",
+    "review",
+    "proposal",
+    "report",
+]
 Status = Literal["open", "approved", "denied", "resolved", "expired"]
 
 

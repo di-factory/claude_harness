@@ -1,0 +1,188 @@
+{
+  "$schema": "https://di-factory.biz/schemas/solution-spec.v1.json",
+  "spec_version": "1",
+  "kind": "pack",
+  "solution": {
+    "id": "research-graph",
+    "version": "1.0.0",
+    "name": "Research Graph",
+    "lob": "agentic-transformation",
+    "description": "Keeps a verified map of a market (competitors, suppliers, partners) up to date every week: each entity checked at two independent sources, every relationship with its evidence line, and questions about it answered with sources. Reads only: it never sends, pays or publishes.",
+    "locale": "en"
+  },
+  "variables": {
+    "market": {
+      "type": "string",
+      "required": true,
+      "ask": {
+        "question": "Which market should the graph map (what the client sells, where)?",
+        "example": "dental clinics and their suppliers in Monterrey",
+        "answered_by": "client"
+      }
+    },
+    "watched": {
+      "type": "list",
+      "required": true,
+      "description": "The entities to start from; the graph grows from their relationships",
+      "ask": {
+        "question": "Which companies should it start from (competitors, suppliers, partners)? Separate them with commas.",
+        "example": "Dentalia, Sonrisa Total, Proveedora Dental del Norte",
+        "answered_by": "client"
+      }
+    },
+    "main_model": {
+      "type": "string",
+      "default": "<main-model-id>"
+    },
+    "fast_model": {
+      "type": "string",
+      "default": "<fast-model-id>"
+    }
+  },
+  "secrets": {
+    "llm": {
+      "description": "Model API key"
+    },
+    "api_token": {
+      "description": "Bearer token for the client's systems asking the graph questions"
+    }
+  },
+  "models": {
+    "roles": {
+      "main": {
+        "provider": "anthropic",
+        "model": "{{var.main_model}}",
+        "effort": "medium"
+      },
+      "verifier": {
+        "provider": "anthropic",
+        "model": "{{var.fast_model}}",
+        "effort": "medium"
+      }
+    },
+    "providers": {
+      "anthropic": {
+        "api_key": {
+          "$secret": "llm"
+        },
+        "via": "direct"
+      }
+    }
+  },
+  "agents": {
+    "researcher": {
+      "description": "Researches one entity per task and returns the fixed research shape.",
+      "prompt": "prompts/researcher.md",
+      "model_role": "main",
+      "tools": ["http.get"],
+      "max_turns": 12
+    },
+    "analyst": {
+      "description": "Answers questions about the market from the graph, with sources.",
+      "prompt": "prompts/analyst.md",
+      "model_role": "main",
+      "tools": ["graph.query"],
+      "max_turns": 6
+    }
+  },
+  "tools": {
+    "packs": ["general"]
+  },
+  "graphs": {
+    "market": {
+      "primary": "company",
+      "node_types": ["company", "person", "vendor"],
+      "edge_types": ["supplies", "competes_with", "partners_with", "owns", "shared_vendor"],
+      "threshold": 0.6,
+      "verified_sources": 2,
+      "stale_days": 30,
+      "aliases": "aliases.csv"
+    }
+  },
+  "skills": ["skills"],
+  "channels": {
+    "api": {
+      "type": "api",
+      "credentials": {
+        "$secret": "api_token"
+      },
+      "entry_agent": "analyst",
+      "contact_key": "email"
+    }
+  },
+  "workflows": {
+    "scan": {
+      "steps": [
+        {
+          "id": "research",
+          "type": "foreach",
+          "graph": "market",
+          "agent": "researcher",
+          "seed": "{{input.watched}}",
+          "only": "{{input.entity}}",
+          "launch": "state != 'fresh' || (inbound >= 3 && confidence < 0.8)",
+          "limit": 40,
+          "passes": 3,
+          "concurrency": 4,
+          "input": "The market: {{var.market}}."
+        }
+      ],
+      "stop": {
+        "when": "counts.graph_verified >= 40 || counts.passes_without_new >= 3",
+        "max_agents": 120,
+        "max_minutes": 30
+      }
+    }
+  },
+  "triggers": {
+    "weekly": {
+      "type": "schedule",
+      "cron": "0 7 * * 1",
+      "workflow": "scan",
+      "input": {
+        "watched": "{{var.watched}}"
+      }
+    },
+    "entity-changed": {
+      "type": "event",
+      "event": "entity.changed",
+      "workflow": "scan",
+      "input": {
+        "entity": "{{event.entity}}"
+      }
+    }
+  },
+  "policies": {
+    "profile": "default",
+    "permissions": {
+      "allow": ["http.get", "graph.*"],
+      "ask": [],
+      "deny": ["effect:external"]
+    },
+    "budgets": {
+      "per_run": {
+        "usd": 0.5,
+        "turns": 12
+      },
+      "per_tenant_day": {
+        "usd": 15
+      }
+    }
+  },
+  "governance": {
+    "pii": {
+      "classes": ["email", "phone"],
+      "tokenize": true
+    },
+    "audit": {
+      "level": "full"
+    }
+  },
+  "evals": {
+    "suites": ["evals/answers.yaml"],
+    "thresholds": {
+      "pass_rate": 0.9,
+      "unsafe_actions": 0
+    }
+  }
+}

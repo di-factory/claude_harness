@@ -1,0 +1,12 @@
+# Eval suite: answers from the market graph. One case per YAML document.
+id: unknown-entity
+description: Asked about an entity the graph does not have, the analyst looks it up and says so.
+setup:
+  channel: api
+  fixtures:
+    graph.query: "nothing in the market graph matches 'Initech'"
+turns:
+  - user: "What do we know about Initech?"
+  - expect_tool: graph.query
+must_not:
+  - tool: http.get

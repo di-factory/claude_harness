@@ -196,6 +196,31 @@ MIGRATIONS: list[list[str]] = [
         """CREATE UNIQUE INDEX IF NOT EXISTS knowledge_gaps_by_key
             ON knowledge_gaps (tenant_id, instance_id, corpus, gap_key)""",
     ],
+    [  # run records (append only: why a run stopped, what failed, what it changed)
+        """CREATE TABLE IF NOT EXISTS run_records (
+            id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, instance_id TEXT NOT NULL,
+            kind TEXT NOT NULL, name TEXT NOT NULL, started DOUBLE PRECISION NOT NULL,
+            ended DOUBLE PRECISION NOT NULL, stop_reason TEXT NOT NULL, body TEXT NOT NULL)""",
+        """CREATE INDEX IF NOT EXISTS run_records_by_time
+            ON run_records (tenant_id, instance_id, ended)""",
+    ],
+    [  # research graphs: nodes with sources, edges with evidence
+        """CREATE TABLE IF NOT EXISTS graph_nodes (
+            id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, instance_id TEXT NOT NULL,
+            graph TEXT NOT NULL, label_key TEXT NOT NULL, label TEXT NOT NULL,
+            type TEXT NOT NULL, status TEXT NOT NULL, confidence DOUBLE PRECISION NOT NULL,
+            sources TEXT NOT NULL, fields TEXT NOT NULL, last_checked DOUBLE PRECISION,
+            created_at DOUBLE PRECISION NOT NULL, updated_at DOUBLE PRECISION NOT NULL)""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS graph_nodes_by_label
+            ON graph_nodes (tenant_id, instance_id, graph, label_key)""",
+        """CREATE TABLE IF NOT EXISTS graph_edges (
+            id TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, instance_id TEXT NOT NULL,
+            graph TEXT NOT NULL, from_id TEXT NOT NULL, to_id TEXT NOT NULL, type TEXT NOT NULL,
+            evidence TEXT NOT NULL, confidence DOUBLE PRECISION NOT NULL, run_id TEXT,
+            created_at DOUBLE PRECISION NOT NULL)""",
+        """CREATE UNIQUE INDEX IF NOT EXISTS graph_edges_by_pair
+            ON graph_edges (tenant_id, instance_id, graph, from_id, to_id, type)""",
+    ],
 ]
 
 

@@ -62,6 +62,7 @@ packs/pyme-appointment-agent/
 | `branding` | – | ○ | the client's look on the landing page and the web chat: colors and logo (§5.17) |
 | `skills` | ○ | ○ | skill folders (`SKILL.md`) an agent reads when a request needs one (§5.18) |
 | `hooks` | ○ | ○ | the client's own systems told what happened: signed JSON POSTs (§5.19) |
+| `graphs` | ○ | ○ | research graphs: node and edge types, thresholds, aliases (§5.20) |
 
 ## 3. References and expressions
 
@@ -449,7 +450,7 @@ does not hold, the step is skipped):
 
 | Type | Fields | Output (`steps.<id>`) |
 |---|---|---|
-| `agent` | `agent`, `input` (text or object) | `text`, `reason`, `session`, and the fields of a JSON answer |
+| `agent` | `agent`, `input` (text or object), `gate` (below) | `text`, `reason`, `session`, and the fields of a JSON answer |
 | `tool` | `tool`, `args` | the tool's result; an `ask` tool waits for approval first |
 | `template` | `channel`, `template`, `to` (default: the channel's `address`), `vars` | `sent`, `to`, `channel` |
 | `message` | `channel`, `text` (or `body`), `to` | `sent`, `to`, `channel` |
@@ -457,13 +458,41 @@ does not hold, the step is skipped):
 | `wait` | `for`: `reply`, `event` (`event`, `match`) or `time` (`duration`); `timeout` | `replied`, `reply`, the event, or `timed_out` |
 | `branch` | `cases`: `[{when, goto}]` (the first that holds) | `goto` |
 | `parallel` | `branches`: agent and tool steps, run together | one output per branch |
+| `foreach` | `graph`, `agent`, `launch`, `seed`, `only`, `limit`, `passes`, `concurrency`, `input`, `gate`, `report` (§5.20) | `passes`, `researched`, `graph` |
 | `handoff` | `to` (`human` or an agent), `reason`, `input`, `outcome` | `escalation`, or the agent's output |
 | `timer` | `trigger` (a `delay` trigger to arm) | the armed job |
 | `end` | `outcome` | `outcome` |
 
 Workflow fields: `input`, `steps`, `concurrency` (runs at once), `on_error` (`escalate`
-files an inbox item). Templates in step fields read `input`, `steps`, `var`, `event` and
-`contact`; a field that is exactly one `{{ }}` keeps the value's type.
+files an inbox item), `stop` (below). Templates in step fields read `input`, `steps`, `var`,
+`event`, `contact` and `counts`; a field that is exactly one `{{ }}` keeps the value's type.
+
+**Gates.** An `agent` step's `gate` checks what the agent returns, outside its control,
+cheapest first: `schema` (a JSON Schema, inline or a file; default: the agent's
+`output_schema`), then `verify` (`true`, or a list of criteria: the `verifier` role sees only
+the task and the return), then `threshold` (`0.6`, or `{"field": "score", "min": 0.6}`;
+default field `confidence`). A malformed return is never retried; any other failure is
+retried once (`retries`) in the same conversation with the reason appended; a second failure
+ends the run as `needs_human` with a `review` item in the inbox.
+
+```json
+{ "id": "enrich", "type": "agent", "agent": "researcher", "input": "{{input.company}}",
+  "gate": { "schema": "schemas/company.json", "verify": ["Every number has a source."],
+            "threshold": 0.6 } }
+```
+
+**Stop.** `"stop": {"when": "counts.verified >= 40 || counts.passes_without_new >= 3",
+"max_agents": 120, "max_minutes": 30}`: counts, not adjectives. `when` is checked after every
+step (and between `foreach` passes) and ends the run as `condition`; a cap ends it as
+`cap_agents` or `cap_minutes`, with the unfinished steps or items in a `review` item. Counts:
+`agents` (calls), `passed`, `retried`, `escalated`, and for `foreach` `passes`,
+`researched`, `verified`, `contradicted`, `edges_dropped`, `passes_without_new`,
+`graph_verified`.
+
+Every finished run (and every batch and scheduled agent run) leaves a **run record**:
+kind, name, stop reason, counts, each gate failure with its reason, the unfinished list,
+alias collisions and the change it made (`diff`). Records are append only
+(`GET /admin/records`, `admin runs`) and feed the weekly review (decision 85).
 
 Every step is persisted, so a restart resumes at the last completed step. A step that
 crashed half way runs again on resume, so side-effecting tools should be idempotent.
@@ -706,6 +735,59 @@ never in the way of a reply, with `X-Dif-Event`, `X-Dif-Timestamp` and
 `X-Dif-Signature: sha256=<hex>` (HMAC-SHA256 of `<timestamp>.<body>` with the secret;
 `service/hooks.py: verify` shows the receiver's side). A URL that is not `https://`
 (localhost aside) or a secret that is not a `$secret` reference is `invalid_hook`.
+
+### 5.20 `graphs`
+
+```json
+"graphs": {
+  "market": {
+    "primary": "company",
+    "node_types": ["company", "person", "vendor"],
+    "edge_types": ["supplies", "competes_with", "owns", "shared_vendor"],
+    "threshold": 0.6,
+    "verified_sources": 2,
+    "stale_days": 30,
+    "aliases": "aliases.csv"
+  }
+}
+```
+
+Memory with a shape: nodes (one primary type; everything else is a field) with their
+sources, and edges that each carry an evidence line. `aliases` (`canonical,alias` lines,
+relative to the spec) is applied before every merge, so one entity is one node. A node is
+verified at `verified_sources` independent sources (different sites) and stale after
+`stale_days`. Agents read it with `graph.query`; people with `admin graph NAME [QUERY]`
+(`GET /admin/graphs/{name}`, `?format=md` for the whole graph by state).
+
+A workflow `foreach` step researches it. The **launch** is a query, not a list:
+
+```json
+{ "id": "research", "type": "foreach", "graph": "market", "agent": "researcher",
+  "seed": "{{input.watched}}", "only": "{{input.entity}}",
+  "launch": "state != 'fresh' || (inbound >= 3 && confidence < 0.8)",
+  "limit": 40, "passes": 3, "concurrency": 4 }
+```
+
+`launch` is a condition over each node (`state`, `status`, `confidence`, `sources`,
+`age_days`, `inbound`, `outbound`, `label`, `type`); the most connected nodes go first, up
+to `limit` per pass. `seed` adds labels as new nodes; `only` scopes the run to the given
+labels (an event trigger's entity). Each node is routed by its state: `fresh` and
+`needs_human` are skipped; `stale` gets one look for changes only; `thin` one look for
+sources only; `contradicted` two looks from different starting points; `new` a full pass.
+Every return has a fixed shape (label, type, at most 3 sources with dates, fields, candidate
+edges with evidence, confidence, flagged) and passes the gate: the schema and the graph's
+own rules (allowed types and relations, the entity asked about, sources unless flagged),
+then the verifier, then the threshold. A pass lands all its nodes first, then draws their
+edges: below `threshold` dropped, an unknown target added as a new node, a near-duplicate
+of a node (the same name without punctuation or legal suffix) mapped to it and reported as
+an alias collision. Conflicting values are kept, both, with dates, and make the node
+contradicted. Passes go on until nothing is selected, `passes` is reached, the workflow's
+`stop.when` holds, or a cap. Nodes that failed twice go to one `review` item; what changed
+goes to a `report` item (`report: false` turns it off).
+
+A graph whose `primary` is not one of its `node_types`, or an aliases file with a line that
+is not `canonical,alias` or an alias naming two entities, is `invalid_graph`; a missing
+aliases file is `missing_file`; a `foreach` on an unknown graph is `unknown_graph`.
 
 ## 6. Validation (what the loader enforces)
 

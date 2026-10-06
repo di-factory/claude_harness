@@ -1,4 +1,4 @@
-"""The six example packs and the clinic instance are the spec's living fixtures."""
+"""The seven example packs and the clinic instance are the spec's living fixtures."""
 
 from __future__ import annotations
 
