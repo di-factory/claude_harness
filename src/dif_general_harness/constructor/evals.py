@@ -236,7 +236,7 @@ class _Case:
     async def open(self) -> None:
         inst, spec = self.inst, self.inst.spec
         for name, result in (self.setup.get("fixtures") or {}).items():
-            self.inst.tools.register(_fixture(str(name), result, inst.tools.get(str(name))))
+            self.inst.tools.replace(_fixture(str(name), result, inst.tools.get(str(name))))
         store = inst.store
         original = store.append
 

@@ -828,6 +828,9 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
         help="set: the new FAQ (Markdown) or - for standard input; done/dismiss: a gap's id",
     )  # fmt: skip
     a_faq.add_argument("--all", action="store_true", help="gaps: also the answered/dismissed")
+    a_faq.add_argument(
+        "--force", action="store_true", help="set: apply even when real replies got worse"
+    )
     a_faq.add_argument("--corpus", help="default: the instance's first knowledge corpus")
     a_faq.add_argument("--uri", help="which document, when the FAQ has several")
 

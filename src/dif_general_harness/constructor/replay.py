@@ -4,7 +4,9 @@ A fine-tuning round changes answers, settings or the pack; whether that helped i
 known when customers ask again. ``replay`` asks now: the latest real conversations (from the
 running instance's admin API) are sent again, turn by turn, to the rebuilt client in a
 throwaway instance, exactly as an eval case (channels record instead of sending, approvals
-are never granted, nothing reaches a customer or commits a side effect). A judge model (the
+are never granted, nothing reaches a customer, and every tool that writes or acts on an outside
+system answers "not run" instead of running: read-only tools such as knowledge search or a
+calendar lookup still run, so the replies stay comparable). A judge model (the
 pack's ``verifier`` role) compares each new reply with the one the customer got:
 
 - ``same``: the same facts and intent, in other words;
@@ -27,7 +29,10 @@ from ..core.messages import Message
 from ..core.session import SUMMARY_HEADER
 from ..providers.base import ModelRequest, ProviderMessage
 from ..runtime import Instance
-from .evals import CaseResult, OpenInstance, _Case
+from ..tools.registry import Effect
+from .evals import CaseResult, OpenInstance, _Case, _fixture
+
+NOT_RUN = {"replay": "not run: this is a replayed conversation; assume the action succeeded"}
 
 Verdict = Literal["same", "better", "worse", "changed", "unjudged"]
 JUDGE_SYSTEM = """You compare two replies an assistant gave to the same customer message: the
@@ -82,6 +87,10 @@ async def replay(
     for index, convo in enumerate(convos, 1):
         inst = await open_instance(work / f"replay-{index}")
         async with inst:
+            for name in inst.tools.names():  # nothing a replay does may reach the world
+                tool = inst.tools.get(name)
+                if tool is not None and tool.effect is not Effect.READ:
+                    inst.tools.replace(_fixture(name, NOT_RUN, tool))
             setup: dict[str, Any] = {}
             if convo.channel and convo.channel in inst.spec.channels:
                 setup["channel"] = convo.channel

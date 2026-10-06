@@ -311,8 +311,12 @@ All commands run from this folder. They talk to the assistant on this server.
 2. Copy it again to `borradores/faq.md` and change only what {self.owner} asked, with their
    words. Keep the `## ` headings: each one is a question customers ask.
 3. Show {self.owner} what changes (before → after) and get their OK.
-4. `./negocio faq set borradores/faq.md`. The assistant answers with it from the next message,
-   and the landing page shows it.
+4. `./negocio faq set borradores/faq.md`. Before it goes live, the latest real conversations
+   are answered again with the new FAQ; if a reply gets worse, it is **not applied** and you
+   see the customer's message with the reply before and after. Fix the FAQ and try again;
+   `--force` applies it anyway, only with {self.owner}'s explicit OK after seeing them.
+   Once applied, the assistant answers with it from the next message, and the landing page
+   shows it.
 5. Write the change in `solicitudes/faq-cambios.md` (date and what) so Di-Factory carries it
    into the next release of the solution; their next release replaces the live FAQ.
 
@@ -492,7 +496,10 @@ exec uv run --quiet --project "{self.harness}" dif-general-harness admin "$@"
                 "1. `./negocio faq show > borradores/faq-$(date +%F).md` (a copy first)."
                 "\n2. Copy it to `borradores/faq.md`; change only what the owner asked,"
                 " with their words; keep the `## ` headings.\n3. Show before → after and"
-                " get an explicit OK.\n4. `./negocio faq set borradores/faq.md`.\n5. Add"
+                " get an explicit OK.\n4. `./negocio faq set borradores/faq.md`. If it says"
+                " **Not applied** (a reply to a real customer got worse), show the owner"
+                " the before and after, fix the FAQ and try again; use `--force` only with"
+                " the owner's explicit OK.\n5. Add"
                 " a line to `solicitudes/faq-cambios.md` (date, what) for Di-Factory."
                 "\nNever invent prices, policies or promises.",
             ),

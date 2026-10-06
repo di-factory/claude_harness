@@ -102,9 +102,84 @@ def test_the_setup_asks_before_putting_a_worse_version_online(tmp_path: Path) ->
                      run=lambda argv: calls.append(argv) or code,
                      public_url="https://x.sslip.io")  # fmt: skip
 
-    assert setup_with(1, ["", "n"]).compare_with_live(result) is False  # worse: stays off
-    assert calls[-1][:2] == ["replay", str(tmp_path / "x.json")]
-    assert setup_with(1, ["", "y"]).compare_with_live(result) is True  # the operator decides
-    assert setup_with(0, [""]).compare_with_live(result) is True
-    assert setup_with(2, [""]).compare_with_live(result) is True  # cannot compare: goes on
-    assert setup_with(0, ["n"]).compare_with_live(result) is True and len(calls) == 4
+    assert setup_with(1, ["n"]).compare_with_live(result) is False  # worse: stays off
+    assert calls[-1][:2] == ["replay", str(tmp_path / "x.json")]  # always, never asked
+    assert setup_with(1, ["y"]).compare_with_live(result) is True  # the operator decides
+    assert setup_with(0, []).compare_with_live(result) is True  # nothing worse: no question
+    assert setup_with(2, []).compare_with_live(result) is True  # cannot compare: goes on
+    assert len(calls) == 4
+
+
+async def test_an_owner_faq_edit_is_checked_against_real_conversations(tmp_path: Path) -> None:
+    import pytest
+
+    from dif_general_harness.service.admin_client import Admin, AdminError
+    from tests.test_admin_cli import FAQ, _faq_spec
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "faq.md").write_text(FAQ)
+
+    def spec(s: dict[str, Any]) -> None:
+        _faq_spec(docs)(s)
+        _verifier(s)
+
+    def verdict(word: str) -> Message:
+        return Message.assistant(f'{{"verdict": "{word}", "why": "Price {word}."}}')
+
+    script = [
+        Message.assistant("El precio promedio es 2,000 MXN."),  # the real conversation
+        Message.assistant("No tengo precios."), verdict("worse"),  # check 1: blocked
+        Message.assistant("El precio promedio es 1,800 MXN."), verdict("better"),  # check 2
+    ]  # fmt: skip
+    env = Env(tmp_path, script, edit=spec)
+    inst, _, client = await env.open()
+    async with inst, client:
+        await _ask(client, "ana@example.com", "¿Cuánto cuesta?")
+        client.headers.update(ADMIN_H)
+        admin = Admin(client)
+        with pytest.raises(AdminError) as refused:
+            await admin.faq_set(FAQ.replace("## Prices\nAverage price: 2,000 MXN.\n", ""))
+        message = str(refused.value)
+        assert "Not applied: with this FAQ, 1 reply(ies)" in message
+        assert "before: El precio promedio es 2,000 MXN." in message and "--force" in message
+        assert "2,000 MXN" in await admin.faq_show()  # the live FAQ did not change
+
+        saved = await admin.faq_set(FAQ.replace("2,000 MXN", "1,800 MXN"))
+        assert saved.startswith("Checked against recent real conversations: 1 customer")
+        assert "1 better" in saved and "1,800 MXN" in await admin.faq_show()
+        assert len(await inst.audit.records(inst.scope, action="knowledge_check")) == 2
+        assert len(env.sent) == 0  # the checks reached no customer
+
+
+async def test_a_replay_never_acts_on_the_world(tmp_path: Path) -> None:
+    from dif_general_harness.constructor.replay import Replayed, Turn, replay
+    from dif_general_harness.tools.packs import NoteStore
+    from tests.support import calls
+
+    def allow_notes(spec: dict[str, Any]) -> None:
+        _verifier(spec)
+        spec.setdefault("policies", {})["permissions"] = {"allow": ["notes.*"]}
+
+    script = [calls(("w1", "notes.write", {"key": "cita", "text": "lunes"})),
+              Message.assistant("Anotado."),
+              Message.assistant('{"verdict": "same", "why": "Same."}')]  # fmt: skip
+    env = Env(tmp_path, script, edit=allow_notes)
+    inst, _, client = await env.open()
+    async with inst, client:
+        pass
+    convo = Replayed("s1", "api", [Turn("anota lunes", "Anotado.")])
+    states: list[Path] = []
+
+    async def open_copy(state: Path) -> Any:
+        states.append(state)
+        from dif_general_harness.runtime import Instance
+
+        options = __import__("dataclasses").replace(inst.options, state_root=state)
+        return await Instance.open(inst.resolved, options)
+
+    [done] = await replay(open_copy, [convo], tmp_path / "work")
+    assert done.turns[0].after == "Anotado." and not done.error
+    result = env.provider.requests[1].messages[-1].content[0]
+    assert "not run: this is a replayed conversation" in str(result.content)
+    assert NoteStore(states[0], inst.scope).get("cita") is None  # nothing was written

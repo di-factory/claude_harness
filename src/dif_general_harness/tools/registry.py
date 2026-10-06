@@ -106,6 +106,11 @@ class ToolRegistry:
             raise ValueError(f"tool {t.name!r} already registered")
         self._tools[t.name] = t
 
+    def replace(self, t: Tool) -> None:
+        """Put ``t`` in place of the tool of that name (evals and replays: a canned result
+        instead of the real call); registers it when there is none."""
+        self._tools[t.name] = t
+
     def get(self, name: str) -> Tool | None:
         return self._tools.get(name)
 

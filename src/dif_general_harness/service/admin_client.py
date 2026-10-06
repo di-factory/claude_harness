@@ -8,7 +8,9 @@ the instance's admin API, so nobody needs curl, tokens or JSON:
     show SESSION        a conversation, message by message
     reply SESSION TEXT  answer as a person; the customer gets it on their channel
     faq show            the FAQ exactly as the agent knows it
-    faq set FILE|-      replace it (the owner's edit stands until Di-Factory ships a new one)
+    faq set FILE|-      replace it (the owner's edit stands until Di-Factory ships a new one);
+                        first the latest real conversations are answered again with it, and
+                        it is not applied when a reply gets worse (--force applies anyway)
     faq gaps            questions customers asked that the FAQ did not answer, most asked first
     faq done|dismiss ID mark one answered (once the FAQ covers it) or not for the assistant
     costs               model spend at list prices, by day
@@ -119,7 +121,9 @@ class Admin:
             parts.append(str(full["text"]).rstrip())
         return "\n\n".join(parts) if parts else f"The {corpus} FAQ is empty."
 
-    async def faq_set(self, text: str, corpus: str | None = None, uri: str | None = None) -> str:
+    async def faq_set(
+        self, text: str, corpus: str | None = None, uri: str | None = None, force: bool = False
+    ) -> str:
         if not text.strip():
             raise AdminError("the new FAQ is empty; nothing was changed")
         corpus, docs = await self._faq_docs(corpus)
@@ -128,15 +132,40 @@ class Admin:
                 raise AdminError(f"the {corpus} FAQ has {len(docs)} documents; say which with"
                                  " --uri (see: admin faq show)")  # fmt: skip
             uri = str(docs[0]["uri"])
+        checked = "" if force else await self._check(corpus, uri, text)
         result = await self._send(
             "PUT", f"/admin/knowledge/{corpus}/documents",
             {"uri": uri, "text": text, "owner": True},
         )  # fmt: skip
         if result.get("result") == "unchanged":
             return "No change: the FAQ already says exactly that."
-        return ("Saved. The assistant answers with it from the next message. It stays across"
-                " restarts until Di-Factory ships a new FAQ release; tell them about it so the"
-                " client's answers file is updated too.")  # fmt: skip
+        return (checked + "Saved. The assistant answers with it from the next message. It"
+                " stays across restarts until Di-Factory ships a new FAQ release; tell them"
+                " about it so the client's answers file is updated too.")  # fmt: skip
+
+    async def _check(self, corpus: str, uri: str, text: str) -> str:
+        """The latest real conversations answered again with the new FAQ; an AdminError
+        (nothing applied) when a reply gets worse."""
+        try:
+            r = await self.http.post(f"/admin/knowledge/{corpus}/check",
+                                     json={"uri": uri, "text": text}, timeout=600.0)  # fmt: skip
+        except httpx2.TimeoutException:
+            return "(Not checked against real conversations: the check took too long.)\n"
+        if r.status_code in (404, 501):  # an older instance, or nothing to judge with
+            return "(Not checked against real conversations on this instance.)\n"
+        data = self._json(r)
+        worse = list(data.get("worse") or [])
+        if not worse:
+            return f"Checked against recent real conversations: {data.get('summary')}.\n"
+        lines = [f"Not applied: with this FAQ, {len(worse)} reply(ies) to real customer"
+                 " messages got worse:"]  # fmt: skip
+        for turn in worse[:5]:
+            lines += [f"  - Customer: {_short(turn.get('customer'))}",
+                      f"    before: {_short(turn.get('before'))}",
+                      f"    after:  {_short(turn.get('after'))}",
+                      f"    why:    {_short(turn.get('why'))}"]  # fmt: skip
+        lines.append("Fix the FAQ and try again, or apply it anyway: admin faq set FILE --force")
+        raise AdminError("\n".join(lines))
 
     async def faq_gaps(self, everything: bool = False) -> str:
         gaps = await self._get("/admin/knowledge/gaps", status="all" if everything else "open")
@@ -168,6 +197,11 @@ class Admin:
                          f" ({row.get('calls', 0)} calls)")  # fmt: skip
         lines.append(f"Total: ${float((data.get('total') or {}).get('usd') or 0):.4f}")
         return "\n".join(lines)
+
+
+def _short(value: Any, limit: int = 160) -> str:
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def _read(target: str) -> str:
@@ -213,5 +247,5 @@ async def run(admin: Admin, args: Any) -> str:
             return await admin.faq_mark(target, "answered" if action == "done" else "dismissed")
         source = getattr(args, "file", None)
         text = source.read() if source is not None else _read(target)
-        return await admin.faq_set(text, args.corpus, args.uri)
+        return await admin.faq_set(text, args.corpus, args.uri, bool(getattr(args, "force", False)))
     raise AdminError(f"unknown command {cmd!r}")
