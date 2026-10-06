@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import time
+from typing import Any
 
 from ..core.events import EVENT_ADAPTER, Event, SessionStarted, TextDelta
 from ..core.scope import Scope
@@ -73,6 +74,15 @@ class SqlSessionStore:
             (scope.tenant_id, scope.instance_id),
         )
         return [r["session_id"] for r in rows]
+
+    async def recent(self, scope: Scope, limit: int = 20) -> list[dict[str, Any]]:
+        """The latest conversations, newest first: id, channel and when it was last active."""
+        rows = await self.db.fetchall(
+            "SELECT session_id, channel, last_active FROM sessions"
+            " WHERE tenant_id = ? AND instance_id = ? ORDER BY last_active DESC LIMIT ?",
+            (scope.tenant_id, scope.instance_id, limit),
+        )
+        return [dict(r) for r in rows]
 
     # --- conversations per contact ---------------------------------------------------
 

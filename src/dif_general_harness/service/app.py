@@ -262,6 +262,27 @@ def create_app(
             raise HTTPException(409, str(exc)) from None
         return {"id": item.id, "status": item.status}
 
+    @app.get("/admin/sessions", dependencies=[Depends(admin)])
+    async def sessions(limit: int = 20) -> list[dict[str, Any]]:
+        """The latest real conversations, newest first, with their texts (what ``replay``
+        runs again on a rebuilt client)."""
+        store = current().store
+        if not hasattr(store, "recent"):
+            raise HTTPException(501, "this store cannot list recent conversations")
+        reveal = current().pii.policy.classes
+        out = []
+        for row in await store.recent(scope, max(1, min(limit, 200))):
+            loaded = await store.load(scope, row["session_id"])
+            messages = [
+                {"role": str(m.role),
+                 "text": await current().pii.detokenize(m.text(), reveal, mask=False)}
+                for m in loaded.messages if m.text()
+            ]  # fmt: skip
+            if any(m["role"] == "user" for m in messages):
+                out.append({"id": row["session_id"], "channel": row["channel"],
+                            "last_active": row["last_active"], "messages": messages})  # fmt: skip
+        return out
+
     @app.get("/admin/sessions/{session_id}", dependencies=[Depends(admin)])
     async def session(session_id: str) -> dict[str, Any]:
         try:
