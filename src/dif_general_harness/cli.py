@@ -82,6 +82,8 @@ def _add_run(sub: argparse._SubParsersAction[argparse.ArgumentParser], name: str
         "run": "run an instance's agent headless",
         "console": "chat with an agent (TUI)",
         "eval": "run the instance's eval suites",
+        "replay": "run the latest real conversations again on this (rebuilt) client and"
+        " compare the replies",
         "serve": "run the headless service (channels, triggers, inbox, admin API)",
     }
     cmd = sub.add_parser(name, help=helps[name])
@@ -92,6 +94,13 @@ def _add_run(sub: argparse._SubParsersAction[argparse.ArgumentParser], name: str
         cmd.add_argument("-m", "--message", help="one user message; default: read stdin lines")
     if name == "eval":
         cmd.add_argument("--suite", type=Path, action="append", help="suite file (repeatable)")
+    if name == "replay":
+        cmd.add_argument("--limit", type=int, default=20, help="conversations (default 20)")
+        cmd.add_argument("--url", help="the running instance (default: DIF_ADMIN_URL or this"
+                         " machine's)")  # fmt: skip
+        cmd.add_argument("--token-file", type=Path, help="default: the admin_token secret")
+        cmd.add_argument("--out", type=Path, help="the report (default: next to the instance)")
+        cmd.add_argument("--no-judge", action="store_true", help="only show both replies")
     if name == "serve":
         cmd.add_argument(
             "--database-url",
@@ -686,6 +695,7 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
     _add_run(sub, "run")
     _add_run(sub, "console")
     _add_run(sub, "eval")
+    _add_run(sub, "replay")
     _add_run(sub, "serve")
     for name, text in (
         ("adjust", "constructor: change an instance's values (validated, diffed)"),
@@ -915,6 +925,8 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
         return asyncio.run(_console(args, resolved, provider))
     if args.group == "eval":
         return asyncio.run(_eval(args, resolved, provider))
+    if args.group == "replay":
+        return asyncio.run(replay_command(args, resolved, provider))
     if args.group == "serve":
         return asyncio.run(_serve(args, resolved, provider))
     if args.group == "costs":
@@ -992,6 +1004,65 @@ def _online_url() -> str | None:
 
 def _admin(args: argparse.Namespace) -> int:
     return asyncio.run(admin_command(args))
+
+
+async def replay_command(
+    args: argparse.Namespace, resolved: ResolvedSpec, provider: ModelProvider | None,
+    http: Any = None,
+) -> int:  # fmt: skip
+    """``replay``: the latest real conversations of the running instance, again on this
+    instance spec, each in a throwaway instance; exit 1 when a reply got worse."""
+    import httpx2
+
+    from .constructor.replay import conversations, counts, replay, report, summary
+    from .service.admin_client import Admin, AdminError, admin_client
+
+    try:
+        if http is not None:
+            rows = await Admin(http)._get("/admin/sessions", limit=args.limit)
+        else:
+            token = (args.token_file.read_text(encoding="utf-8").strip() if args.token_file
+                     else local_backend().get("admin_token"))  # fmt: skip
+            async with admin_client(args.url, token) as client:
+                rows = await Admin(client)._get("/admin/sessions", limit=args.limit)
+    except AdminError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except (OSError, httpx2.TransportError) as exc:
+        print(f"error: cannot reach the running instance ({exc}); replay compares against"
+              " its real conversations", file=sys.stderr)  # fmt: skip
+        return 2
+    convos = conversations(list(rows))
+    if not convos:
+        print("No real conversations yet: nothing to replay.")
+        return 0
+    template = _options(args, provider, RecordingApprover())
+    if template is None:
+        return 2
+
+    async def open_instance(state: Path) -> Instance:
+        options = dataclasses.replace(
+            template, state_root=state, database_url=None, approver=RecordingApprover()
+        )
+        return await Instance.open(resolved, options)
+
+    print(f"Replaying {len(convos)} conversation(s) on this version (a model call per"
+          " message, and one to compare)...")  # fmt: skip
+    with tempfile.TemporaryDirectory(prefix="dif-replay-") as work:
+        try:
+            done = await replay(open_instance, convos, Path(work), judge=not args.no_judge)
+        except (InstanceError, RoutingError) as exc:
+            print(f"cannot start: {exc}", file=sys.stderr)
+            return 2
+    out = args.out or args.path.with_suffix(".replay.md")
+    out.write_text(report(done, resolved.spec.solution.id), encoding="utf-8")
+    for convo in done:
+        for turn in convo.turns:
+            if turn.verdict == "worse":
+                print(f"WORSE  {turn.customer[:80]!r}: {turn.why}")
+    print(summary(done))
+    print(f"Every reply, before and after: {out}")
+    return 1 if counts(done)["worse"] else 0
 
 
 async def admin_command(args: argparse.Namespace, client: Any = None) -> int:

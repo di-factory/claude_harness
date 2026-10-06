@@ -55,6 +55,16 @@ answer is kept in `clients/<id>.answers.yaml`, so a correction is "edit the answ
 updates since; hand edits to its FAQ files are replaced), signs it again and redeploys. A
 rebuild that no longer validates changes nothing.
 
+Before a rebuilt client replaces the one online, the setup offers to **replay** its latest
+real conversations on the new version (Enter = yes; a model call per message, a few cents):
+each customer message is sent again to the rebuild in a throwaway instance (nothing reaches a
+customer or commits anything), and a judge model compares each new reply with the one the
+customer got: same, better, worse or changed. The report, every reply before and after with
+the worse ones first, is `clients/<id>.replay.md`; when a reply got worse the setup asks
+before putting it online. By hand: `uv run dif-general-harness replay
+clients/<id>.json --packs docs/spec/examples [--limit 20]` on the server (it reads the
+running instance's conversations with the admin token).
+
 ## The step-by-step way
 
 The same path, one piece at a time, using the example dental clinic as a stand-in client.

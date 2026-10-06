@@ -22,6 +22,7 @@ uv run dif-general-harness build --request "..." [--answers FILE ...] --packs do
 uv run dif-general-harness secrets set NAME | secrets check INSTANCE.json   # ~/.dif/secrets
 uv run dif-general-harness run|console|serve INSTANCE.json --packs DIR
 uv run dif-general-harness eval INSTANCE.json --packs DIR   # fresh instance per case; drift
+uv run dif-general-harness replay INSTANCE.json --packs DIR # real conversations, again, judged
 uv run dif-general-harness keys new jag | approve ... | deploy ... --target docker|aws
 uv run dif-general-harness adjust|upgrade INSTANCE.json ... --dry-run     # constructor v3
 uv run dif-general-harness costs INSTANCE.json --by vendor,model         # spend + quality
@@ -114,7 +115,8 @@ the client's look from any brand material plus missing-key explanations (68), an
 handover to a client's own Claude with the `admin` commands and owner FAQ edits (69); then
 untrusted-content fences, cheap run caps and the FAQ-gaps list (70–72), and compaction when
 the model refuses a history as too long (73), and the business's published contact details
-shown to its customers (74).
+shown to its customers (74), and real conversations replayed on every rebuild before it goes
+online (75).
 Next: GCP and Azure profiles.
 Known gaps: streaming (speech-to-speech) voice, knowledge connectors beyond files, S3,
 Drive and web pages (SharePoint, Notion... push through the admin API), pgvector for very

@@ -978,15 +978,37 @@ class Setup:
             _say("   Without the writer model the pages are kept as they are.")
         return text
 
+    def compare_with_live(self, result: BuildResult) -> bool:
+        """A rebuilt client that is already online: run its latest real conversations on the
+        new version first, and say what changed. False: do not put it online."""
+        if self.run is None or not self.public_url:
+            return True
+        if not _yes(self.ask("Replay the latest real conversations on the rebuilt client"
+                             " before putting it online (a few cents)? [Y/n] "),
+                    default=True):  # fmt: skip
+            return True
+        packs = [a for p in self.packs for a in ("--packs", str(p))]
+        code = self.run(["replay", str(result.spec_path), *packs, "--url",
+                         "http://127.0.0.1:8080"])  # fmt: skip
+        if code == 2:
+            _say("   Could not replay (see above); going on without the comparison.")
+            return True
+        if code == 0:
+            return True
+        return _yes(self.ask("Some replies got worse (see the report). Put it online anyway?"
+                             " [y/N] "))  # fmt: skip
+
     def run_all(self) -> int:
         _say("Di-Factory harness setup. Ctrl+C stops at any time; nothing is half-written.")
         self.model_key()
         reused = self.existing()
         if reused is not None:
-            reused = self.read_sites(self.refresh(reused))
-            if not self.try_it(reused):
+            rebuilt = self.read_sites(self.refresh(reused))
+            if not self.try_it(rebuilt):
                 return 1
-            self.go_online(reused)
+            if rebuilt is not reused and not self.compare_with_live(rebuilt):
+                return 1
+            self.go_online(rebuilt)
             return 0
         pack_ids = self.choose_pack()
         if pack_ids is None:
