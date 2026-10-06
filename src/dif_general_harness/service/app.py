@@ -26,6 +26,7 @@ import dataclasses
 import hmac
 import json
 from collections.abc import AsyncIterator, Callable, Coroutine, Sequence
+from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -262,26 +263,30 @@ def create_app(
             raise HTTPException(409, str(exc)) from None
         return {"id": item.id, "status": item.status}
 
-    @app.get("/admin/sessions", dependencies=[Depends(admin)])
-    async def sessions(limit: int = 20) -> list[dict[str, Any]]:
-        """The latest real conversations, newest first, with their texts (what ``replay``
-        runs again on a rebuilt client)."""
-        store = current().store
-        if not hasattr(store, "recent"):
+    async def recent_rows(limit: int) -> list[dict[str, Any]]:
+        """The latest conversations with their texts (PII shown, as for one session)."""
+        inst = current()
+        if not hasattr(inst.store, "recent"):
             raise HTTPException(501, "this store cannot list recent conversations")
-        reveal = current().pii.policy.classes
+        reveal = inst.pii.policy.classes
         out = []
-        for row in await store.recent(scope, max(1, min(limit, 200))):
-            loaded = await store.load(scope, row["session_id"])
+        for row in await inst.store.recent(scope, limit):
+            loaded = await inst.store.load(scope, row["session_id"])
             messages = [
                 {"role": str(m.role),
-                 "text": await current().pii.detokenize(m.text(), reveal, mask=False)}
+                 "text": await inst.pii.detokenize(m.text(), reveal, mask=False)}
                 for m in loaded.messages if m.text()
             ]  # fmt: skip
             if any(m["role"] == "user" for m in messages):
                 out.append({"id": row["session_id"], "channel": row["channel"],
                             "last_active": row["last_active"], "messages": messages})  # fmt: skip
         return out
+
+    @app.get("/admin/sessions", dependencies=[Depends(admin)])
+    async def sessions(limit: int = 20) -> list[dict[str, Any]]:
+        """The latest real conversations, newest first, with their texts (what ``replay``
+        runs again on a rebuilt client)."""
+        return await recent_rows(max(1, min(limit, 200)))
 
     @app.get("/admin/sessions/{session_id}", dependencies=[Depends(admin)])
     async def session(session_id: str) -> dict[str, Any]:
@@ -565,6 +570,45 @@ def create_app(
             scope, "admin", f"knowledge_{outcome}", f"knowledge/{corpus}", {"uri": uri}
         )
         return {"id": doc_id, "result": outcome}
+
+    @app.post("/admin/knowledge/{corpus}/check", dependencies=[Depends(admin)])
+    async def knowledge_check(corpus: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Before an owner's edit goes live: the latest real conversations, again, on a
+        throwaway copy of this instance with the proposed text (``{"uri", "text",
+        "limit"?}``), each reply judged against the one the customer got."""
+        import tempfile
+
+        from ..constructor.evals import RecordingApprover
+        from ..constructor.replay import conversations, counts, replay, summary
+
+        inst = current()
+        corpus_of(corpus)
+        uri, text = body.get("uri"), body.get("text")
+        if not isinstance(uri, str) or not isinstance(text, str) or not text.strip():
+            raise HTTPException(400, "a check needs the document's uri and its new text")
+        if "verifier" not in (inst.spec.models.roles if inst.spec.models else {}):
+            raise HTTPException(501, "this solution has no verifier model role to judge with")
+        limit = max(1, min(int(body.get("limit") or 10), 50))
+        rows = await recent_rows(limit)
+        convos = conversations(rows)
+
+        async def open_copy(state: Path) -> Instance:
+            options = dataclasses.replace(
+                inst.options, state_root=state, database=None, database_url=None,
+                approver=RecordingApprover(), telemetry=None,
+            )  # fmt: skip
+            copy = await Instance.open(inst.resolved, options)
+            await copy.knowledge.override(corpus, uri, text)  # the proposed edit, only here
+            return copy
+
+        with tempfile.TemporaryDirectory(prefix="dif-check-") as work:
+            done = await replay(open_copy, convos, Path(work)) if convos else []
+        worse = [{"customer": t.customer, "before": t.before, "after": t.after, "why": t.why}
+                 for c in done for t in c.turns if t.verdict == "worse"]  # fmt: skip
+        await inst.audit.record(scope, "admin", "knowledge_check", f"knowledge/{corpus}",
+                                {"uri": uri, "counts": counts(done)})  # fmt: skip
+        return {"summary": summary(done) if done else "no real conversations yet",
+                "counts": counts(done), "worse": worse}  # fmt: skip
 
     @app.delete("/admin/knowledge/{corpus}/documents", dependencies=[Depends(admin)])
     async def knowledge_delete(corpus: str, uri: str) -> dict[str, bool]:

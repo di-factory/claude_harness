@@ -983,10 +983,8 @@ class Setup:
         new version first, and say what changed. False: do not put it online."""
         if self.run is None or not self.public_url:
             return True
-        if not _yes(self.ask("Replay the latest real conversations on the rebuilt client"
-                             " before putting it online (a few cents)? [Y/n] "),
-                    default=True):  # fmt: skip
-            return True
+        _say("\nReplaying the latest real conversations on the rebuilt client before it goes"
+             " online (a few cents)...")  # fmt: skip
         packs = [a for p in self.packs for a in ("--packs", str(p))]
         code = self.run(["replay", str(result.spec_path), *packs, "--url",
                          "http://127.0.0.1:8080"])  # fmt: skip

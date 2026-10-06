@@ -102,7 +102,7 @@ def test_a_reused_client_takes_the_pack_updates(
     faq.write_text(old)  # a client built before the pack's wording changed
     answers = clients / "clinica-sonrisa-pyme-appointment-agent.answers.yaml"
     answers.write_text(answers.read_text().replace("Limpieza", "Limpieza dental"))
-    replies = iter(["", "1", "", "#4a1450", "n", "n"])  # ..., a new look, no replay, offline
+    replies = iter(["", "1", "", "#4a1450", "n"])  # key, client 1, rebuild, a new look, offline
     run = lambda argv: main(argv, provider=FakeProvider([Message.assistant("Hola.")]))  # noqa: E731
     again = Setup([examples], clients, ask=lambda _: next(replies), run=run,
                   public_url=URL, root=tmp_path / "repo")  # fmt: skip
