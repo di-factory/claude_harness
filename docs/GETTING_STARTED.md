@@ -85,6 +85,11 @@ repeated, it files proposed edits as one inbox item (`admin review`; `--now` run
 immediately). It never applies them: apply what you accept with the setup or `adjust`.
 `DIF_REVIEW=off` turns it off.
 
+After a model change, run the evals with `--repeat 3 --ablate skills,verifier,router,compaction`.
+`--repeat` reports pass^k: did each case pass every time? `--ablate` shows whether each
+component still pays for itself. Removing what no longer helps is a change like any other:
+it goes through the setup, the replay and Jag's signature.
+
 For recurring research (competitors, suppliers, leads), the `research-graph` pack keeps a
 verified map of a market. It runs weekly from the watched companies, checks each one at two
 independent sites, and gives every relationship its evidence line. `admin graph market`

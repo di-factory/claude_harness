@@ -76,7 +76,8 @@ async def test_facts_follow_the_contact_and_changes_go_to_a_person(tmp_path: Pat
             body, headers = whatsapp(text, sid)
             await client.post("/channels/whatsapp", content=body, headers=headers)
             await headless.worker().drain()
-        assert "## What you remember\n- preferred time: mornings" in env.provider.requests[2].system
+        system = env.provider.requests[2].system
+        assert '<untrusted_content source="memory">\n- preferred time: mornings' in system
         assert "replaces the earlier value ('mornings')" in str(_result(env, 3).content)
 
         # the change went to a person, who keeps the earlier value

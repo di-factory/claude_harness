@@ -72,6 +72,7 @@ async def signals(inst: Instance, *, now: float | None = None) -> dict[str, Any]
     items_failing: Counter[str] = Counter()
     collisions: list[Any] = []
     stops: Counter[str] = Counter()
+    classes: Counter[str] = Counter()  # failures by kind (contract, verification, budget...)
     for record in records:
         if record["stop_reason"] not in ("completed", "end_turn", "queued", "condition"):
             stops[f"{record['kind']} {record['name']}: {record['stop_reason']}"] += 1
@@ -85,6 +86,10 @@ async def signals(inst: Instance, *, now: float | None = None) -> dict[str, Any]
             examples.setdefault(key, []).append(str(failure.get("item") or ""))
             items_failing[str(failure.get("item") or "")] += 1
         collisions += record.get("alias_collisions") or []
+        for failure in record.get("failures") or []:
+            classes[str(failure.get("class") or "environment")] += 1
+        if record.get("stop_class"):
+            classes[str(record["stop_class"])] += 1
     inbox = [i for i in await inst.inbox.list(None) if i.created_at >= now - WEEK]
     kinds = Counter(i.kind for i in inbox if i.kind in ("escalation", "review", "budget"))
     by_contact = Counter(
@@ -108,6 +113,7 @@ async def signals(inst: Instance, *, now: float | None = None) -> dict[str, Any]
         "items_failing_again": [item for item, n in items_failing.items() if item and n >= 2],
         "runs_not_completed": [f"{what} (x{n})" for what, n in stops.most_common(10) if n >= 2],
         "alias_collisions": collisions[:20],
+        "failure_classes": dict(classes.most_common()),
         "inbox_this_week": dict(kinds),
         "repeated_inbox_titles": [f"{t} (x{n})" for t, n in titles.most_common(10) if n >= 2],
         "contacts_escalated_again": sum(1 for n in by_contact.values() if n >= 2),

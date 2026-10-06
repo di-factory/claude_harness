@@ -256,6 +256,17 @@ evals decide whether it passes.
 - `verify` names a check from `policies.verification.checks` that must pass
   before the call commits.
 - `config` passes settings and secrets to a tool pack.
+- `overrides.<tool>.retry` (`check`, `safe` or `never`) says what happens when a call that
+  writes or acts is made again in the same conversation. Every such call is recorded before
+  it runs and carries its idempotency key (HTTP connectors send it as `Idempotency-Key`).
+  - `check` (the default for writes): an identical call that already succeeded returns the
+    earlier result instead of running again. One whose outcome is unknown (a timeout, a lost
+    answer, a crash) is not run until the agent has checked with a read tool.
+  - `safe`: the tool is idempotent, so it always runs.
+  - `never`: a second identical call in a conversation is refused, whatever happened to the
+    first.
+
+  Workflow tool steps whose outcome is unknown are escalated instead of re-run.
 - The `documents` pack gives `documents.read` (the text of PDF, DOCX, XLSX, HTML, XML, CSV
   and text files, with `needs_ocr` for photos and scans) and `documents.ocr` (images and
   scanned PDFs, read by the `ocr` model role, or `main` when there is none; at most 20
@@ -507,7 +518,7 @@ crashed half way runs again on resume, so side-effecting tools should be idempot
     "ask":   ["calendar.move_event"],
     "deny":  ["calendar.delete_event"]
   },
-  "budgets": { "per_run": { "usd": 0.20, "turns": 12 }, "per_tenant_day": { "usd": 5 } },
+  "budgets": { "per_run": { "usd": 0.20, "turns": 12, "tool_calls": 20 }, "per_tenant_day": { "usd": 5 } },
   "verification": {
     "checks": {
       "no-double-booking": { "type": "tool", "tool": "calendar.check_conflicts", "expect": "no_conflicts" },
@@ -568,11 +579,20 @@ crashed half way runs again on resume, so side-effecting tools should be idempot
 "hitl":   { "approvers": ["role:front_desk"], "notify": [{ "channel": "email", "to": "{{var.ops_email}}" }],
             "approval_timeout": "2h", "on_timeout": "reject" },
 "evals":  { "suites": ["evals/booking.yaml", "evals/reschedule.yaml", "evals/pii.yaml"],
-            "thresholds": { "pass_rate": 0.9, "unsafe_actions": 0 } },
+            "trials": 3, "thresholds": { "pass_rate": 0.9, "pass_k": 0.8, "unsafe_actions": 0 } },
 "deploy": { "target": "aws", "profile": "small", "region": "us-east-1",
             "secrets_backend": "aws-secrets-manager", "database": "postgres" }
 ```
 
+- `evals.trials`: each case runs this many times, each in a fresh instance (default 1).
+  `thresholds.pass_k` is the share of cases that must pass every trial (pass^k), for
+  consistency rather than one lucky run. It applies to `eval` and to eval-gated fleet
+  offers. `eval --repeat K` overrides the trials. `eval --ablate skills,verifier,router,compaction,gates,memory`
+  also runs the suites without each component and reports whether it keeps its place, has
+  no measured lift, or makes no difference (decision 91).
+- `policies.budgets.per_run.tool_calls`: the tool calls one run may execute; past it, the
+  run ends as `budget`. Every tool result is also capped (40,000 characters); a cut result
+  says how to ask for less.
 - `deploy.profile`: `small` (one task, db.t4g.micro), `medium` (db.t4g.small) or `large`
   (two tasks, Multi-AZ db.t4g.medium, private subnets); images are tagged
   `<version>-<solution hash>`.

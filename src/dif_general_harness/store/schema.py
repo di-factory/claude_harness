@@ -221,6 +221,14 @@ MIGRATIONS: list[list[str]] = [
         """CREATE UNIQUE INDEX IF NOT EXISTS graph_edges_by_pair
             ON graph_edges (tenant_id, instance_id, graph, from_id, to_id, type)""",
     ],
+    [  # side-effecting tool calls, recorded before they run (runtime/intents.py)
+        """CREATE TABLE IF NOT EXISTS tool_intents (
+            key TEXT PRIMARY KEY, tenant_id TEXT NOT NULL, instance_id TEXT NOT NULL,
+            session_id TEXT NOT NULL, tool TEXT NOT NULL, status TEXT NOT NULL, result TEXT,
+            created_at DOUBLE PRECISION NOT NULL, updated_at DOUBLE PRECISION NOT NULL)""",
+        """CREATE INDEX IF NOT EXISTS tool_intents_by_session
+            ON tool_intents (tenant_id, instance_id, session_id)""",
+    ],
 ]
 
 

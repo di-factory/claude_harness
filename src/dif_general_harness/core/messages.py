@@ -47,12 +47,39 @@ class ToolStatus(StrEnum):
     TIMEOUT = "timeout"
 
 
+SideEffects = Literal["none", "unknown", "committed"]
+
+
 class ToolResultBlock(BaseModel):
+    """A tool call's outcome. A failure says what the model needs to choose its next step:
+    a ``reason`` code, whether trying again can work (``retryable``), whether anything
+    changed in the world (``side_effects``: none, unknown or committed) and a ``hint``."""
+
     type: Literal["tool_result"] = "tool_result"
     tool_use_id: str
     status: ToolStatus
     content: Any = None
     error: str | None = None
+    reason: str | None = None
+    retryable: bool | None = None
+    side_effects: SideEffects | None = None
+    hint: str | None = None
+
+    def error_text(self) -> str:
+        """A failure as the model reads it."""
+        lines = [f"[{self.status.value}] {self.error or ''}".strip()]
+        facts = []
+        if self.reason:
+            facts.append(f"reason: {self.reason}")
+        if self.retryable is not None:
+            facts.append(f"retryable: {'yes' if self.retryable else 'no'}")
+        if self.side_effects:
+            facts.append(f"side effects: {self.side_effects}")
+        if facts:
+            lines.append(" · ".join(facts))
+        if self.hint:
+            lines.append(f"next: {self.hint}")
+        return "\n".join(lines)
 
 
 class MediaBlock(BaseModel):

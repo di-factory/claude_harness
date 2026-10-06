@@ -240,6 +240,7 @@ async def test_service_desk_tools_policy_and_redaction(examples: Path, tmp_path:
             "handoff.human",  # the agent lists 'human' among its handoffs
             "helpdesk.get_ticket",
             "helpdesk.solve_ticket",
+            "history.search",  # the pack has a compaction role: what a summary cut, found again
             "identity.lookup_user",
             "identity.reset_password",
             "memory.propose_skill",  # the pack declares memory layers

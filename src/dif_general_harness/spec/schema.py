@@ -161,6 +161,7 @@ class ToolOverride(Strict):
     permission: Literal["allow", "ask", "deny"] | None = None
     verify: str | None = None
     effect: Literal["read", "write", "external"] | None = None
+    retry: Literal["safe", "check", "never"] | None = None  # runtime/intents.py
 
 
 class Tools(Strict):
@@ -325,6 +326,7 @@ class Hitl(Strict):
 class Evals(Strict):
     suites: list[str] = Field(default_factory=list)
     thresholds: dict[str, float] = Field(default_factory=dict)
+    trials: int = Field(default=1, ge=1, le=10)  # per case: pass^k (thresholds.pass_k)
 
 
 class Deploy(Strict):

@@ -16,7 +16,8 @@ contacts without receiving who they are.
 Each delivery is a durable job (retried with backoff, never blocking a reply). It carries
 ``X-Dif-Event``, ``X-Dif-Timestamp`` and ``X-Dif-Signature: sha256=<hex>``, the HMAC-SHA256
 of ``<timestamp>.<body>`` with the hook's secret; a receiver recomputes it and rejects
-anything older than a few minutes.
+anything older than a few minutes. A retried delivery keeps its ``X-Dif-Delivery`` id: a
+receiver that has seen the id already drops the repeat.
 """
 
 from __future__ import annotations

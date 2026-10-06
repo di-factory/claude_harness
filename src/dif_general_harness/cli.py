@@ -94,6 +94,13 @@ def _add_run(sub: argparse._SubParsersAction[argparse.ArgumentParser], name: str
         cmd.add_argument("-m", "--message", help="one user message; default: read stdin lines")
     if name == "eval":
         cmd.add_argument("--suite", type=Path, action="append", help="suite file (repeatable)")
+        cmd.add_argument(
+            "--repeat", type=int, help="trials per case (default: evals.trials); reports pass^k"
+        )
+        cmd.add_argument(
+            "--ablate", help="also run without each listed component and compare: skills,"
+            " verifier, router, compaction, gates, memory (comma separated)",
+        )  # fmt: skip
     if name == "replay":
         cmd.add_argument("--limit", type=int, default=20, help="conversations (default 20)")
         cmd.add_argument("--url", help="the running instance (default: DIF_ADMIN_URL or this"
@@ -442,18 +449,37 @@ async def _eval(
     if template is None:
         return 2
 
-    async def open_instance(state: Path) -> Instance:
-        options = dataclasses.replace(
-            template, state_root=state, database_url=None, approver=RecordingApprover()
-        )
-        return await Instance.open(resolved, options)
+    def opener(spec: ResolvedSpec) -> Any:
+        async def open_instance(state: Path) -> Instance:
+            options = dataclasses.replace(
+                template, state_root=state, database_url=None, approver=RecordingApprover()
+            )
+            return await Instance.open(spec, options)
 
+        return open_instance
+
+    from .constructor import ablation
+
+    components = [c.strip() for c in (getattr(args, "ablate", None) or "").split(",") if c.strip()]
+    repeat = max(1, int(getattr(args, "repeat", None) or resolved.spec.evals.trials))
     suites = args.suite or [Path(s) for s in resolved.spec.evals.suites]
+    thresholds = resolved.spec.evals.thresholds
+    rows: list[ablation.Row] = []
     with tempfile.TemporaryDirectory(prefix="dif-eval-") as work:
         try:
             report = await run_suites(
-                open_instance, suites, resolved.spec.evals.thresholds, work=Path(work)
+                opener(resolved), suites, thresholds, work=Path(work), repeat=repeat
             )
+            for component in components:
+                try:
+                    ablated = ablation.without(resolved, component)
+                except ValueError as exc:
+                    print(f"cannot ablate: {exc}", file=sys.stderr)
+                    continue
+                rows.append(ablation.Row(component, await run_suites(
+                    opener(ablated), suites, thresholds, work=Path(work) / f"no-{component}",
+                    repeat=repeat,
+                )))  # fmt: skip
         except (InstanceError, RoutingError) as exc:
             print(f"cannot start: {exc}", file=sys.stderr)
             return 2
@@ -467,7 +493,8 @@ async def _eval(
     finally:
         await db.close()
     for r in report.results:
-        print(f"{r.status.upper():8} {r.suite} / {r.case}  ${r.cost_usd:.4f}")
+        trial = f" (trial {r.trial})" if report.trials > 1 else ""
+        print(f"{r.status.upper():8} {r.suite} / {r.case}{trial}  ${r.cost_usd:.4f}")
         for reason in r.reasons:
             print(f"         - {reason}")
     rate = "n/a" if report.pass_rate is None else f"{report.pass_rate:.0%}"
@@ -477,10 +504,22 @@ async def _eval(
     unmeasured = sorted(set(report.thresholds) - {"pass_rate", "unsafe_actions"})
     if unmeasured:
         print(f"not measured yet: {', '.join(unmeasured)}")
+    consistent = (
+        ""
+        if report.trials < 2
+        else (
+            f", pass^{report.trials} "
+            + ("n/a" if report.pass_k is None else f"{report.pass_k:.0%}")
+        )
+    )
     print(
-        f"pass rate {rate} over {len(report.ran)} case(s), {skipped} skipped, "
+        f"pass rate {rate} over {len(report.ran)} {'case(s)' if report.trials < 2 else 'run(s)'},"
+        f" {skipped} skipped{consistent}, "
         f"unsafe actions {report.unsafe_actions}: {'OK' if report.ok else 'FAILED'}"
     )
+    if rows:
+        print("\nWithout each component (same suites, throwaway instances):")
+        print(ablation.table(report, rows))
     return 0 if report.ok else 1
 
 
@@ -520,7 +559,9 @@ def _lifecycle(args: argparse.Namespace) -> int:
         return 0
     plan.write()
     print(f"wrote {args.path}; next: replay {args.path} (the latest real conversations,"
-          " answered again), evals, then approve + deploy (or fleet offer)")  # fmt: skip
+          " answered again), evals (after a model change: eval --ablate"
+          " skills,verifier,router,compaction), then approve + deploy"
+          " (or fleet offer)")  # fmt: skip
     return 0
 
 

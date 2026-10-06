@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..core.events import MessageAdded, TurnEnded
 from ..core.messages import Role
+from ..core.untrusted import fence
 from ..runtime.context import current_session
 from ..spec.loader import duration_days
 from ..tools.registry import Effect, Tool, schema_check
@@ -64,7 +65,9 @@ def subagent_tool(instance: Instance, name: str) -> Tool:
             raise RuntimeError(f"sub-agent {name} ended with {reason}")
         answer = texts[-1] if texts else ""
         parsed = _json_in(answer)
-        return {"answer": answer, "output": parsed} if parsed is not None else answer
+        # a sub-agent read tools, pages and documents: its report is data, not instructions
+        fenced = fence(answer, f"agent:{name}")
+        return {"answer": fenced, "output": parsed} if parsed is not None else fenced
 
     schema = {
         "type": "object",

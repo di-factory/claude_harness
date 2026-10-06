@@ -2,7 +2,7 @@
 
 Di-Factory's general solution template: an agent runtime where every client
 solution is a declarative **solution spec** (a pack plus a client instance).
-Read `docs/ARCHITECTURE.md` (86 decisions, §7) before changing behaviour;
+Read `docs/ARCHITECTURE.md` (92 decisions, §7) before changing behaviour;
 `docs/spec/SOLUTION_SPEC.md` is the spec contract.
 
 ## Commands
@@ -21,7 +21,7 @@ uv run dif-general-harness questionnaire --pack ID --for client|difactory --out 
 uv run dif-general-harness build --request "..." [--answers FILE ...] --packs docs/spec/examples
 uv run dif-general-harness secrets set NAME | secrets check INSTANCE.json   # ~/.dif/secrets
 uv run dif-general-harness run|console|serve INSTANCE.json --packs DIR
-uv run dif-general-harness eval INSTANCE.json --packs DIR   # fresh instance per case; drift
+uv run dif-general-harness eval INSTANCE.json --packs DIR [--repeat K] [--ablate skills,verifier]
 uv run dif-general-harness replay INSTANCE.json --packs DIR # real conversations, again, judged
 uv run dif-general-harness keys new jag | approve ... | deploy ... --target docker|aws
 uv run dif-general-harness adjust|upgrade INSTANCE.json ... --dry-run     # constructor v3
@@ -66,7 +66,8 @@ setup mistakes the harness now catches early). Keep it in step with the CLI.
 - `src/dif_general_harness/graph/`: research graphs (nodes with sources, edges with evidence,
   aliases), `graph.query`
 - `src/dif_general_harness/governance/`: PII tokenization, consent, audit chain, retention
-- `src/dif_general_harness/runtime/`: `Instance` (spec to runnable agents), role routing, prompts, skills
+- `src/dif_general_harness/runtime/`: `Instance` (spec to runnable agents), role routing, prompts, skills,
+  `intents.py` (side-effecting calls recorded before they run), `history.py` (`history.search`)
 - `src/dif_general_harness/channels/`, `triggers/`, `hitl/`: adapters (gateway, Telegram,
   API/web, email, Slack, voice), cron, file sources, the inbox
 - `src/dif_general_harness/service/`: the headless runtime (`Headless`), FastAPI app, config boot,
@@ -90,7 +91,8 @@ setup mistakes the harness now catches early). Keep it in step with the CLI.
   leave `providers/`; the core only sees the neutral message and event model.
 - **Tenant scope everywhere.** Every event and stored record carries a `Scope`
   (`tenant_id`, `instance_id`). Storage paths are namespaced by it.
-- **Tools never raise into the loop.** Every call ends in `ok | denied | error | timeout`.
+- **Tools never raise into the loop.** Every call ends in `ok | denied | error | timeout`, and a
+  failure says its reason, whether it is retryable and whether anything changed.
 - **Jobs belong to their instance.** Queues are scoped: an instance never claims another's
   jobs, even in a shared database.
 - **Deploys need Jag's signature** over the exact staged solution; never weaken
@@ -124,9 +126,12 @@ online (75); then the running client watched nightly and after document changes,
 same replay gating fleet offers (76–77), an OpenAI-compatible endpoint (78), skills in packs
 (79), repository instructions and wrapper-aware shell rules (80), and signed hooks to the
 client's systems (81); then run records, gates outside the agent, counted stops and caps, a
-weekly review that proposes and never writes (82–85), and research graphs (86).
+weekly review that proposes and never writes (82–85), and research graphs (86); then failures
+the model can act on, side-effecting calls never repeated blindly, memory and sub-agent
+reports as data, and history search past compaction (87–90); then pass^k and ablations in
+evals, and tool-call budgets, result caps, tool-surface warnings and failure classes (91–92).
 Next: GCP and Azure profiles.
 Known gaps: streaming (speech-to-speech) voice, knowledge connectors beyond files, S3,
 Drive and web pages (SharePoint, Notion... push through the admin API), pgvector for very
 large corpora, and a first apply of the AWS module in a real account. See
-`docs/ARCHITECTURE.md` §6 and decisions 43–86.
+`docs/ARCHITECTURE.md` §6 and decisions 43–92.

@@ -91,7 +91,7 @@ def _tool_result(b: ToolResultBlock) -> dict[str, Any]:
     if b.status is ToolStatus.OK:
         body = b.content if isinstance(b.content, str) else json.dumps(b.content, default=str)
         return {"type": "tool_result", "tool_use_id": b.tool_use_id, "content": body}
-    text = f"[{b.status.value}] {b.error or ''}".strip()
+    text = b.error_text()
     return {"type": "tool_result", "tool_use_id": b.tool_use_id, "content": text, "is_error": True}
 
 
