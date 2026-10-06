@@ -29,6 +29,7 @@ from ..core.messages import Message
 from ..core.session import SUMMARY_HEADER
 from ..providers.base import ModelRequest, ProviderMessage
 from ..runtime import Instance
+from ..spec.loader import ResolvedSpec
 from ..tools.registry import Effect
 from .evals import CaseResult, OpenInstance, _Case, _fixture
 
@@ -181,3 +182,69 @@ def report(convos: list[Replayed], title: str) -> str:
 
 def _quote(text: str) -> str:
     return "\n".join(f"> {line}" for line in (text or "(no reply)").splitlines())
+
+
+# --- on the running instance: its own conversations, on a throwaway copy of itself ----------
+
+
+async def recent_rows(inst: Instance, limit: int) -> list[dict[str, Any]]:
+    """The instance's latest conversations with their texts (PII shown: the copy that answers
+    them again tokenizes it once more), newest first."""
+    store = inst.store
+    if not hasattr(store, "recent"):
+        raise LookupError("this store cannot list recent conversations")
+    reveal = inst.pii.policy.classes
+    out = []
+    for row in await store.recent(inst.scope, limit):
+        loaded = await store.load(inst.scope, row["session_id"])
+        messages = [
+            {"role": str(m.role), "text": await inst.pii.detokenize(m.text(), reveal, mask=False)}
+            for m in loaded.messages
+            if m.text()
+        ]
+        if any(m["role"] == "user" for m in messages):
+            out.append({"id": row["session_id"], "channel": row["channel"],
+                        "last_active": row["last_active"], "messages": messages})  # fmt: skip
+    return out
+
+
+def can_judge(inst: Instance) -> bool:
+    return "verifier" in (inst.spec.models.roles if inst.spec.models else {})
+
+
+async def check_instance(
+    inst: Instance,
+    *,
+    limit: int = 10,
+    override: tuple[str, str, str] | None = None,
+    resolved: ResolvedSpec | None = None,
+) -> list[Replayed]:
+    """The latest real conversations answered again by a throwaway copy of ``inst`` (or of
+    ``resolved``, an offered config, with ``inst``'s keys and models; ``override`` =
+    (corpus, uri, text) applied to the copy only), each reply judged."""
+    import dataclasses
+    import tempfile
+
+    from .evals import RecordingApprover
+
+    convos = conversations(await recent_rows(inst, limit))
+    if not convos:
+        return []
+
+    async def open_copy(state: Path) -> Instance:
+        options = dataclasses.replace(
+            inst.options, state_root=state, database=None, database_url=None,
+            approver=RecordingApprover(), telemetry=None,
+        )  # fmt: skip
+        copy = await Instance.open(resolved or inst.resolved, options)
+        if override is not None:
+            await copy.knowledge.override(*override)
+        return copy
+
+    with tempfile.TemporaryDirectory(prefix="dif-replay-") as work:
+        return await replay(open_copy, convos, Path(work))
+
+
+def worse_turns(convos: list[Replayed]) -> list[dict[str, str]]:
+    return [{"customer": t.customer, "before": t.before, "after": t.after, "why": t.why}
+            for c in convos for t in c.turns if t.verdict == "worse"]  # fmt: skip

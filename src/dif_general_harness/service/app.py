@@ -25,8 +25,8 @@ import contextlib
 import dataclasses
 import hmac
 import json
+import time
 from collections.abc import AsyncIterator, Callable, Coroutine, Sequence
-from pathlib import Path
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -167,6 +167,78 @@ def create_app(
             return Response("<Response/>", media_type="application/xml")
         return Response("{}", media_type="application/json")
 
+    # --- the assistant as a model: OpenAI-compatible chat completions --------------------
+
+    def api_channel() -> str:
+        names = [n for n, c in current().spec.channels.items()
+                 if c.type == "api" and n in headless.adapters]  # fmt: skip
+        if not names:
+            raise HTTPException(404, "this solution has no api channel to answer through")
+        return names[0]
+
+    @app.get("/v1/models")
+    async def models(request: Request) -> dict[str, Any]:
+        name = api_channel()
+        probe = Inbound(url=str(request.url), headers={k.lower(): v for k, v in
+                        request.headers.items()}, body=b'{"contact": "-", "text": ""}')  # fmt: skip
+        try:
+            headless.adapters[name].parse(probe)
+        except Unauthorized as exc:
+            raise HTTPException(401, str(exc)) from None
+        except ChannelError:
+            pass
+        sid = current().spec.solution.id
+        return {"object": "list", "data": [{"id": sid, "object": "model", "owned_by": sid}]}
+
+    @app.post("/v1/chat/completions")
+    async def chat_completions(request: Request) -> Response:
+        """The assistant behind an OpenAI-compatible endpoint (a CRM, Zapier, another app),
+        through the ``api`` channel: its bearer token, rules, budgets, PII handling and
+        audit. The conversation is kept per ``user`` (send only the new message; earlier
+        ones in ``messages`` are already in the conversation)."""
+        body = json.loads(await request.body() or b"null")
+        if not isinstance(body, dict) or not isinstance(body.get("messages"), list):
+            raise HTTPException(400, "expected an OpenAI chat request with 'messages'")
+        if body.get("stream"):
+            raise HTTPException(400, "streaming is not supported: send stream=false")
+        last = next((m for m in reversed(body["messages"])
+                     if isinstance(m, dict) and m.get("role") == "user"), None)  # fmt: skip
+        content = last.get("content") if last else None
+        if isinstance(content, list):  # [{"type": "text", "text": ...}, ...]
+            content = "\n".join(str(p.get("text") or "") for p in content
+                                 if isinstance(p, dict) and p.get("type") == "text")  # fmt: skip
+        if not isinstance(content, str) or not content.strip():
+            raise HTTPException(400, "the last user message has no text")
+        user = str(body.get("user") or "openai-client")[:200]
+        name = api_channel()
+        inbound = Inbound(
+            url=str(request.url),
+            headers={k.lower(): v for k, v in request.headers.items()},
+            body=json.dumps({"contact": user, "text": content}).encode(),
+            client=request.client.host if request.client else "",
+        )
+        try:
+            results = await headless.receive(name, inbound)
+        except Unauthorized as exc:
+            raise HTTPException(401, str(exc)) from None
+        except RateLimited as exc:
+            raise HTTPException(429, str(exc)) from None
+        except ChannelError as exc:
+            raise HTTPException(400, str(exc)) from None
+        replies = [r for r in results or [] if r.reply]
+        text = "\n\n".join(str(r.reply) for r in replies)
+        session = results[0] if results else None
+        answer = {
+            "id": f"chatcmpl-{session.session_id if session else 'none'}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": current().spec.solution.id,
+            "choices": [{"index": 0, "finish_reason": "stop",
+                         "message": {"role": "assistant", "content": text}}],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+        }  # fmt: skip
+        return Response(json.dumps(answer, ensure_ascii=False), media_type="application/json")
+
     def web_channel(name: str | None) -> tuple[str, WebChannel]:
         webs = {n: a for n, a in headless.adapters.items() if isinstance(a, WebChannel)}
         if name is None and webs:
@@ -264,23 +336,12 @@ def create_app(
         return {"id": item.id, "status": item.status}
 
     async def recent_rows(limit: int) -> list[dict[str, Any]]:
-        """The latest conversations with their texts (PII shown, as for one session)."""
-        inst = current()
-        if not hasattr(inst.store, "recent"):
-            raise HTTPException(501, "this store cannot list recent conversations")
-        reveal = inst.pii.policy.classes
-        out = []
-        for row in await inst.store.recent(scope, limit):
-            loaded = await inst.store.load(scope, row["session_id"])
-            messages = [
-                {"role": str(m.role),
-                 "text": await inst.pii.detokenize(m.text(), reveal, mask=False)}
-                for m in loaded.messages if m.text()
-            ]  # fmt: skip
-            if any(m["role"] == "user" for m in messages):
-                out.append({"id": row["session_id"], "channel": row["channel"],
-                            "last_active": row["last_active"], "messages": messages})  # fmt: skip
-        return out
+        from ..constructor.replay import recent_rows as rows_of
+
+        try:
+            return await rows_of(current(), limit)
+        except LookupError as exc:
+            raise HTTPException(501, str(exc)) from None
 
     @app.get("/admin/sessions", dependencies=[Depends(admin)])
     async def sessions(limit: int = 20) -> list[dict[str, Any]]:
@@ -576,39 +637,24 @@ def create_app(
         """Before an owner's edit goes live: the latest real conversations, again, on a
         throwaway copy of this instance with the proposed text (``{"uri", "text",
         "limit"?}``), each reply judged against the one the customer got."""
-        import tempfile
-
-        from ..constructor.evals import RecordingApprover
-        from ..constructor.replay import conversations, counts, replay, summary
+        from ..constructor.replay import can_judge, check_instance, counts, summary, worse_turns
 
         inst = current()
         corpus_of(corpus)
         uri, text = body.get("uri"), body.get("text")
         if not isinstance(uri, str) or not isinstance(text, str) or not text.strip():
             raise HTTPException(400, "a check needs the document's uri and its new text")
-        if "verifier" not in (inst.spec.models.roles if inst.spec.models else {}):
+        if not can_judge(inst):
             raise HTTPException(501, "this solution has no verifier model role to judge with")
         limit = max(1, min(int(body.get("limit") or 10), 50))
-        rows = await recent_rows(limit)
-        convos = conversations(rows)
-
-        async def open_copy(state: Path) -> Instance:
-            options = dataclasses.replace(
-                inst.options, state_root=state, database=None, database_url=None,
-                approver=RecordingApprover(), telemetry=None,
-            )  # fmt: skip
-            copy = await Instance.open(inst.resolved, options)
-            await copy.knowledge.override(corpus, uri, text)  # the proposed edit, only here
-            return copy
-
-        with tempfile.TemporaryDirectory(prefix="dif-check-") as work:
-            done = await replay(open_copy, convos, Path(work)) if convos else []
-        worse = [{"customer": t.customer, "before": t.before, "after": t.after, "why": t.why}
-                 for c in done for t in c.turns if t.verdict == "worse"]  # fmt: skip
+        try:
+            done = await check_instance(inst, limit=limit, override=(corpus, uri, text))
+        except LookupError as exc:
+            raise HTTPException(501, str(exc)) from None
         await inst.audit.record(scope, "admin", "knowledge_check", f"knowledge/{corpus}",
                                 {"uri": uri, "counts": counts(done)})  # fmt: skip
         return {"summary": summary(done) if done else "no real conversations yet",
-                "counts": counts(done), "worse": worse}  # fmt: skip
+                "counts": counts(done), "worse": worse_turns(done)}  # fmt: skip
 
     @app.delete("/admin/knowledge/{corpus}/documents", dependencies=[Depends(admin)])
     async def knowledge_delete(corpus: str, uri: str) -> dict[str, bool]:

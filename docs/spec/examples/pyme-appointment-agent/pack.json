@@ -479,6 +479,7 @@
     "approval_timeout": "2h",
     "on_timeout": "reject"
   },
+  "skills": ["skills"],
   "evals": {
     "suites": [
       "evals/confirm.yaml",

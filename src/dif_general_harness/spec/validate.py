@@ -19,6 +19,7 @@ from ..triggers.cron import Cron, CronError
 from .errors import Issue
 from .regions import region_violations
 from .schema import SolutionSpec, Step
+from .skills import discover as discover_skills
 
 BUILTIN_NAMESPACES = {"ledger", "runs", "knowledge", "memory"}
 # Namespaces each built-in tool pack provides (tools/packs/); "web" arrives with a search provider.
@@ -145,6 +146,15 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
             err("invalid_python_ref", f"tools.python[{i}]", f"not module.path:function: {ref!r}")
         elif not parts[0].is_file():
             err("missing_file", f"tools.python[{i}]", f"file not found: {parts[0]}")
+    for hname, hook in spec.hooks.items():
+        local = hook.url.startswith(("http://localhost", "http://127.0.0.1"))
+        if not (hook.url.startswith("https://") or local or "{{" in hook.url):
+            err("invalid_hook", f"hooks.{hname}.url", "a hook must be an https:// URL")
+        if not (isinstance(hook.secret, dict) and set(hook.secret) == {"$secret"}):
+            err("invalid_hook", f"hooks.{hname}.secret",
+                'sign with a declared secret: {"$secret": "<name>"}')  # fmt: skip
+    for code, spot, trouble in discover_skills(spec.skills)[1]:
+        err(code, spot, trouble)
     for i, suite in enumerate(spec.evals.suites):
         if not Path(suite).exists():
             warn("eval_missing", f"evals.suites[{i}]", f"eval suite not written yet: {suite}")

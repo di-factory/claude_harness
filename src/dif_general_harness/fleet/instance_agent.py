@@ -30,6 +30,8 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from ..constructor.evals import EvalReport, EvalStore, RecordingApprover, run_suites
+from ..constructor.replay import can_judge, check_instance, worse_turns
+from ..constructor.replay import summary as summary_of
 from ..observability import quality
 from ..runtime import Instance, RuntimeOptions
 from ..service.config import apply_active
@@ -260,14 +262,26 @@ class InstanceAgent:
             f" unsafe actions {report.unsafe_actions}"
         )
         failed = [f"{r.suite}/{r.case}" for r in report.results if r.status == "failed"]
-        detail = {
+        detail: dict[str, Any] = {
             "summary": summary,
             "pass_rate": rate,
             "ran": ran,
             "unsafe_actions": report.unsafe_actions,
             "failed": failed,
         }
-        return report.ok and ran > 0, detail
+        passed = report.ok and ran > 0
+        if passed and can_judge(inst):  # and the latest real conversations, answered again
+            try:
+                done = await check_instance(inst, limit=10, resolved=resolved)
+            except LookupError:
+                done = []
+            worse = worse_turns(done)
+            detail["replay"] = summary_of(done) if done else "no real conversations yet"
+            if worse:
+                detail["summary"] += f"; {len(worse)} real reply(ies) got worse"
+                detail["worse"] = worse[:5]
+                passed = False
+        return passed, detail
 
     async def run(self, stop: asyncio.Event) -> None:
         while not stop.is_set():

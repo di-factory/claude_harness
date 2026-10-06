@@ -183,3 +183,72 @@ async def test_a_replay_never_acts_on_the_world(tmp_path: Path) -> None:
     result = env.provider.requests[1].messages[-1].content[0]
     assert "not run: this is a replayed conversation" in str(result.content)
     assert NoteStore(states[0], inst.scope).get("cita") is None  # nothing was written
+
+
+async def test_the_running_client_is_watched_nightly_and_after_its_documents_change(
+    tmp_path: Path,
+) -> None:
+    from tests.test_admin_cli import FAQ, _faq_spec
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "faq.md").write_text(FAQ)
+
+    def spec(s: dict[str, Any]) -> None:
+        _faq_spec(docs)(s)
+        _verifier(s)
+
+    script = [
+        Message.assistant("El precio promedio es 2,000 MXN."),  # the real conversation
+        Message.assistant("El precio promedio es 2,000 MXN."),  # nightly: identical, no judge
+        Message.assistant("No tengo precios."),  # after the documents changed...
+        Message.assistant('{"verdict": "worse", "why": "The price is gone."}'),
+    ]
+    env = Env(tmp_path, script, edit=spec)
+    inst, headless, client = await env.open()
+    async with inst, client:
+        await _ask(client, "ana@example.com", "¿Cuánto cuesta?")
+        await headless.queue.enqueue(inst.scope, "replay_watch", {"reason": "the nightly check"})
+        await headless.worker().drain()
+        assert await inst.inbox.list(kind="review") == []  # nothing got worse
+        assert len(await inst.audit.records(inst.scope, action="replay_watch")) == 1
+
+        (docs / "faq.md").write_text(FAQ.replace("## Prices\nAverage price: 2,000 MXN.\n", ""))
+        await headless.queue.enqueue(inst.scope, "knowledge_sync", {"corpus": "faq", "once": True})
+        await headless.worker().drain()  # the sync changes the documents, then the watch runs
+        [item] = await inst.inbox.list(kind="review")
+        assert item.title == "Replies got worse after the faq documents changed"
+        assert item.payload["worse"][0]["before"] == "El precio promedio es 2,000 MXN."
+        assert item.payload["worse"][0]["why"] == "The price is gone."
+        [note] = env.texts("telegram")  # the staff are told; no customer got anything
+        assert "Replies got worse after the faq documents changed" in note["text"]
+
+
+async def test_a_fleet_offer_that_makes_real_replies_worse_is_rejected(tmp_path: Path) -> None:
+    import copy
+
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
+    from dif_general_harness.constructor.evals import CaseResult, EvalReport
+    from dif_general_harness.fleet import InstanceAgent
+
+    script = [Message.assistant("Abrimos de 9 a 19."),  # the real conversation
+              Message.assistant("Abrimos de 10 a 14."),  # the offered config, replayed
+              Message.assistant('{"verdict": "worse", "why": "The hours changed."}')]  # fmt: skip
+    env = Env(tmp_path, script, edit=_verifier)
+    inst, headless, client = await env.open()
+
+    async def evals_pass(resolved: Any) -> EvalReport:
+        return EvalReport([CaseResult("suite", "case", "passed")], {})
+
+    agent = InstanceAgent(headless, control_url="https://control.test", token="t",
+                          public_key=Ed25519PrivateKey.generate().public_key(),
+                          client=client, evaluate=evals_pass)  # fmt: skip
+    async with inst, client:
+        await _ask(client, "ana@example.com", "¿Qué horario tienen?")
+        offered = copy.deepcopy(inst.resolved.data)
+        offered["values"]["business"] = "ACME Dental 2"
+        passed, detail = await agent._gate(offered)
+    assert passed is False  # the evals passed; a real reply got worse
+    assert "1 real reply(ies) got worse" in detail["summary"]
+    assert detail["worse"][0]["why"] == "The hours changed."

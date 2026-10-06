@@ -341,6 +341,16 @@ class BrandColors(Strict):
     accent: str | None = None  # a second color for highlights
 
 
+class Hook(Strict):
+    """A client system told what happened (``service/hooks.py``): signed JSON POSTs."""
+
+    url: str
+    events: list[Literal["turn_end", "tool_call", "escalation", "handoff"]] = Field(min_length=1)
+    secret: Any  # {"$secret": name}: the HMAC key the client verifies with
+    tools: list[str] = Field(default_factory=list)  # tool_call: only these (globs)
+    texts: bool = False  # include the reply and escalation reason
+
+
 class Branding(Strict):
     """The client's look on the landing page and the chat (see constructor/brand.py)."""
 
@@ -374,6 +384,8 @@ class SolutionSpec(Strict):
     workspaces: dict[str, dict[str, Any]] = Field(default_factory=dict)
     ledger: Ledger | None = None
     extensions: list[str] = Field(default_factory=list)
+    skills: list[str] = Field(default_factory=list)  # skill folders (each with a SKILL.md)
+    hooks: dict[str, Hook] = Field(default_factory=dict)
     branding: Branding | None = None
 
 

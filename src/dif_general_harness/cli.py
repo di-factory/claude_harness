@@ -519,7 +519,8 @@ def _lifecycle(args: argparse.Namespace) -> int:
         print("dry run: nothing written")
         return 0
     plan.write()
-    print(f"wrote {args.path}; next: evals, then approve + deploy (or fleet offer)")
+    print(f"wrote {args.path}; next: replay {args.path} (the latest real conversations,"
+          " answered again), evals, then approve + deploy (or fleet offer)")  # fmt: skip
     return 0
 
 

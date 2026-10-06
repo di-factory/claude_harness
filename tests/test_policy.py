@@ -139,6 +139,31 @@ def test_positional_patterns_and_chained_commands() -> None:
     assert policy.decide("coding.bash", Effect.WRITE, {"command": "ls"}).verdict is Verdict.ASK
 
 
+def test_wrapped_and_backgrounded_commands_cannot_hide_from_a_rule() -> None:
+    policy = PermissionPolicy(allow=["coding.bash(git status*)", "coding.bash(ls*)"],
+                              deny=["coding.bash(rm -rf*)"])  # fmt: skip
+
+    def verdict(command: str) -> Verdict:
+        return policy.decide("coding.bash", Effect.WRITE, {"command": command}, "command").verdict
+
+    for sneaky in [
+        "sudo rm -rf /",
+        "sudo -u root rm -rf /",
+        "FOO=1 BAR='a b' rm -rf /",
+        "env -i rm -rf /",
+        "timeout 5 rm -rf build",
+        "nohup rm -rf / &",
+        "ls & rm -rf /",
+        "bash -c 'ls && rm -rf /'",
+        'sh -c "rm -rf /"',
+    ]:
+        assert verdict(sneaky) is Verdict.DENY, sneaky
+    assert verdict("ls 2>&1") is Verdict.ALLOW  # a redirect is not a second command
+    assert verdict("git status") is Verdict.ALLOW
+    assert verdict("sudo git status") is Verdict.ASK  # allow sees the command as written
+    assert verdict("PATH=/tmp git status") is Verdict.ASK
+
+
 # --- the gate ----------------------------------------------------------------------
 
 

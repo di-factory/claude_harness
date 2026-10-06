@@ -32,6 +32,7 @@ ADDITIVE: set[tuple[str, ...]] = {
     ("governance", "consent", "opt_out_keywords"),
     ("governance", "compliance"),
     ("tools", "python"),  # extension tools accumulate across layers (deny one to drop it)
+    ("skills",),  # a client's own skills add to the pack's
 }
 
 _VAR_FULL = re.compile(r"^\{\{\s*var\.([A-Za-z0-9_]+)\s*\}\}$")
@@ -105,6 +106,8 @@ def _absolutize(data: dict[str, Any], base: Path) -> None:
         tools["python"] = [
             python_tools.absolutize(r, base) if isinstance(r, str) else r for r in tools["python"]
         ]
+    if isinstance(data.get("skills"), list):
+        data["skills"] = [_abs(base, s) for s in data["skills"]]
     evals = data.get("evals") or {}
     if isinstance(evals.get("suites"), list):
         evals["suites"] = [_abs(base, s) for s in evals["suites"]]

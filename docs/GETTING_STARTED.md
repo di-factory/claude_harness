@@ -68,6 +68,17 @@ when a reply to a real customer gets worse it is not applied (`--force` applies 
 clients/<id>.json --packs docs/spec/examples [--limit 20]` on the server (it reads the
 running instance's conversations with the admin token).
 
+Once online, the client is **watched**: with a `verifier` role the service replays its own
+latest conversations every night and after its documents change (a re-synced site, an edited
+file). A reply that got worse opens a `review` item in the inbox (`admin inbox`) and tells the
+staff; nothing changes on its own. `DIF_REPLAY_WATCH=off` in the service's environment turns
+it off. An eval-gated fleet offer gets the same check before it activates.
+
+Other systems can talk to it too: `POST /v1/chat/completions` (the OpenAI chat format, with
+the `api` channel's token as the bearer and `user` naming the conversation) answers as the
+assistant, and `hooks` in the instance (`docs/spec/SOLUTION_SPEC.md` §5.19) send signed events
+(escalations, tool calls, replies) to the client's CRM. Packs can carry `skills` (§5.18).
+
 ## The step-by-step way
 
 The same path, one piece at a time, using the example dental clinic as a stand-in client.

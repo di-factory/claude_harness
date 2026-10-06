@@ -71,6 +71,8 @@ from ..spec.errors import Issue
 from ..spec.loader import ResolvedSpec
 from ..spec.regions import region_violations
 from ..spec.schema import Agent, SolutionSpec
+from ..spec.skills import Skill
+from ..spec.skills import discover as discover_skills
 from ..store.db import Database, connect
 from ..store.sql import SqlSessionStore
 from ..teams import LedgerStore, handoff_tool, runs_tools, subagent_tool
@@ -86,6 +88,7 @@ from ..tools.packs.coding import (
     ContainerExecutor,
     Executor,
     ExecutorError,
+    context_block,
     executor_from_spec,
 )
 from ..tools.packs.documents import documents_tools
@@ -100,6 +103,7 @@ from .context import current_session
 from .prompts import load_text, render
 from .router import short_circuit
 from .routing import ProviderFactory, build_router
+from .skills import skills_block, skills_tool
 
 LOCAL_TENANT = "local"
 HANDOFF_TOOL = "handoff.human"
@@ -191,6 +195,7 @@ class Instance:
         self.notify: Notify | None = None  # set by the service: tells a person about inbox items
         self.emit: Emit | None = None  # set by the service: internal events (ledger, workflows)
         self.ledger: LedgerStore | None = None
+        self.skills: list[Skill] = []
         self.pending_handoffs: dict[str, tuple[str, str, str]] = {}  # source session -> target
         self.sources: dict[str, tuple[Source, float]] = {}  # item feeds: (fetch, every s)
         # folders and buckets: file triggers' (by trigger name) and the documents storage
@@ -291,6 +296,7 @@ class Instance:
                 "dif.config_version": self.resolved.version_hash[:12],
             })  # fmt: skip
             self.provider = TracedProvider(self.provider, self.tracer, self.vendor)
+        self.skills = discover_skills(spec.skills)[0]
         self._wire_knowledge(data, missing)
         for corpus in self.spec.knowledge.corpora:
             await self.sync_knowledge(corpus)
@@ -802,6 +808,7 @@ class Instance:
         allow.append("handoff.agent")  # handing over to a listed teammate is always allowed
         allow.append("memory.*")  # remembering is internal, scoped and reviewed (contradictions)
         allow.append("knowledge.*")  # reading the solution's own documents
+        allow.append("skills.*")  # reading the solution's own skills
         for name, o in overrides.items():
             if o.permission:
                 {"allow": allow, "ask": ask, "deny": deny}[o.permission].append(name)
@@ -828,6 +835,7 @@ class AgentRuntime:
         self.name = name
         self.spec = spec
         self.system = render(load_text(spec.prompt), instance.spec) + "\n\n" + UNTRUSTED_NOTICE
+        self.system += skills_block(instance.skills)
         registry = instance.tools
         patterns = [
             *spec.tools,
@@ -847,6 +855,8 @@ class AgentRuntime:
             selected.register(handoff_tool(instance, self, teammates))
         for t in memory_tools(instance, self):
             selected.register(t)
+        if instance.skills:
+            selected.register(skills_tool(instance.skills))
         for corpus in instance.spec.knowledge.corpora:
             name_ = f"knowledge.search_{corpus}"
             if corpus in spec.knowledge or _matches(name_, spec.tools):
@@ -1058,7 +1068,9 @@ class AgentRuntime:
         tool_starts: dict[str, int] = {}
         pinned = pinned_block(await inst.constraints.active(self.name))
         remembered = await memory_block(inst, self.name, session)
-        config = dataclasses.replace(self.config, system=self.system + pinned + remembered)
+        repo = context_block(inst.workspace) if self.spec.workspace and inst.workspace else ""
+        system = self.system + repo + pinned + remembered
+        config = dataclasses.replace(self.config, system=system)
         text: str | None = safe_text
         for retry in (True, False):
             overflowed = False

@@ -2,7 +2,7 @@
 
 Di-Factory's general solution template: an agent runtime where every client
 solution is a declarative **solution spec** (a pack plus a client instance).
-Read `docs/ARCHITECTURE.md` (57 decisions, §7) before changing behaviour;
+Read `docs/ARCHITECTURE.md` (81 decisions, §7) before changing behaviour;
 `docs/spec/SOLUTION_SPEC.md` is the spec contract.
 
 ## Commands
@@ -63,10 +63,11 @@ setup mistakes the harness now catches early). Keep it in step with the CLI.
 - `src/dif_general_harness/documents/`: text from PDF/DOCX/XLSX, OCR with a vision role
 - `src/dif_general_harness/feedback/`: candidate and pinned constraints
 - `src/dif_general_harness/governance/`: PII tokenization, consent, audit chain, retention
-- `src/dif_general_harness/runtime/`: `Instance` (spec to runnable agents), role routing, prompts
+- `src/dif_general_harness/runtime/`: `Instance` (spec to runnable agents), role routing, prompts, skills
 - `src/dif_general_harness/channels/`, `triggers/`, `hitl/`: adapters (gateway, Telegram,
   API/web, email, Slack, voice), cron, file sources, the inbox
-- `src/dif_general_harness/service/`: the headless runtime (`Headless`), FastAPI app, config boot
+- `src/dif_general_harness/service/`: the headless runtime (`Headless`), FastAPI app, config boot,
+  `hooks.py` (signed events to client systems)
 - `src/dif_general_harness/tenancy/`: secrets (env, file, AWS) and config versions
 - `src/dif_general_harness/fleet/`: the outbound-only instance agent (signed, eval-gated offers)
 - `src/dif_general_harness/control/`: the control plane (fleet view, offers, rollouts, audit)
@@ -116,9 +117,12 @@ handover to a client's own Claude with the `admin` commands and owner FAQ edits 
 untrusted-content fences, cheap run caps and the FAQ-gaps list (70–72), and compaction when
 the model refuses a history as too long (73), and the business's published contact details
 shown to its customers (74), and real conversations replayed on every rebuild before it goes
-online (75).
+online (75); then the running client watched nightly and after document changes, and the
+same replay gating fleet offers (76–77), an OpenAI-compatible endpoint (78), skills in packs
+(79), repository instructions and wrapper-aware shell rules (80), and signed hooks to the
+client's systems (81).
 Next: GCP and Azure profiles.
 Known gaps: streaming (speech-to-speech) voice, knowledge connectors beyond files, S3,
 Drive and web pages (SharePoint, Notion... push through the admin API), pgvector for very
 large corpora, and a first apply of the AWS module in a real account. See
-`docs/ARCHITECTURE.md` §6 and decisions 43–64.
+`docs/ARCHITECTURE.md` §6 and decisions 43–81.
