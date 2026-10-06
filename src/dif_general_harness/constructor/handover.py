@@ -38,7 +38,7 @@ from ..tenancy import local_backend
 from .impact import missing
 
 LANGUAGES = {"es": "Spanish", "en": "English", "pt": "Portuguese", "fr": "French"}
-SKILLS = ("estado", "bandeja", "responder", "faq", "preguntas", "costos")
+SKILLS = ("estado", "bandeja", "responder", "faq", "preguntas", "mejoras", "costos")
 
 
 @dataclass
@@ -187,10 +187,12 @@ Everything goes through one command, run from this folder (never curl, never tok
 | Replace the FAQ | `./negocio faq set borradores/faq.md` |
 | Questions customers asked that the FAQ did not answer | `./negocio faq gaps` |
 | Mark one answered (or not for the assistant) | `./negocio faq done ID` (`dismiss ID`) |
+| What the weekly review suggests improving | `./negocio review` |
+| Why recent automatic runs (reminders, reports) stopped | `./negocio runs` |
 | Model spend by day | `./negocio costs` |
 
 Routines, step by step: `docs/operacion.md`. Skills in `.claude/skills/` cover the usual
-requests (estado, bandeja, responder, faq, costos).
+requests (estado, bandeja, responder, faq, preguntas, mejoras, costos).
 
 ## Rules you never break
 1. **Never send anything to a customer without {self.owner}'s explicit OK** on the exact text.
@@ -328,6 +330,19 @@ All commands run from this folder. They talk to the assistant on this server.
    medical question, a joke), `./negocio faq dismiss ID`. A question marked done that
    customers keep asking comes back to the list: the FAQ still does not answer it.
 
+## What the assistant itself flags (in the inbox)
+Besides conversations handed to a person, `./negocio inbox` can show:
+- **review**: every night the assistant answers its latest real conversations again; if a
+  reply got worse (after a document change, or a model update), it says which and how.
+  Show {self.owner} the before and after. If the FAQ is the cause, fix it (above); if not,
+  write it in `solicitudes/` for Di-Factory.
+- **proposal**: once a week it reads what went wrong repeatedly and **proposes** edits
+  (`./negocio review` shows them as before → after). Nothing is applied by itself.
+  - FAQ proposals: {self.owner} decides, and you apply the accepted ones like any FAQ
+    change.
+  - Proposals for the assistant's instructions, skills or rules: Di-Factory's. Copy them
+    into a request in `solicitudes/`.
+
 ## Costs
 `./negocio costs` shows model spend by day at list prices. A normal conversation turn costs
 a fraction of a cent. If a day looks unusual, look at that day's conversations.
@@ -438,7 +453,8 @@ you write the request. Contact: {self.support}.
 
     def wrapper(self) -> str:
         return f"""#!/usr/bin/env bash
-# Operate {self.name}'s assistant on this server: ./negocio status | inbox | show | reply | faq | costs
+# Operate {self.name}'s assistant on this server:
+#   ./negocio status | inbox | show | reply | faq | review | runs | costs
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 exec uv run --quiet --project "{self.harness}" dif-general-harness admin "$@"
@@ -451,12 +467,13 @@ exec uv run --quiet --project "{self.harness}" dif-general-harness admin "$@"
                 "allow": [
                     "Bash(./negocio status)", "Bash(./negocio inbox)", "Bash(./negocio show:*)",
                     "Bash(./negocio faq show:*)", "Bash(./negocio faq gaps:*)",
-                    "Bash(./negocio costs:*)",
+                    "Bash(./negocio costs:*)", "Bash(./negocio review)", "Bash(./negocio runs:*)",
                     "Read(./**)", "Edit(./borradores/**)", "Write(./borradores/**)",
                     "Edit(./solicitudes/**)", "Write(./solicitudes/**)",
                 ],
                 "ask": ["Bash(./negocio reply:*)", "Bash(./negocio faq set:*)",
-                        "Bash(./negocio faq done:*)", "Bash(./negocio faq dismiss:*)"],
+                        "Bash(./negocio faq done:*)", "Bash(./negocio faq dismiss:*)",
+                        "Bash(./negocio review --now)"],
                 "deny": [
                     "Read(~/.dif/**)", f"Read({harness}/deploy/build/**/secrets/**)",
                     f"Edit({harness}/**)", f"Write({harness}/**)",
@@ -477,10 +494,11 @@ exec uv run --quiet --project "{self.harness}" dif-general-harness admin "$@"
             ),
             "bandeja": (
                 "Conversations handed to a person and what each customer wants.",
-                "1. Run `./negocio inbox`.\n2. For each item, `./negocio show"
+                "1. Run `./negocio inbox`.\n2. For each conversation, `./negocio show"
                 " SESSION` and summarize: who, what they asked, since when.\n3."
                 " Offer a reply for each (skill responder). Never send without the"
-                " owner's OK.",
+                " owner's OK.\n4. A `review` item (replies got worse) or a `proposal`"
+                " (the weekly review's suggestions): see skill mejoras.",
             ),
             "responder": (
                 "Answer a customer as the owner, with their explicit OK.",
@@ -511,6 +529,16 @@ exec uv run --quiet --project "{self.harness}" dif-general-harness admin "$@"
                 " faq), then `./negocio faq done ID` for each one covered, or"
                 " `./negocio faq dismiss ID` for what the assistant should not answer;"
                 " both only with the owner's OK.",
+            ),
+            "mejoras": (
+                "What the assistant suggests improving, and replies that got worse.",
+                "1. `./negocio review` shows the weekly review's proposed edits (before →"
+                " after) and why; `./negocio inbox` shows `review` items (replies that got"
+                " worse after a nightly check).\n2. Explain each in plain words, with the"
+                " customer's example.\n3. FAQ proposals: if the owner agrees, apply them"
+                " with skill faq. Anything else (instructions, skills, rules): write a"
+                " request in `solicitudes/` for Di-Factory. Nothing is applied by itself;"
+                " never apply a proposal without the owner's OK.",
             ),
             "costos": (
                 "Model spend by day, and whether anything looks unusual.",

@@ -1,13 +1,15 @@
-# Solution Spec v1 — draft
+# Solution Spec v1
 
-Status: **Draft for review** · 2026-09-27 · Implements `ARCHITECTURE.md` §3.0
+Status: **In use** (v1.0 plus decisions 58–92) · drafted 2026-09-27, updated 2026-10-06 ·
+Implements `ARCHITECTURE.md` §3.0
 
 A **solution spec** describes one Di-Factory client solution as data. The
 harness loads it, validates it (Pydantic, in M0) and builds a tenant-scoped
 **instance** from it. The goal is the PyME promise made concrete: the
 **template** is the 80%, and the spec is the 20%.
 
-This draft was checked on paper against six different solution shapes (§9):
+The draft was checked on paper against six different solution shapes (§9); a seventh
+example, the Research Graph pack (§5.20), came later:
 - chat-style: a PyME Appointment Agent, a Service Desk cell and a
   Conversational RAG assistant;
 - non-chat: a batch Receipt Processing job, a Dev cell and an OPC-style
@@ -828,6 +830,24 @@ aliases file is `missing_file`; a `foreach` on an unknown graph is `unknown_grap
    registry at load time**. Every resulting tool with an `external` effect must
    be covered by `ask`, `verify`, or an explicit `allow` with a reason.
 9. References to `var.*` inside CEL conditions count as uses of the variable.
+10. Every rule has an error code, and each code has a planted-error test
+    (`tests/test_spec_rules.py`). The codes:
+    - **references:** `unknown_agent`, `unknown_channel`, `unknown_check`,
+      `unknown_corpus`, `unknown_graph`, `unknown_model_role`, `unknown_step`,
+      `unknown_template`, `unknown_tool_namespace`, `unknown_trigger`,
+      `unknown_workflow`, `unknown_workspace`, `undeclared_secret`,
+      `undeclared_variable`, `missing_file`;
+    - **values:** `missing_value`, `invalid_value`, `unknown_value`,
+      `unresolved_variable`, `model_not_set`;
+    - **shapes:** `invalid_condition`, `invalid_duration`, `invalid_permission_rule`,
+      `invalid_python_ref`, `invalid_source`, `invalid_sync_schedule`, `invalid_voice`,
+      `invalid_public`, `invalid_branding`, `invalid_skill` (§5.18), `invalid_hook` (§5.19),
+      `invalid_graph` (§5.20);
+    - **safety:** `safety_weakened`, `region_violation`, `unguarded_external`, `no_evals`.
+
+    Warnings (`uncovered_tool`, `eval_missing`, `missing_deploy`...) do not block. At
+    runtime an instance also warns about what only the live tool registry shows:
+    `many_tools` and `overlapping_tools` (decision 92).
 
 ## 7. Versioning
 

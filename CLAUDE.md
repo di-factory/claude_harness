@@ -42,6 +42,12 @@ All four checks must pass before every commit.
 Setting up a server or a first client: `docs/GETTING_STARTED.md` (phases, checkpoints and the
 setup mistakes the harness now catches early). Keep it in step with the CLI.
 
+A behaviour change is done when its docs are: the decision in `docs/ARCHITECTURE.md` §7 (and
+§3 or §6 when the design or roadmap moves), the spec contract (`docs/spec/SOLUTION_SPEC.md`),
+`docs/GETTING_STARTED.md` and `README.md` for what an operator does, `docs/PRD.md` for a new
+requirement, `integrations/openclaw-skill/SKILL.md` for what Teky runs, and
+`constructor/handover.py` plus `.claude/skills/handover/` for what a client's Claude is told.
+
 ## Layout
 
 - `src/dif_general_harness/core/`: scope (tenant ids), messages, events, session, agent loop
@@ -52,7 +58,6 @@ setup mistakes the harness now catches early). Keep it in step with the CLI.
   `python.py` and `python_sandbox.py` (pack extensions), `egress.py` (the sandbox proxy),
   `packs/` (coding, general, documents, google_calendar)
 - `src/dif_general_harness/policy/`: permissions and approvals, budgets, secret redaction
-- `src/dif_general_harness/tenancy/`: secret backends and `$secret` resolution
 - `src/dif_general_harness/store/`: database layer (SQLite/Postgres, migrations), SQL and JSONL
   session stores (redacted)
 - `src/dif_general_harness/workflows/`: durable job queue and worker, workflow engine (`foreach`,
@@ -72,12 +77,14 @@ setup mistakes the harness now catches early). Keep it in step with the CLI.
   API/web, email, Slack, voice), cron, file sources, the inbox
 - `src/dif_general_harness/service/`: the headless runtime (`Headless`), FastAPI app, config boot,
   `hooks.py` (signed events to client systems), `review.py` (the weekly review)
-- `src/dif_general_harness/tenancy/`: secrets (env, file, AWS) and config versions
+- `src/dif_general_harness/tenancy/`: secret backends (env, file, AWS), `$secret` resolution and
+  config versions
 - `src/dif_general_harness/fleet/`: the outbound-only instance agent (signed, eval-gated offers)
 - `src/dif_general_harness/control/`: the control plane (fleet view, offers, rollouts, audit)
 - `src/dif_general_harness/observability/`: cost ledger and reports, quality metrics, OTLP traces
 - `src/dif_general_harness/console/`: Textual TUI
-- `src/dif_general_harness/constructor/`: matching, interview, build, evals, approve and deploy
+- `src/dif_general_harness/constructor/`: matching, interview, build, the guided `setup`, site
+  reading, brand, evals (`ablation.py`), `replay.py`, approve and deploy, lifecycle, `handover.py`
 - `deploy/docker/`, `deploy/terraform/aws/`: the image and the AWS module (profiles, alarms,
   `tests/*.tftest.hcl` against a mocked provider)
 - `integrations/openclaw-skill/`: the wrapper Teky uses to drive the constructor

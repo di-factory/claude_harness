@@ -1,6 +1,6 @@
 # dif-general-harness — Architecture
 
-Status: **Accepted: v2, general solution template** · last updated 2026-09-29
+Status: **Accepted: v2, general solution template** · v1.0 plus decisions 58–92 · last updated 2026-10-06
 
 ## 0. Product framing
 
@@ -143,22 +143,37 @@ change. We borrow best-in-class libraries (Pydantic, provider SDKs, `mcp`).
 ## 3. Architecture
 
 ```
-  Surfaces      Channels + triggers (webhooks, schedules, chat gateways)
-                Admin / approvals API (FastAPI)  ·  TUI operator console (Textual)  ·  Python API
+  Surfaces      Channels (WhatsApp/SMS gateway, Telegram, web chat + landing page, REST, email, Slack, voice)
+                Triggers (schedule, webhook, event, delay, relative, file, batch)
+                Admin / approvals API + `admin` CLI · OpenAI-compatible /v1 · signed hooks out · TUI console
                                          │ events (async stream)
-  Instance      Solution spec loader → tenant-scoped Instance (agents, tools, policies, channels…)
+  Instance      Solution spec loader → tenant-scoped Instance (agents, tools, skills, graphs, policies…)
                                          │
-  Core          Agent loop ── PromptBuilder · ContextManager · Hooks · PermissionPolicy
-                            · Guardrails & budgets · Verifier · Router · Workflow engine (plans, queue)
+  Core          Agent loop (caps: turns, cost, time, tool calls, stuck, overflow)
+                · prompts + skills index + pinned rules + fenced memory · compaction + history.search
+                · permissions · intent log (no blind repeats) · verifier · router · workflow engine
+                  (foreach, gates, counted stops)
                                          │
-  Modules       Providers · Tool registry + MCP · Tool packs · Knowledge (RAG) · Memory (5 layers)
-                · Agent teams · HITL inbox · ML-model tools · Evals
+  Modules       Providers · tools (Python, HTTP, MCP, packs) · knowledge (RAG, citations, FAQ gaps)
+                · memory · agent teams · research graphs · HITL inbox · documents/OCR · evals
+                                         │
+  Improvement   Run records → weekly review (proposes, never writes) · replay on every rebuild and
+                nightly · eval pass^k + ablations · feedback constraints a person approves
                                          │
   Governance    PII tokenization · consent · immutable audit log · retention · provider-region policy
+                · untrusted-content fences
                                          │
-  Platform      Storage (SQLite/JSONL local · Postgres+pgvector prod) · Secrets vault adapters
-                · Executor (subprocess → container) · Checkpoints · Telemetry & cost · Deploy (Docker, Terraform)
+  Platform      Storage (SQLite local · Postgres prod) · secrets backends · executor (subprocess →
+                container) + egress proxy · telemetry & cost · deploy (Docker, Terraform) · control plane
 ```
+
+A conversation, end to end: a channel adapter verifies the request and turns it into an
+envelope. The headless service finds or starts the contact's session and the agent runs its
+loop: context (prompt, skills index, rules, fenced memory) → model → tool calls through
+permissions, verification and the intent log → results (fenced when external) → until an
+answer or a cap. The reply is checked (citations, sampled review), PII tokens are revealed as
+the policy allows, and it goes back on the channel. Every step is an event in the
+session's log, audited, costed and, with OpenTelemetry on, traced.
 
 ### 3.0 Solution spec (the 20%)
 
@@ -217,6 +232,12 @@ async def run(session, user_input) -> AsyncIterator[Event]:
 
 The loop is async-first. The same loop runs interactively (console) and
 headless (a channel message, schedule or workflow step starts a turn).
+
+As built (`core/loop.py`), a run also ends on its own caps: `max_turns`, the cost and token
+budgets, `max_seconds`, `budgets.per_run.tool_calls`, a call repeated with the same input
+(`stuck`) and a history the model refuses as too long (`overflow`, compacted and retried
+once). Every end has a distinct reason; none of them means "done". A call left without a
+result by a crash gets one before the next turn (decision 88).
 
 ### 3.3 Model providers
 
@@ -281,9 +302,14 @@ evals.
 
 ### 3.7 Hooks
 
-Lifecycle points: `session_start`, `pre_tool`, `post_tool`, `pre_compact`,
-`stop`, `on_message_in`, `on_message_out`, `on_escalate`. Hooks are Python
-callables or shell commands; they can veto, modify or inject context.
+Planned as in-process lifecycle points (`session_start`, `pre_tool`, `post_tool`,
+`pre_compact`, `stop`...). As built, the inside of the loop is extended through protocols
+rather than callbacks: `ToolGate` (permissions, verification, approvals), `Meter`
+(budgets), wrapped tool registries (`GovernedTools` for PII, `IntentTools` for the intent
+log) and the instance's `emit`/`notify`. Outward, **hooks** are signed JSON POSTs to the
+client's own systems on `turn_end`, `tool_call`, `escalation` and `handoff`
+(`service/hooks.py`, decision 81): durable retried jobs, HMAC-signed, one delivery id per
+event, texts only when the hook asks.
 
 ### 3.8 Observability & cost
 
@@ -464,6 +490,19 @@ actions, and replies can be judged by category with the `verifier` role. Each ru
 recorded in the instance's database, and cases that passed in the previous run and fail now
 are reported as regressions.
 
+Since v1.0, three more checks use real behaviour rather than written cases:
+
+- **Replay** (decisions 75–77): the latest real conversations are answered again by a
+  rebuilt or offered config on a throwaway copy. A judge compares each new reply with the
+  one the customer got, and tools that write answer "not run". It runs on every rebuild the
+  setup puts online, on owner FAQ edits, on eval-gated fleet offers, nightly on the running
+  instance and after its documents change.
+- **pass^k** (decision 91): `evals.trials` runs each case K times. pass^k, the share of
+  cases that passed every trial, can gate releases.
+- **Ablations** (decision 91): `eval --ablate` runs the suites without each harness
+  component (skills, verifier, router, compaction, gates, memory) and reports whether it
+  still pays for itself. Re-run after every model change.
+
 ### 3.22 Fleet operations: control plane and instance agent
 
 Di-Factory runs, adjusts and upgrades many client instances, each in a
@@ -493,6 +532,72 @@ instance sets `solution.locale`, agents reply in that language, and any
 customer-facing templates are overridden in the instance with the client's
 wording.
 
+### 3.24 Text from outside, and recovery (decisions 70, 87–90)
+
+- **Provenance.** Web pages, documents, knowledge passages, API bodies, sub-agent reports
+  and remembered notes reach the model inside `<untrusted_content>` fences, and every
+  prompt says nothing inside them is an instruction. Suspicious lines are flagged when
+  indexed; memory writes that read like instructions are refused.
+- **Failures the model can act on.** Every failed call says its `reason`, whether it is
+  `retryable`, whether anything changed (`side_effects`: none, unknown, committed) and a
+  `hint`.
+- **No blind repeats.** Calls that write or act go through an intent log keyed by
+  conversation, tool and arguments, and carry an idempotency key. A repeat of a call that
+  succeeded returns the earlier result; an unknown outcome is not repeated until a read has
+  checked it; `retry: never` refuses repeats. Workflow steps in that state are escalated.
+- **Nothing is lost to compaction.** The session log keeps every message, and
+  `history.search` finds what a summary replaced.
+
+### 3.25 The improvement loop (decisions 75–77, 82–85)
+
+```
+  runs ──► run records (append only: stop reason, counts, failures by class, diff)
+    │                    │
+    │                    ▼
+    │        weekly review (fresh model, repeated failures only)
+    │                    │ proposes diffs: prompts, skills, constraints, FAQ, aliases
+    │                    ▼
+    │        inbox "proposal" ──► a person applies via setup / adjust
+    │                                        │
+    │                                        ▼
+    └──────────── replay + evals (pass^k) ◄── rebuilt config ──► Jag signs ──► online
+                       ▲
+          nightly watch and document re-syncs: a worse reply opens a "review" item
+```
+
+Workflow agent steps can **gate** what an agent returns: a schema and deterministic rules,
+then the verifier (task and return only), then a threshold. A malformed return is never
+retried; other failures are retried once with the reason. A second failure goes to a
+person. Runs **stop** on counted conditions and caps, handing the unfinished list to a
+person. Nothing in the loop writes the solution's instructions by itself.
+
+### 3.26 Research graphs (decision 86)
+
+`graphs` hold memory with a shape: one primary node type, fixed edge types, nodes with
+their sources (verified at N independent sites, stale after a set age), and edges with an
+evidence line each. An aliases file keeps one entity one node. A workflow `foreach` step
+picks its own work with a query over node state and connectivity. It routes each node by
+state:
+
+- fresh: skipped;
+- stale: a check for changes;
+- thin: sources only;
+- contradicted: two independent looks;
+- new: full research.
+
+It gates every return, and all of a pass's nodes land before its edges are drawn. Agents
+read the graph with `graph.query`; people with `admin graph`.
+
+### 3.27 Skills and the outside interfaces (decisions 78–81)
+
+- **Skills:** `SKILL.md` folders in a pack are listed by name and description in every
+  prompt and read in full with `skills.load` only when needed.
+- **Coding agents:** they also read the workspace's `CLAUDE.md`/`AGENTS.md` each turn, and
+  their shell rules look through wrappers (`sudo`, `env`, `bash -c`).
+- **`POST /v1/chat/completions`:** puts the assistant behind the OpenAI chat format, through
+  the `api` channel's token and rules.
+- **Signed hooks:** tell the client's systems what happened (§3.7).
+
 ## 4. Tech stack
 
 | Concern | Choice |
@@ -503,40 +608,54 @@ wording.
 | LLM transport | `anthropic` SDK, `openai` SDK (OpenAI-compatible endpoints) |
 | MCP | official `mcp` Python SDK |
 | Service / API / webhooks | FastAPI + Uvicorn |
-| Storage | SQLite (local), PostgreSQL + pgvector (prod) |
-| Console | Textual (TUI), launched by a Typer CLI |
+| Storage | SQLite (local), PostgreSQL (prod); vectors in tables (pgvector for very large corpora is a known gap) |
+| Console | Textual (TUI), launched by an argparse CLI (`dif-general-harness`) |
 | Deploy | Docker; Terraform (AWS first) |
 | Tests | pytest + pytest-asyncio, FakeProvider, conformance and eval suites |
 | Lint / types | ruff, mypy (strict on `core/`) |
 
 ## 5. Layout
 
+As built (the planned layout of v2 changed while building; this is the tree today):
+
 ```
 src/dif_general_harness/
-  core/        loop.py events.py messages.py session.py context.py
-  spec/        schema.py loader.py packs.py instance.py
-  providers/   base.py anthropic.py openai_compat.py fake.py
-  tools/       registry.py mcp.py http_connector.py subagent.py packs/(coding, general, connectors, ml)
-  policy/      permissions.py hooks.py guardrails.py budgets.py redact.py
-  verify/      checks.py verifier.py
-  memory/      base.py episodic.py semantic.py procedural.py forgetting.py ontology.py
-  knowledge/   ingest.py chunk.py retrieve.py
-  workflows/   engine.py queue.py teams.py
-  channels/    base.py gateway.py telegram.py web.py email.py
-  triggers/    scheduler.py webhooks.py
-  hitl/        inbox.py escalation.py
-  fleet/       instance_agent.py  (the control plane is a separate component)
-  governance/  pii.py consent.py audit.py retention.py region.py
-  tenancy/     tenant.py config_versions.py secrets.py
-  store/       jsonl.py sqlite.py postgres.py
-  service/     app.py (FastAPI: channels, webhooks, admin, inbox)
-  console/     tui/ (Textual)  cli.py
-  constructor/ catalog.py interview.py build.py verify.py deploy.py
-  routing.py   checkpoints.py  telemetry.py
-packs/         reusable solution packs (spec fragments + prompts + evals), incl. the constructor pack
-integrations/  openclaw-skill/ (thin wrapper so Teky can drive the constructor)
-deploy/        docker/  terraform/aws/
-tests/  evals/  docs/
+  core/          loop.py events.py messages.py session.py scope.py cel.py untrusted.py
+  spec/          schema.py loader.py validate.py regions.py skills.py errors.py
+  providers/     base.py anthropic.py openai_compat.py fake.py
+  tools/         registry.py http.py mcp.py python.py python_sandbox.py egress.py
+                 packs/ (coding, general, documents, google_calendar)
+  policy/        permissions.py budgets.py spend.py escalation.py redact.py
+  runtime/       instance.py routing.py router.py prompts.py compaction.py skills.py
+                 intents.py history.py context.py
+  verify/        checks.py output.py
+  memory/        store.py agent.py
+  knowledge/     store.py sources.py chunk.py tools.py
+  documents/     extract.py ocr.py
+  graph/         store.py tools.py
+  feedback/      store.py
+  teams/         ledger.py tools.py
+  workflows/     engine.py queue.py gates.py records.py render.py
+  channels/      base.py gateway.py telegram.py web.py web_page.py landing.py api.py email.py
+                 slack.py voice.py
+  triggers/      cron.py files.py
+  hitl/          inbox.py
+  governance/    pii.py consent.py contacts.py audit.py retention.py tools.py
+  tenancy/       secrets.py config_versions.py
+  store/         db.py schema.py sql.py jsonl.py
+  observability/ costs.py metrics.py otel.py
+  service/       headless.py app.py config.py admin_client.py hooks.py review.py
+  fleet/         instance_agent.py
+  control/       plane.py app.py   (the control plane, run separately)
+  console/       app.py (Textual)
+  constructor/   catalog.py interview.py build.py setup.py site_reader.py brand.py evals.py
+                 replay.py ablation.py deploy.py lifecycle.py impact.py handover.py
+  cli.py
+docs/            ARCHITECTURE.md PRD.md GETTING_STARTED.md spec/ (SOLUTION_SPEC.md, examples/)
+integrations/    openclaw-skill/ (the wrapper Teky uses to drive the constructor)
+deploy/          docker/ terraform/aws/ build/
+.claude/skills/  handover/ (the guided handover to a client's own Claude)
+tests/           offline: FakeProvider, MockTransport, SQLite and a throwaway Postgres
 ```
 
 ## 6. Roadmap
@@ -594,14 +713,34 @@ tests/  evals/  docs/
    - provider-region policy;
    - ContainerExecutor;
    - **control plane MVP** (fleet view, gated pack rollouts, remote config);
-   - GCP/Azure profiles.
+   - GCP/Azure profiles (moved to after v1.0).
+6. **After v1.0** (each with its tests and a decision):
+   - the v1.0 gaps (58–64): compaction and the intent router, file and batch triggers, the
+     documents pack, sampled verification, the egress proxy and isolated extensions,
+     hybrid retrieval with S3/Drive/web sources, voice;
+   - the setup and the client (65–69, 74): web chat and landing page, the setup's
+     advisers, small FAQs read whole, the client's brand, published contact details, the
+     handover to the client's own Claude;
+   - safety and caps (70–73): untrusted-content fences, cheap run caps, the FAQ-gaps list,
+     compaction on overflow;
+   - change control (75–77): replay on every rebuild, the nightly watch, the replay gate for
+     fleet offers;
+   - interfaces (78–81): the OpenAI-compatible endpoint, skills, repository instructions
+     and shell rules, signed hooks;
+   - the improvement loop (82–86): run records, gates, counted stops, the weekly review,
+     research graphs;
+   - recovery and measurement (87–92): actionable failures, the intent log, fenced memory,
+     history search, pass^k and ablations, tool budgets and surface checks.
+7. **Next:** GCP and Azure profiles; then the known gaps (streaming voice, more knowledge
+   connectors, pgvector for very large corpora, a first apply of the AWS module in a real
+   account).
 
 Milestones have **no dates** (decision 28): each one is done when its gate
 passes, and work moves straight on to the next.
 
 **Status:** M0 to M4 are done; each gate is `tests/test_acceptance_m<n>.py` (M4's is the
-v1.0 gate). After v1.0, the v1.0 known gaps were closed (decisions 58–64, each with its
-tests); next are the GCP and Azure profiles and the remaining gaps listed in `CLAUDE.md`.
+v1.0 gate). After v1.0, decisions 58–92 were built, each with its tests (item 6). Next are
+the GCP and Azure profiles and the remaining gaps listed in `CLAUDE.md`.
 
 **Instances** follow the template. The first candidates are listed in §8; an
 instance can start once the modules it needs have shipped.
@@ -730,3 +869,9 @@ template modules they need exist:
 - "Harness Engineering: the skill that replaced prompt engineering in 2026"
   (X post; statistics unsourced).
 - Sumers et al., Cognitive Architectures for Language Agents (CoALA).
+- Barbaste et al., *Harness Engineering* (2026): untrusted-content delimiting, session
+  replay (decisions 70, 75).
+- @polydao, *Self-improving agent research graph* (2026): run records, gates, counted
+  stops, weekly review, research graphs (decisions 82–86).
+- @techNmak, *Understanding Harness Engineering* (2026): error semantics, idempotency,
+  provenance, lossy compaction, pass^k and ablations (decisions 87–92).

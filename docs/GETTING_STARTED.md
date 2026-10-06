@@ -303,10 +303,13 @@ claude`): `CLAUDE.md` (who Claude works for, the business, the addresses, the ru
 breaks), `docs/` (the business from the client's own answers, the solution, daily routines,
 what is not connected yet and its impact, what the client changes and what goes through
 Di-Factory), `GUIA.md` (one page for the client, in their language), `negocio` (the one
-command Claude runs: `./negocio status | inbox | show | reply | faq | costs`, i.e.
+command Claude runs: `./negocio status | inbox | show | reply | faq | review | runs | costs`, i.e.
 `dif-general-harness admin` against the instance on this server), `.claude/` (permissions:
 replies to customers and FAQ changes always ask first; secrets, Docker, the harness are
-denied; and skills for the daily tasks) and `HANDOVER.md`, Di-Factory's checklist.
+denied; and skills for the daily tasks, including `mejoras`: what the weekly review proposes
+and the replies the nightly replay found worse) and `HANDOVER.md`, Di-Factory's checklist.
+Before the handover, clear Di-Factory's own open `review` and `proposal` items, so the client
+does not inherit them.
 
 It also checks what it can and exits 1 until it holds: no approver key (`jag.key`) left on the
 client's server, the admin token in place, a model key set, Claude Code installed. The rest is
@@ -334,6 +337,8 @@ marked done that customers keep asking comes back: the FAQ still does not cover 
 | A handoff although the FAQ has the answer (in other words, or in English) | Older instances match words only | `git pull` and rebuild: the appointment pack now reads small FAQs whole (`read_whole_below`) |
 | "No tengo esa información" and a handoff | The FAQ does not cover the question: the agent never invents | `admin faq gaps` lists every such question; answer them in the questionnaire (or `admin faq set`) and rebuild |
 | A reply ends with "Turn ended with stuck" or "timeout" in the inbox | The assistant repeated the same tool call or every tool failed three turns in a row, or a reply took longer than 240 s (`max_seconds` per agent): the run stops and a person gets it | Look at the conversation (`admin show SESSION`); usually a connector is down or misconfigured |
+| The assistant says an action "may already have happened" and will not repeat it | A call that writes (a booking, a ticket) timed out or lost its answer, so its outcome is unknown; it is not repeated blindly (decision 88) | Let it check (it will use a read tool), or check the calendar or CRM yourself; a workflow step in that state is in the inbox for a person |
+| `admin review --now` answers 501; no nightly `review` items ever appear | The pack has no `verifier` model role, or `DIF_REVIEW=off` / `DIF_REPLAY_WATCH=off` is set | Add a `verifier` role to the pack (a small model is enough) and rebuild |
 | "Turn ended with overflow" in the inbox | The conversation outgrew the model's context and could not be compacted (the pack has no `compaction` model role, or a single message or tool result is too large) | Give the pack a `compaction` role (a small model); with one, the harness compacts and retries on its own |
 | `knowledge_suspicious` warning | A document or page contains text written like instructions to an AI (a possible prompt injection); the assistant only ever reads it as data | Check the named document and remove that text |
 | `API key is invalid` (401) in the logs, or `holds N keys one after another` | The paste arrived more than once (some terminals repeat it into hidden prompts), so the stored key is several keys glued together | `secrets set anthropic` again and paste once; the setup and `secrets set` now refuse such keys. Then copy it into `deploy/build/<id>/secrets/` (or run `./setup.sh` again) |

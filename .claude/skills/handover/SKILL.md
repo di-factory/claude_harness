@@ -24,6 +24,12 @@ Rules for the whole skill:
    fine-tuning is `./setup.sh` → reuse the client.
 3. Check it is online: `curl -fsS https://$HOST/healthz` (the host is the second line of
    `.dif/online`). If it is not, stop and say so.
+4. Check what it watches by itself: `uv run dif-general-harness admin inbox` should hold no
+   unread `review` items (replies that got worse in the nightly replay), and
+   `uv run dif-general-harness admin review` no open `proposal`. If there are, go through
+   them with the operator first: a client should not inherit Di-Factory's open work. The
+   nightly watch and the weekly review need the pack's `verifier` model role; without it they
+   stay off (`admin review --now` says so): tell the operator.
 
 ## 2. What the documents need
 Ask, in one message: the owner's name, the language they speak (es, en...), and how they reach
@@ -51,8 +57,10 @@ moves to the client's (moving is manual; it is listed in `HANDOVER.md`).
 uv run dif-general-harness handover clients/$ID.json --owner "NAME" --lang LANG \
     --support "CONTACT" --url https://$HOST
 ```
-It writes `~/<tenant>/` (CLAUDE.md, docs/, GUIA.md, the `negocio` command, .claude/) and lists
-its checks. Then try the client's command: `cd ~/<tenant> && ./negocio status`.
+It writes `~/<tenant>/` (CLAUDE.md, docs/, GUIA.md, the `negocio` command, .claude/ with the
+skills estado, bandeja, responder, faq, preguntas, mejoras and costos) and lists its checks.
+Then try the client's command: `cd ~/<tenant> && ./negocio status`, and
+`./negocio review` (the weekly review's proposals, usually none yet).
 
 ## 5. Jag's key leaves the server
 Deploys are signed by Di-Factory, never on a client's machine.

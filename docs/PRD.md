@@ -3,7 +3,8 @@
 2026-09-27 · Jag Pascoe · Snapshot of the living PRD at
 <https://claude.ai/code/artifact/786caf13-560e-4a91-aa7a-775a14d99d03>
 (the live doc has the architecture and roadmap diagrams). Technical design:
-[`ARCHITECTURE.md`](ARCHITECTURE.md).
+[`ARCHITECTURE.md`](ARCHITECTURE.md). Updated 2026-10-06 in this repository with the
+requirements built after v1.0 (FR-33 to FR-46, decisions 58–92).
 
 ## Overview
 
@@ -131,13 +132,27 @@ P0 = required for the milestone; P1 = planned for v1; P2 = after v1. Milestones 
 | FR-23 | Deploy | Hardened Terraform for AWS (sizing profiles, upgrades, rollback); one-command deploy into the client account | P0 | M4 | US-5 |
 | FR-24 | Observability | Cost per tenant, vendor and role; quality metrics; OpenTelemetry export | P1 | M2 (cost), M4 (OTel) | US-11 |
 | FR-25 | Governance | Provider-region policy; CNBV and NOM-024 profiles | P2 | M4+ | US-10 |
-| FR-26 | Channels | Voice (speech-to-text and text-to-speech); Slack | P2 | after v1 | US-6 |
+| FR-26 | Channels | Voice (speech-to-text and text-to-speech); Slack | P2 | after v1 (built: Slack; voice through the provider's speech, not streaming) | US-6 |
 | FR-27 | Fleet | Instance agent (outbound only): reports health, metrics, costs and eval results; pulls approved config and pack upgrades; revocable by the client | P0 | M2 | US-15 |
 | FR-28 | Fleet | Control plane MVP: fleet view across clients, pack upgrades rolled out instance by instance and gated by evals, remote config through versioned config, audit of every change | P1 | M4 | US-15 |
 | FR-29 | Constructor | v1: match a request to packs, interview from pack questionnaires (`variables[*].ask`), write the instance spec, validate, run offline evals | P0 | M1 | US-16 |
 | FR-30 | Constructor | v2: approval gate (Jag), deploy to Docker or basic AWS, client-held secrets; OpenClaw skill so Teky can drive it | P0 | M2 | US-16 |
 | FR-31 | Constructor | v3: adjust and upgrade live instances through the same flow; register with the control plane | P1 | M4 | US-15, US-16 |
 | FR-32 | Deploy | Basic AWS deploy (minimal Terraform: container, Postgres, Secrets Manager, one region) | P0 | M2 | US-5 |
+| FR-33 | Setup | One command on a fresh server (`./setup.sh`): install, guided questionnaire with advisers, the client's brand from any material, web sites read and written up as the FAQ, HTTPS online | P0 | after v1 | US-16 |
+| FR-34 | Channels | A web chat page and landing page per instance, private or public; the business's published contact details shown to customers | P1 | after v1 | US-6 |
+| FR-35 | Handover | The finished solution handed to the client's own Claude: their keys, documents, `admin` commands, owner FAQ edits; Di-Factory's access removed | P0 | after v1 | US-16 |
+| FR-36 | Knowledge | Questions the documents did not answer listed for the owner (FAQ gaps), most asked first | P1 | after v1 | US-13 |
+| FR-37 | Change control | Real conversations replayed and judged before a rebuild goes online, before an owner's FAQ edit applies, before a fleet offer activates; nightly and after documents change | P0 | after v1 | US-3, US-15 |
+| FR-38 | Safety | Text from outside (pages, documents, API bodies, memory, sub-agent reports) fenced as data; cheap run caps (stuck, timeout, overflow, tool calls) | P0 | after v1 | US-8 |
+| FR-39 | Interfaces | OpenAI-compatible endpoint through the `api` channel; signed hooks to the client's systems | P1 | after v1 | US-11 |
+| FR-40 | Packs | Skills (`SKILL.md`) loaded only when a request needs them | P1 | after v1 | US-3 |
+| FR-41 | Improvement | Run records for every run; a weekly review that proposes edits from repeated failures and never applies them | P1 | after v1 | US-8 |
+| FR-42 | Workflows | Gates on agent returns (schema, verifier, threshold; retry once with the reason), counted stop conditions and caps | P1 | after v1 | US-8 |
+| FR-43 | Research | Research graphs: nodes with sources, edges with evidence, aliases; runs that choose their own work from graph state | P2 | after v1 | US-13 |
+| FR-44 | Recovery | Side-effecting calls recorded before they run, with idempotency keys; never repeated blindly; failures say whether they can be retried and whether anything changed | P0 | after v1 | US-8 |
+| FR-45 | Context | What compaction summarised can be searched again in the conversation's own log | P2 | after v1 | US-12 |
+| FR-46 | Evals | pass^k over repeated trials, and ablations that show whether each harness component still pays for itself | P1 | after v1 | US-3 |
 
 ## Non-functional requirements
 
@@ -219,6 +234,16 @@ The template succeeds when new client solutions are mostly configuration and run
 - [x] **Knowledge:** answers cite sources, and say "not found" when retrieval is below threshold. *(gate M3)*
 - [ ] **Deploy:** one command deploys an instance to a clean AWS account, and rollback restores the previous config. *(offline in the M4 gate: the one-command plan, the module's tests against a mocked provider, and rollback; the first apply in a real AWS account is still to do)*
 
+**Acceptance tests (after v1.0, each in its own test file)**
+
+- [x] **Replay:** a rebuild whose replies got worse on real conversations is held back for a person; a replay never acts on the world. *(`test_replay.py`)*
+- [x] **Injection:** text from outside is fenced, memory writes that read like instructions are refused, and sub-agent reports arrive fenced. *(`test_untrusted.py`, `test_recovery.py`)*
+- [x] **No duplicates:** a side-effecting call whose outcome is unknown is not repeated until checked; an interrupted call gets a result before the next turn. *(`test_recovery.py`)*
+- [x] **Improvement loop:** gates retry once with the reason; runs stop at counted conditions and caps; the weekly review proposes and never writes. *(`test_improvement_loop.py`)*
+- [x] **Research graphs:** a graph grows from its own state, skips settled nodes and keeps conflicting values with dates. *(`test_research_graph.py`)*
+- [x] **Measurement:** pass^k and ablations report per component. *(`test_ablation.py`)*
+- [ ] **Real models:** the post-v1 features run against a real model on a live server (offline tests only so far).
+
 ## Milestones and release plan
 
 The template ships in five milestones, owned by Jag Pascoe with agent builders. There are no time goals: each milestone closes when its gate of acceptance tests passes. Client instances start once the modules they need have shipped.
@@ -230,6 +255,8 @@ The template ships in five milestones, owned by Jag Pascoe with agent builders. 
 | M2 Runtime | headless service, channels and triggers, durable queue, approvals inbox, PII and consent, audit and Postgres, instance agent, basic AWS deploy, constructor v2 | governance |
 | M3 Intelligence | 5-layer memory, knowledge (RAG), verification, agent teams, feedback loop, pack evals | eval suite |
 | M4 Operations | Terraform (AWS), OpenTelemetry, cost reports, region policy, containers, control plane MVP, constructor v3; GCP and Azure later | v1.0 release |
+| After v1.0 | FR-33 to FR-46 (decisions 58–92): guided setup and handover, replay and the nightly watch, skills, hooks, `/v1`, the improvement loop, research graphs, recovery, pass^k and ablations | each with its tests |
+| Next | GCP and Azure profiles; streaming voice, more knowledge connectors, pgvector, a first real AWS apply | |
 
 Each milestone is tagged as a pre-release (0.x) in the repository once its gate passes; from M2 each tag also builds a container image. M4 ends with v1.0. Publishing to PyPI is deferred until outside adoption of the open core is wanted.
 
