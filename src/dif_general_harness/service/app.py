@@ -714,10 +714,12 @@ def create_app(
     @app.post("/admin/review", dependencies=[Depends(admin)])
     async def review_now() -> dict[str, Any]:
         """The weekly review, now: proposed edits go to the inbox; nothing is applied."""
-        from .review import review
+        from .review import enabled, review
 
-        if current().provider is None:
-            raise HTTPException(501, "no model to review with")
+        if current().provider is None or not enabled(current()):
+            raise HTTPException(
+                501, "the weekly review needs the pack's verifier model role (or is off)"
+            )
         done = await review(current())
         return {"proposals": len(done["proposals"]), "item": done.get("item")}
 

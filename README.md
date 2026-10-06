@@ -6,14 +6,35 @@ across its lines of business.
 One open-source agent runtime, many client solutions: each one is a
 declarative *solution spec* on top of a shared core.
 
-> **Status: v1.0 (M0–M4 done).** An instance runs as a service from its spec: WhatsApp/SMS,
-> Telegram, REST, email and Slack channels; schedule, webhook, event, delay and relative
-> triggers; durable workflows and agent teams; scoped memory; knowledge with citations;
-> verification before side effects; a feedback loop whose rules a person approves; pack evals
-> that run the whole solution and report drift. Governance (PII, consent, audit, provider
-> regions), cost reports by tenant and vendor, opt-in OpenTelemetry, a sandboxed shell, a
-> hardened AWS module, and a control plane that rolls changes out instance by instance,
-> gated by each instance's evals. Deploys need Jag's signed approval.
+> **Status: v1.0 (M0–M4 done) plus decisions 58–92.**
+>
+> - **Channels:** WhatsApp/SMS, Telegram, a web chat with its landing page, REST (and an
+>   OpenAI-compatible `/v1` endpoint), email, Slack and voice.
+> - **Triggers:** schedule, webhook, event, delay, relative, file and batch.
+> - **Building blocks:**
+>   - durable workflows and agent teams;
+>   - scoped memory;
+>   - knowledge with citations and a list of what it could not answer;
+>   - skills;
+>   - research graphs.
+> - **Safety and recovery:**
+>   - verification before side effects;
+>   - side-effecting calls never repeated blindly;
+>   - untrusted text fenced.
+> - **Built-in improvement loop:**
+>   - real conversations replayed before every rebuild goes online, and nightly;
+>   - run records and a weekly review that proposes edits a person approves;
+>   - evals with pass^k and ablations.
+> - **Operations:**
+>   - governance: PII, consent, audit, provider regions;
+>   - cost reports by tenant and vendor;
+>   - opt-in OpenTelemetry;
+>   - a sandboxed shell with an egress proxy;
+>   - a hardened AWS module;
+>   - a control plane for eval-gated fleet rollouts;
+>   - a guided handover to the client's own Claude.
+>
+> Deploys need Jag's signed approval.
 
 ---
 
@@ -40,13 +61,18 @@ a new codebase.
 
 ```
 Jag or Teky: "deploy solution S for client X"
-  → constructor agent matches S to the pack catalog (no fit → new pack needed)
-  → interviews for the open details the pack declares
+  → constructor matches S to the pack catalog (no fit → new pack needed)
+  → interviews for the open details the pack declares (./setup.sh guides it on a server;
+    a client's web site is read and written up as its FAQ)
   → writes the instance spec (the 15–20%), validates it, runs the pack's evals
-  → Jag approves
+  → every rebuild replays the latest real conversations before it goes online
+  → Jag approves (signs exactly what ships)
   → deploys into X's own cloud; X keeps its secrets in its own vault
-  → instance agent reports to Di-Factory's control plane
+  → /handover leaves it with X's own Claude; the instance agent reports to the control plane
 ```
+
+Once it runs, it watches itself: a nightly replay, run records and a weekly review that
+proposes edits (never applies them), all landing in the inbox (`admin inbox`, `admin review`).
 
 ## Principles
 
@@ -62,19 +88,20 @@ Jag or Teky: "deploy solution S for client X"
 ## Architecture at a glance
 
 ```
-Surfaces     channels & triggers · admin / approvals API · TUI console · Python API
+Surfaces     channels & triggers · admin API + CLI · OpenAI-compatible /v1 · signed hooks · TUI
 Instance     solution spec  →  tenant-scoped instance
-Core         agent loop · prompt builder · context manager · permissions
-             guardrails & budgets · verifier · workflow engine
-Modules      providers · tools + MCP · knowledge (RAG) · 5-layer memory
-             agent teams · HITL inbox · ML-model tools · evals
-Governance   PII tokens · consent · audit log · retention · region policy
-Platform     storage (SQLite / Postgres) · secrets vault · executor · deploy (Docker, Terraform)
+Core         agent loop with caps · context (skills, rules, fenced memory, compaction)
+             permissions · intent log · verifier · router · workflow engine (foreach, gates)
+Modules      providers · tools + MCP · knowledge (RAG) · memory · agent teams
+             research graphs · documents/OCR · HITL inbox · evals
+Improvement  run records · weekly review · replay · pass^k and ablations · feedback rules
+Governance   PII tokens · consent · audit log · retention · region policy · untrusted fences
+Platform     storage (SQLite / Postgres) · secrets · sandbox + egress proxy · deploy · control plane
 ```
 
 We own the agent loop instead of wrapping a framework, so context handling,
 safety and cost stay visible and cheap to change. See
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and all 40
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and all 92
 recorded decisions.
 
 ## What you can build with it
@@ -113,8 +140,9 @@ values, secrets and deployment target:
 }
 ```
 
-The full format and six worked examples (Appointment Agent, Service Desk
-cell, Conversational RAG, Receipt Processing, Dev cell, OPC C-suite) are in [`docs/spec/`](docs/spec/SOLUTION_SPEC.md).
+The full format and seven worked examples (Appointment Agent, Service Desk cell,
+Conversational RAG, Receipt Processing, Dev cell, OPC C-suite, Research Graph) are in
+[`docs/spec/`](docs/spec/SOLUTION_SPEC.md).
 
 ## Roadmap
 
@@ -125,6 +153,8 @@ cell, Conversational RAG, Receipt Processing, Dev cell, OPC C-suite) are in [`do
 | **M2 Runtime** ✓ | Headless service, channels, triggers, durable queue, approvals inbox, PII/consent/audit, Postgres, instance agent, basic AWS deploy, constructor v2 |
 | **M3 Intelligence** ✓ | 5-layer memory, knowledge/RAG, verification, agent teams, feedback loop, pack evals |
 | **M4 Operations** ✓ | Terraform (AWS), OpenTelemetry, cost reports, region policy, fleet control plane, constructor v3 → **v1.0** |
+| **After v1.0** ✓ | Decisions 58–92: compaction, file/batch triggers, documents, voice, web chat, guided setup, handover; replay and the nightly watch; skills, hooks, `/v1`; run records, gates, weekly review, research graphs; recovery (intent log, actionable failures), pass^k and ablations |
+| **Next** | GCP and Azure profiles; streaming voice, more knowledge connectors, pgvector, a first real AWS apply |
 
 No time goals: each milestone is done when its acceptance gate passes, and ships as a tagged pre-release in this repository (not on PyPI).
 
@@ -134,7 +164,7 @@ No time goals: each milestone is done when its acceptance gate passes, and ships
 installs everything, runs the client questionnaire, tests the agent and can put it online over
 HTTPS. [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) explains each step.
 
-Available now (M1):
+Build and try a solution locally:
 
 ```bash
 uv sync
@@ -162,10 +192,11 @@ uv run dif-general-harness spec copy docs/spec/examples/instances/clinica-sonris
 export DIF_SECRET_ANTHROPIC=...
 uv run dif-general-harness console instances/<id>.json --packs docs/spec/examples
 uv run dif-general-harness run instances/<id>.json --packs docs/spec/examples -m "Hola"
-uv run dif-general-harness eval instances/<id>.json --packs docs/spec/examples
+uv run dif-general-harness eval instances/<id>.json --packs docs/spec/examples \
+    [--repeat 3] [--ablate skills,verifier]       # pass^k; does each component still pay?
 ```
 
-Run it as a service (M2):
+Run it as a service:
 
 ```bash
 # channels, triggers, inbox and admin API; Postgres in production
@@ -182,6 +213,17 @@ uv run dif-general-harness deploy instances/<id>.json --packs docs/spec/examples
 #   deploy/terraform/aws plus the exact commands (--run executes them)
 ```
 
+Operate a running client and change it safely:
+
+```bash
+uv run dif-general-harness admin status | inbox | show ID | reply ID TEXT
+uv run dif-general-harness admin faq show | set FILE | gaps        # an edit is replayed first
+uv run dif-general-harness admin runs | review [--now] | graph NAME [QUERY]
+uv run dif-general-harness replay clients/<id>.json --packs docs/spec/examples  # real conversations, again
+uv run dif-general-harness adjust|upgrade clients/<id>.json ... --dry-run
+uv run dif-general-harness handover clients/<id>.json --owner NAME --lang es      # or /handover
+```
+
 Install a tagged release (no PyPI):
 
 ```bash
@@ -195,13 +237,14 @@ uv tool install git+https://github.com/di-factory/claude_harness@v1.0.0
 | [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) | Step by step from a clean server to a live agent, and the common setup mistakes |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Technical design: framing, modules, all subsystems, stack, layout, roadmap, decisions |
 | [`docs/PRD.md`](docs/PRD.md) | Product requirements: goals, personas, user stories, requirements, metrics, milestones, risks |
-| [`docs/spec/SOLUTION_SPEC.md`](docs/spec/SOLUTION_SPEC.md) | Solution spec v1 draft: format, merge rules, validation, and paper tests on 6 example packs ([`docs/spec/examples/`](docs/spec/examples/)) |
+| [`docs/spec/SOLUTION_SPEC.md`](docs/spec/SOLUTION_SPEC.md) | Solution spec v1: format, merge rules, validation, and seven example packs ([`docs/spec/examples/`](docs/spec/examples/)) |
+| [`CLAUDE.md`](CLAUDE.md) | For agents working on this repository: commands, layout, rules that must not be broken |
 
 ## Tech stack
 
-Python 3.12+ · uv · Pydantic v2 · FastAPI · Textual · PostgreSQL + pgvector ·
-SQLite · official `mcp` SDK · Anthropic and OpenAI-compatible SDKs · Docker ·
-Terraform · pytest · ruff · mypy
+Python 3.12+ · uv · Pydantic v2 · FastAPI · Textual · PostgreSQL · SQLite ·
+official `mcp` SDK · Anthropic and OpenAI-compatible SDKs · Docker · Terraform ·
+pytest · ruff · mypy
 
 ## License
 

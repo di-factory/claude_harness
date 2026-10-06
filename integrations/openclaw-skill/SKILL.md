@@ -17,7 +17,11 @@ the next step.
   stores the values in their own vault.
 - **Never invent capability.** If `build` says no pack fits, stop and report that a new
   pack is Di-Factory design work.
-- Work from the harness repository root with `uv run dif-general-harness ...`.
+- **Never apply what the weekly review proposes.** Relay it to Jag; a person decides, and an
+  accepted edit goes through `adjust` (or a rebuild), the replay and Jag's signature like
+  any change.
+- Work from the harness repository root with `uv run dif-general-harness ...`. (On a client's
+  own server the operator uses `./setup.sh`, which runs the same steps guided.)
 
 ## 1. Match and interview
 
@@ -43,7 +47,19 @@ uv run dif-general-harness eval instances/<client>/<id>.json --packs <packs-dir>
 ```
 
 Report the pass rate, skipped cases (with their reasons) and any unsafe actions. A
-failing eval blocks the approval request.
+failing eval blocks the approval request. When the pack sets `evals.trials`, report pass^k
+too (the share of cases that passed every trial); `--repeat 3` asks for it once.
+
+If the client is **already live** (a rebuild or an adjustment), also replay its latest real
+conversations on the new version:
+
+```bash
+uv run dif-general-harness replay instances/<client>/<id>.json --packs <packs-dir>
+```
+
+It writes `<id>.replay.md` (every reply before and after, worse first) and exits 1 when a
+reply got worse. Send Jag the summary line and the worse turns: a worse reply blocks the
+approval request unless Jag accepts it. Tools that write never run in a replay.
 
 ## 3. Ask Jag to approve
 
@@ -77,6 +93,7 @@ uv run dif-general-harness deploy instances/<client>/<id>.json --packs <packs-di
 uv run dif-general-harness adjust instances/<client>/<id>.json --packs <packs-dir> \
   --set reminder_hours=48 --dry-run            # shows exactly what changes; writes nothing
 uv run dif-general-harness adjust ... --set reminder_hours=48    # writes only if it validates
+uv run dif-general-harness replay instances/<client>/<id>.json --packs <packs-dir>
 uv run dif-general-harness eval instances/<client>/<id>.json --packs <packs-dir>
 ```
 
@@ -84,8 +101,9 @@ uv run dif-general-harness eval instances/<client>/<id>.json --packs <packs-dir>
   later layer may not weaken): report the errors; never work around them.
 - Then either deploy again (Jag approves the new staged solution), or, for value and policy
   changes that need no new files, ask Jag to push it through the control plane:
-  `fleet offer <instance.json> --approved-by jag` (the instance runs its evals before it
-  activates the change and refuses it if they fail).
+  `fleet offer <instance.json> --approved-by jag` (the instance runs its evals and replays
+  its own latest conversations before it activates the change, and refuses it if either
+  fails).
 
 ## Upgrading to a newer pack version
 
@@ -98,6 +116,29 @@ It lists the new values the pack needs (`needs a value: ...`): ask the client, t
 `adjust --set` them. A pack upgrade brings new files, so it ships as a new deploy (approve +
 deploy); across many instances Jag uses `fleet rollout` (instance by instance, gated by each
 instance's evals, rolled back automatically if one fails).
+
+## After a model change
+
+When a pack's model changes (or a new model is offered), measure whether each harness
+component still pays for itself before Jag decides:
+
+```bash
+uv run dif-general-harness eval instances/<client>/<id>.json --packs <packs-dir> \
+  --repeat 3 --ablate skills,verifier,router,compaction
+```
+
+Report the table: `keeps its place`, `no measured lift` (a candidate to remove: Jag decides)
+or `no difference`. Removing a component is a change like any other.
+
+## What a live client tells you
+
+A running instance files items in its own inbox. The operator reads them on the server
+(`admin inbox`, `admin runs`, `admin review`); you only relay what they report:
+
+- `review`: replies got worse after the nightly check or a document change, or an item
+  failed its checks twice;
+- `proposal`: the weekly review's proposed edits (diffs). Nothing has been applied;
+- `report`: what a research run changed in a graph.
 
 ## Fleet commands (Jag or a Di-Factory operator)
 
