@@ -239,6 +239,24 @@ uv tool install git+https://github.com/di-factory/claude_harness@v1.0.0
 | [`docs/PRD.md`](docs/PRD.md) | Product requirements: goals, personas, user stories, requirements, metrics, milestones, risks |
 | [`docs/spec/SOLUTION_SPEC.md`](docs/spec/SOLUTION_SPEC.md) | Solution spec v1: format, merge rules, validation, and seven example packs ([`docs/spec/examples/`](docs/spec/examples/)) |
 | [`CLAUDE.md`](CLAUDE.md) | For agents working on this repository: commands, layout, rules that must not be broken |
+| [`integrations/openclaw-skill/SKILL.md`](integrations/openclaw-skill/SKILL.md) | The skill Teky uses to drive the constructor: build, verify, replay, ask Jag to approve, deploy, adjust, upgrade |
+| [`.claude/skills/handover/SKILL.md`](.claude/skills/handover/SKILL.md) | `/handover`: hand a finished solution to its client's own Claude, step by step |
+
+### Example packs (also the test fixtures)
+
+Each pack in [`docs/spec/examples/`](docs/spec/examples/) is a `pack.json` plus the Markdown it
+references: agent prompts, message templates, knowledge files and skills.
+
+| Pack | Markdown files |
+|---|---|
+| conversational-rag | [`knowledge/about.md`](docs/spec/examples/conversational-rag/knowledge/about.md), [`prompts/assistant.md`](docs/spec/examples/conversational-rag/prompts/assistant.md) |
+| dev-cell | [`prompts/developer.md`](docs/spec/examples/dev-cell/prompts/developer.md) |
+| instances (clinica-sonrisa) | [`clinica-sonrisa/tpl_nudge.es-MX.md`](docs/spec/examples/instances/clinica-sonrisa/tpl_nudge.es-MX.md), [`clinica-sonrisa/tpl_reminder.es-MX.md`](docs/spec/examples/instances/clinica-sonrisa/tpl_reminder.es-MX.md) |
+| opc-c-suite | [`prompts/cgo.md`](docs/spec/examples/opc-c-suite/prompts/cgo.md), [`prompts/content_writer.md`](docs/spec/examples/opc-c-suite/prompts/content_writer.md), [`prompts/coo.md`](docs/spec/examples/opc-c-suite/prompts/coo.md), [`prompts/cto.md`](docs/spec/examples/opc-c-suite/prompts/cto.md) |
+| pyme-appointment-agent | [`knowledge/faq.md`](docs/spec/examples/pyme-appointment-agent/knowledge/faq.md), [`prompts/receptionist.md`](docs/spec/examples/pyme-appointment-agent/prompts/receptionist.md), [`prompts/tpl_nudge.md`](docs/spec/examples/pyme-appointment-agent/prompts/tpl_nudge.md), [`prompts/tpl_reminder.md`](docs/spec/examples/pyme-appointment-agent/prompts/tpl_reminder.md), [`skills/complaint/SKILL.md`](docs/spec/examples/pyme-appointment-agent/skills/complaint/SKILL.md) |
+| pyme-receipt-processing | [`prompts/extractor.md`](docs/spec/examples/pyme-receipt-processing/prompts/extractor.md) |
+| research-graph | [`prompts/analyst.md`](docs/spec/examples/research-graph/prompts/analyst.md), [`prompts/researcher.md`](docs/spec/examples/research-graph/prompts/researcher.md), [`skills/entity-research/SKILL.md`](docs/spec/examples/research-graph/skills/entity-research/SKILL.md) |
+| service-desk-cell | [`prompts/kb_researcher.md`](docs/spec/examples/service-desk-cell/prompts/kb_researcher.md), [`prompts/resolver.md`](docs/spec/examples/service-desk-cell/prompts/resolver.md), [`prompts/triage.md`](docs/spec/examples/service-desk-cell/prompts/triage.md) |
 
 ## Tech stack
 
