@@ -60,6 +60,8 @@ packs/pyme-appointment-agent/
 | `workspaces` | ○ | ○ | sandboxed working copies (for example a git repo) and the executor they run in (§5.14) |
 | `ledger` | ○ | ○ | the shared task ledger for agent teams: fields, backend, who can see it (§5.15) |
 | `branding` | – | ○ | the client's look on the landing page and the web chat: colors and logo (§5.17) |
+| `skills` | ○ | ○ | skill folders (`SKILL.md`) an agent reads when a request needs one (§5.18) |
+| `hooks` | ○ | ○ | the client's own systems told what happened: signed JSON POSTs (§5.19) |
 
 ## 3. References and expressions
 
@@ -654,6 +656,56 @@ Typed or written colors win over sampled ones; near-white, near-black and greys 
 primary. The logo is re-encoded small and stored inline, so it is signed with the solution;
 a remote URL is refused (`invalid_branding`), as is any color that is not `#rrggbb`. The
 answers file keeps it, so a rebuild keeps the look.
+
+### 5.18 `skills`
+
+```json
+"skills": ["skills"]
+```
+
+Each listed folder is one skill (it holds a `SKILL.md`) or a folder of skills (each
+subfolder with a `SKILL.md`), relative to the spec file. A `SKILL.md` starts with frontmatter:
+
+```markdown
+---
+name: complaint
+description: A patient is unhappy. How to listen, what never to promise, when to hand over.
+---
+1. Thank them and say back, in one sentence, what went wrong...
+```
+
+Every agent's system prompt lists the skills by name and description only; the agent reads
+one with `skills.load(name)` when a request matches (and a file next to it with
+`skills.load(name, file)`, never outside the skill's folder). Skills are part of the signed
+solution, like prompts. Layers add skills (the list is additive). A folder with no skill is
+`missing_file`; a `SKILL.md` without a name or description, with a name other than letters,
+digits, `-` and `_`, with no instructions, or with a name another skill has is
+`invalid_skill`.
+
+### 5.19 `hooks`
+
+```json
+"hooks": {
+  "crm": {
+    "url": "https://crm.example.com/dif",
+    "events": ["escalation", "tool_call", "turn_end", "handoff"],
+    "secret": { "$secret": "crm_hook_key" },
+    "tools": ["calendar.*"],
+    "texts": false
+  }
+}
+```
+
+Conversations through the channels tell the client's system what happened: `turn_end` (each
+reply: its stop reason), `tool_call` (each call: tool, effect and outcome; `tools` narrows
+them), `escalation` (handed to a person) and `handoff` (to a teammate). Payloads carry
+session, agent, channel and a `contact_ref` (a hash: repeat contacts can be counted, not
+identified); with `texts: true` also the reply as the customer got it and the escalation
+reason. Tool inputs are never sent. Each delivery is a durable job retried with backoff,
+never in the way of a reply, with `X-Dif-Event`, `X-Dif-Timestamp` and
+`X-Dif-Signature: sha256=<hex>` (HMAC-SHA256 of `<timestamp>.<body>` with the secret;
+`service/hooks.py: verify` shows the receiver's side). A URL that is not `https://`
+(localhost aside) or a secret that is not a `$secret` reference is `invalid_hook`.
 
 ## 6. Validation (what the loader enforces)
 

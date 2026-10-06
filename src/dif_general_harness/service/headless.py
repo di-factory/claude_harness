@@ -27,6 +27,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -56,6 +57,7 @@ from ..verify.output import review_output, wants_review
 from ..workflows import Job, JobQueue, Worker
 from ..workflows.engine import WorkflowEngine
 from ..workflows.render import render as render_value
+from . import hooks
 
 log = logging.getLogger(__name__)
 _EVENT_REF = re.compile(r"\{\{\s*event((?:\.[A-Za-z0-9_]+)*)\s*\}\}")
@@ -228,6 +230,8 @@ class Headless:
             "file_scan": self._job_file_scan,
             "output_review": self._job_output_review,
             "batch_run": lambda job: self.run_batch(job.payload["trigger"]),
+            "replay_watch": self._job_replay_watch,
+            "hook": self._job_hook,
         }
 
     def worker(self, **kw: Any) -> Worker:
@@ -258,6 +262,11 @@ class Headless:
         await self.queue.enqueue(
             self.scope, "retention", {}, delay_s=60, dedupe_key=f"retention:{tomorrow}"
         )
+        if self._watching():
+            await self.queue.enqueue(
+                self.scope, "replay_watch", {"reason": "the nightly check", "daily": True},
+                delay_s=DAY, dedupe_key=f"replay_watch:{tomorrow}",
+            )  # fmt: skip
 
     @property
     def scope(self) -> Any:
@@ -313,7 +322,9 @@ class Headless:
             session = await agent.new_session(contact_key=env.contact_key)
             await inst.store.bind(self.scope, session.id, env.channel, env.contact_key)
 
+        first_agent, start = agent_name, len(session.messages)
         texts, reason = await answer(agent.send(session, env.text, names=env.names, route=True))
+        calls = _tool_calls(session, start)
         escalated = await inst.store.state(self.scope, session.id) == "escalated"
         if inst.spec.models and "memory_extraction" in inst.spec.models.roles:
             await self.queue.enqueue(
@@ -325,12 +336,14 @@ class Headless:
             target_name, target_id, note = handoff
             target = self.agent(target_name)
             target_session = await target.resume(target_id)
+            target_start = len(target_session.messages)
             async for event in target.send(target_session, note):
                 message = event.message if isinstance(event, MessageAdded) else None
                 if message is not None and message.role is Role.ASSISTANT and message.text():
                     texts.append(message.text())
             session = target_session
             agent = target
+            calls += _tool_calls(session, target_start)
         reply = await agent.reply("\n\n".join(texts)) if texts else None
         if reason in STOPPED and not escalated:
             item = await inst.inbox.create(
@@ -347,7 +360,66 @@ class Headless:
                 {"agent": agent.name, "session": session.id, "upto": len(session.messages)},
                 dedupe_key=f"review:{session.id}:{len(session.messages)}",
             )  # fmt: skip
+        if inst.spec.hooks:
+            ref = hooks.contact_ref(self.scope.tenant_id, env.contact_key)
+            base = {"session": session.id, "agent": agent.name, "channel": env.channel,
+                    "contact_ref": ref}  # fmt: skip
+            for call in calls:
+                used = inst.tools.get(call["tool"])
+                effect = str(used.effect) if used is not None else None
+                await self.hook("tool_call", {**base, **call, "effect": effect})
+            if handoff is not None:
+                await self.hook("handoff", {**base, "from": first_agent, "to": agent.name})
+            if escalated:
+                why = next((i.payload.get("reason") for i in await inst.inbox.list(
+                    "open", "escalation") if i.session_id == session.id), None)  # fmt: skip
+                await self.hook("escalation", {**base, "reason": why}, private=("reason",))
+            await self.hook("turn_end", {**base, "reason": reason, "reply": reply},
+                            private=("reply",))  # fmt: skip
         return TurnResult(reply, reason, session.id, escalated)
+
+    async def hook(self, event: str, data: dict[str, Any], private: tuple[str, ...] = ()) -> None:
+        """Queue a signed delivery to every hook that wants ``event`` (``private`` fields go
+        only to hooks with ``texts: true``)."""
+        inst = self.instance
+        for name, spec in inst.spec.hooks.items():
+            if not hooks.wants(spec, event, data):
+                continue
+            sent = data if spec.texts else {k: v for k, v in data.items() if k not in private}
+            await self.queue.enqueue(
+                self.scope, "hook", {"hook": name, "event": event, "data": sent,
+                                     "at": time.time()}, max_attempts=6,
+            )  # fmt: skip
+
+    async def _job_hook(self, job: Job) -> None:
+        inst = self.instance
+        name, event = str(job.payload["hook"]), str(job.payload["event"])
+        spec = inst.spec.hooks.get(name)
+        if spec is None:
+            return  # the hook was removed since
+        raw = inst.resolved.data["hooks"][name]["secret"]
+        secret = str(inst.secrets.resolve(raw))
+        scope = self.scope
+        payload = hooks.body(event, job.payload["data"], tenant=scope.tenant_id,
+                             instance=scope.instance_id, at=float(job.payload["at"]))  # fmt: skip
+        stamp = str(int(time.time()))
+        headers = {"content-type": "application/json", "x-dif-event": event,
+                   "x-dif-timestamp": stamp,
+                   "x-dif-signature": hooks.sign(secret, stamp, payload)}  # fmt: skip
+        client = self._http
+        if client is None:
+            from ..tools.packs.general import guarded_client
+
+            client = guarded_client()
+        try:
+            response = await client.post(spec.url, content=payload, headers=headers)
+        finally:
+            if client is not self._http:
+                await client.aclose()
+        await inst.audit.record(self.scope, "system", "hook_sent", f"hooks/{name}",
+                                {"event": event, "status": response.status_code})  # fmt: skip
+        if response.status_code >= 300:
+            raise RuntimeError(f"hook {name}: HTTP {response.status_code}")  # retried
 
     async def _hold_for_person(self, session: Any, env: Envelope) -> TurnResult:
         """An escalated conversation: keep the message for the person, don't let the agent
@@ -612,7 +684,13 @@ class Headless:
             return  # the corpus was removed from the spec since this job was queued
         if not job.payload.get("once"):
             await self._sync_next(corpus, max(job.run_at, self.queue.clock()))
-        await self.instance.sync_knowledge(corpus)
+        report = await self.instance.sync_knowledge(corpus)
+        if (report.added or report.updated or report.removed) and self._watching():
+            hour = int(self.queue.clock() // 3600)  # a burst of syncs: one check
+            await self.queue.enqueue(
+                self.scope, "replay_watch", {"reason": f"the {corpus} documents changed"},
+                dedupe_key=f"replay_watch:{corpus}:{hour}",
+            )  # fmt: skip
 
     async def fire(
         self, name: str, event: dict[str, Any], delivery_id: str | None = None
@@ -1069,6 +1147,41 @@ class Headless:
         await self.send(binding[0], binding[1], text, session_id)
         await inst.audit.record(self.scope, by, "operator_reply", f"session/{session_id}", {})
 
+    def _watching(self) -> bool:
+        """Replays need a judge (the verifier role); DIF_REPLAY_WATCH=off turns them off."""
+        from ..constructor.replay import can_judge
+
+        return os.environ.get("DIF_REPLAY_WATCH", "on") != "off" and can_judge(self.instance)
+
+    async def _job_replay_watch(self, job: Job) -> None:
+        """The latest real conversations answered again by the version online now (the model
+        may have changed, or the documents): a reply that got worse goes to the inbox."""
+        from ..constructor.replay import check_instance, counts, summary, worse_turns
+
+        if job.payload.get("daily"):
+            day = datetime.fromtimestamp(self.queue.clock() + DAY, UTC).date().isoformat()
+            await self.queue.enqueue(
+                self.scope, "replay_watch", dict(job.payload), delay_s=DAY,
+                dedupe_key=f"replay_watch:{day}",
+            )  # fmt: skip
+        if not self._watching():
+            return
+        inst = self.instance
+        reason = str(job.payload.get("reason") or "a check")
+        try:
+            done = await check_instance(inst, limit=10)
+        except LookupError:
+            return
+        await inst.audit.record(self.scope, "system", "replay_watch", reason, counts(done))
+        worse = worse_turns(done)
+        if not worse:
+            return
+        title = f"Replies got worse after {reason}"
+        item = await inst.inbox.create(
+            "review", title, {"reason": reason, "summary": summary(done), "worse": worse[:10]}
+        )
+        await self.notify(item, f"{title}: {len(worse)} reply(ies); see the inbox")
+
     async def _job_retention(self, job: Job) -> None:
         inst = self.instance
         removed = await purge(inst.db, self.scope, inst.spec.governance.retention)
@@ -1078,6 +1191,17 @@ class Headless:
         await self.queue.enqueue(
             self.scope, "retention", {}, delay_s=DAY, dedupe_key=f"retention:{tomorrow}"
         )
+
+
+def _tool_calls(session: Any, start: int) -> list[dict[str, Any]]:
+    """The tool calls a turn made (from message ``start`` on): name and outcome, no inputs."""
+    from ..core.messages import ToolResultBlock
+
+    new = session.messages[start:]
+    results = {b.tool_use_id: b for m in new for b in m.content if isinstance(b, ToolResultBlock)}
+    return [{"tool": call.name,
+             "status": str(results[call.id].status) if call.id in results else "pending"}
+            for m in new for call in m.tool_uses()]  # fmt: skip
 
 
 def _envelope_json(env: Envelope) -> dict[str, Any]:

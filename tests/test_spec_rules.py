@@ -224,6 +224,33 @@ PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
         "unknown_tool_namespace",
         lambda d: d["agents"]["developer"]["tools"].append("jira.create_issue"),
     ),
+    ("pyme-appointment-agent", "missing_file", lambda d: d["skills"].append("prompts")),
+    (
+        "pyme-appointment-agent",
+        "invalid_hook",
+        lambda d: d.update(
+            hooks={
+                "crm": {
+                    "url": "http://crm.example.com/x",
+                    "events": ["turn_end"],
+                    "secret": {"$secret": "llm"},
+                }
+            }
+        ),
+    ),
+    (
+        "pyme-appointment-agent",
+        "invalid_hook",
+        lambda d: d.update(
+            hooks={
+                "crm": {
+                    "url": "https://crm.example.com/x",
+                    "events": ["turn_end"],
+                    "secret": "plain-text",
+                }
+            }
+        ),
+    ),
 ]
 
 
@@ -236,6 +263,23 @@ def test_planted_pack_errors_are_caught(
     assert _codes(examples / pack) == set()
     _edit(examples / pack / "pack.json", mutate)
     assert code in _codes(examples / pack)
+
+
+@pytest.mark.parametrize(
+    "skill_md",
+    [
+        "no frontmatter at all",
+        "---\nname: complaint\n---\nsteps",  # no description
+        "---\nname: two words\ndescription: d\n---\nsteps",
+        "---\nname: x\ndescription: d\n---\n",  # no instructions
+        "---\nname: complaint\ndescription: the same name twice\n---\nsteps",
+    ],
+)
+def test_planted_skill_errors_are_caught(examples: Path, skill_md: str) -> None:
+    pack = examples / "pyme-appointment-agent"
+    (pack / "skills" / "bad").mkdir()
+    (pack / "skills" / "bad" / "SKILL.md").write_text(skill_md)
+    assert "invalid_skill" in _codes(pack)
 
 
 INSTANCE_MUTATIONS: list[tuple[str, Mutator]] = [

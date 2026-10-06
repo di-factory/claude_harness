@@ -7,10 +7,14 @@ Rules (from ``policies.permissions`` in the spec):
   ``coding.bash(git push --force*)``
 - effects: ``effect:external`` (also ``effect:write``, ``effect:read``)
 
-Values are split on shell operators (``;``, ``&&``, ``||``, ``|``, newlines, ``$(``, backticks)
-so that chained commands cannot slip past a rule: a deny or ask rule matches when any
-segment matches; an allow rule only when every segment does. Pattern rules on shell
-commands are a guardrail, not a sandbox; the executor is the containment boundary.
+Values are split on shell operators (``;``, ``&&``, ``||``, ``|``, ``&``, newlines, ``$(``,
+backticks) so that chained commands cannot slip past a rule: a deny or ask rule matches when
+any segment matches; an allow rule only when every segment does. A deny or ask rule also
+sees each segment without what can hide a command in front of it (``VAR=value``, ``sudo``,
+``env``, ``nohup``, ``timeout 5``, ``bash -c '...'``, quotes): ``sudo rm -rf /`` is caught by
+``coding.bash(rm -rf*)``. An allow rule sees the segment as written, so ``sudo git status``
+is not allowed by ``coding.bash(git status*)``. Pattern rules on shell commands are a
+guardrail, not a sandbox; the executor is the containment boundary.
 
 When several rules match, the most restrictive wins: deny > ask > allow. With no match,
 the guardrail profile decides by effect. ``ask`` goes to an ``Approver``: the console
@@ -32,7 +36,15 @@ from ..core.session import Session
 from ..tools.registry import Effect, Tool, ToolRegistry
 
 _RULE = re.compile(r"^(?P<tool>[^()\s]+)(?:\((?P<args>[^()]*)\))?$")
-_SEGMENTS = re.compile(r"\s*(?:;|&&|\|\||\||\n|\$\(|`|\))\s*")
+_SEGMENTS = re.compile(r"\s*(?:;|&&|\|\||\||(?<![>&])&(?![>&])|\n|\$\(|`|\))\s*")
+_PREFIX = re.compile(
+    r"""^(?:[A-Za-z_][A-Za-z0-9_]*=(?:'[^']*'|"[^"]*"|\S*)\s+"""  # VAR=value
+    r"|(?:sudo|doas)(?:\s+(?:-[ugCDhpRTU]\s+\S+|-\S+))*\s+"
+    r"|(?:env|nohup|nice|time|command|exec|builtin|xargs|stdbuf)(?:\s+-\S+)*\s+"
+    r"|timeout\s+(?:-\S+\s+)*\S+\s+"
+    r"|(?:ba|z|da|k)?sh\s+(?:-\S+\s+)*-c\s+"  # bash -c '...'
+    r"|['\"(\\]+)"
+)
 PRIMARY = "*primary*"  # the argument key of a positional pattern
 
 
@@ -98,10 +110,23 @@ class Rule:
             if name is None or name not in arguments:
                 return False
             segments = [s for s in _SEGMENTS.split(str(arguments[name])) if s] or [""]
-            hits = (fnmatch.fnmatchcase(s, pattern) for s in segments)
-            if not (all(hits) if every_segment else any(hits)):
+            if every_segment:  # allow: every segment, exactly as written
+                if not all(fnmatch.fnmatchcase(s, pattern) for s in segments):
+                    return False
+            elif not any(fnmatch.fnmatchcase(v, pattern) for s in segments for v in _bare(s)):
                 return False
         return True
+
+
+def _bare(segment: str) -> list[str]:
+    """A segment as written, then without each wrapper or prefix in front of the command."""
+    out = [segment]
+    while (m := _PREFIX.match(out[-1])) is not None and m.end() > 0:
+        out.append(out[-1][m.end() :].lstrip())
+    stripped = out[-1].rstrip("'\")")
+    if stripped != out[-1]:
+        out.append(stripped)
+    return out
 
 
 @dataclass(frozen=True)
