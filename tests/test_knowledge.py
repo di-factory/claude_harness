@@ -329,3 +329,34 @@ async def test_the_agent_reads_a_small_faq_in_another_language(tmp_path: Path) -
     inst, _, client = await env.open()
     async with inst, client:
         assert await _ask(client, "¿Cómo puedo pagar?") == "Aceptamos efectivo, débito y crédito."
+
+
+async def test_the_business_contact_details_reach_the_contact_but_not_the_model(
+    tmp_path: Path,
+) -> None:
+    import re
+
+    docs = tmp_path / "kb"
+    docs.mkdir()
+    (docs / "faq.md").write_text("# Sonrisa FAQ\n\n## Contact\nCall us at +52 55 1234 5678.\n")
+
+    def answer(request: ModelRequest) -> Message:
+        result = request.messages[-1].content[0]
+        assert isinstance(result, ToolResultBlock) and isinstance(result.content, dict)
+        passage = result.content["results"][0]["text"]
+        assert "1234 5678" not in passage  # the model never sees the value
+        business = re.search(r"<PHONE_[0-9a-f]{8}>", passage)
+        theirs = re.search(r"<PHONE_[0-9a-f]{8}>", request.messages[0].text())
+        assert business and theirs and "published details" in result.content["published_details"]
+        source = result.content["results"][0]["source"]
+        return Message.assistant(f"Llámanos al {business.group(0)} [{source}]. "
+                                 f"Tu número {theirs.group(0)} quedó anotado.")  # fmt: skip
+
+    script = [calls(("k1", "knowledge.search_faq", {"query": "contact call"})), answer]
+    env = Env(tmp_path, script, edit=_kb_spec(docs))
+    inst, _, client = await env.open()
+    async with inst, client:
+        reply = await _ask(client, "¿Cómo los contacto? Mi número es +52 55 9876 5432")
+        assert reply.startswith(
+            "Llámanos al 5512345678 [1]. Tu número [phone] quedó"
+        )  # theirs: masked

@@ -200,6 +200,9 @@ class Tokenizer:
         self.vault = vault
         self.scope = scope
         self._names: set[str] | None = None  # loaded from the vault on first use
+        # tokens of values the business published in its own documents (its email, phone,
+        # address): the model still sees tokens, the contact sees the values
+        self.published: set[str] = set()
 
     @property
     def active(self) -> bool:
@@ -226,11 +229,21 @@ class Tokenizer:
         out, last = [], 0
         for m in _TOKEN.finditer(text):
             kind = m.group(1).lower()
-            resolved = await self.vault.value_of(self.scope, m.group(0)) if kind in reveal else None
+            shown = kind in reveal or m.group(0) in self.published
+            resolved = await self.vault.value_of(self.scope, m.group(0)) if shown else None
             replacement = resolved[1] if resolved else (f"[{kind}]" if mask else m.group(0))
             out += [text[last : m.start()], replacement]
             last = m.end()
         return "".join(out) + text[last:]
+
+    def publish(self, obj: Any) -> bool:
+        """Mark the tokens in ``obj`` (a knowledge result) as the business's own published
+        details. True when there were any."""
+        found: set[str] = set()
+        for text in _strings(obj):
+            found.update(m.group(0) for m in _TOKEN.finditer(text))
+        self.published |= found
+        return bool(found)
 
     async def tokenize_obj(self, obj: Any, names: Iterable[str] = ()) -> Any:
         if isinstance(obj, str):
@@ -249,3 +262,14 @@ class Tokenizer:
         if isinstance(obj, list):
             return [await self.detokenize_obj(v, reveal) for v in obj]
         return obj
+
+
+def _strings(obj: Any) -> Iterable[str]:
+    if isinstance(obj, str):
+        yield obj
+    elif isinstance(obj, dict):
+        for value in obj.values():
+            yield from _strings(value)
+    elif isinstance(obj, list):
+        for value in obj:
+            yield from _strings(value)
