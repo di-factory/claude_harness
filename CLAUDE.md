@@ -2,7 +2,7 @@
 
 Di-Factory's general solution template: an agent runtime where every client
 solution is a declarative **solution spec** (a pack plus a client instance).
-Read `docs/ARCHITECTURE.md` (92 decisions, §7) before changing behaviour;
+Read `docs/ARCHITECTURE.md` (93 decisions, §7) before changing behaviour;
 `docs/spec/SOLUTION_SPEC.md` is the spec contract.
 
 ## Commands
@@ -89,6 +89,8 @@ requirement, `integrations/openclaw-skill/SKILL.md` for what Teky runs, and
   `tests/*.tftest.hcl` against a mocked provider)
 - `integrations/openclaw-skill/`: the wrapper Teky uses to drive the constructor
 - `docs/spec/examples/`: seven example packs + one instance, which are also the **test fixtures**
+- `docs/testing/`: live test kits (`dev-cell/`: instance, sample repo, issues, `kit.sh`),
+  mirrored offline by `tests/test_devcell_kit.py`
 - `tests/test_acceptance_m1.py` … `tests/test_acceptance_m4.py`: the milestone gates;
   `tests/support.py` holds the service test fixtures
 
@@ -136,9 +138,10 @@ client's systems (81); then run records, gates outside the agent, counted stops 
 weekly review that proposes and never writes (82–85), and research graphs (86); then failures
 the model can act on, side-effecting calls never repeated blindly, memory and sub-agent
 reports as data, and history search past compaction (87–90); then pass^k and ablations in
-evals, and tool-call budgets, result caps, tool-surface warnings and failure classes (91–92).
+evals, and tool-call budgets, result caps, tool-surface warnings and failure classes (91–92);
+then the Dev Cell aligned with GitHub's MCP server, with a live test kit (93).
 Next: GCP and Azure profiles.
 Known gaps: streaming (speech-to-speech) voice, knowledge connectors beyond files, S3,
 Drive and web pages (SharePoint, Notion... push through the admin API), pgvector for very
 large corpora, and a first apply of the AWS module in a real account. See
-`docs/ARCHITECTURE.md` §6 and decisions 43–92.
+`docs/ARCHITECTURE.md` §6 and decisions 43–93.

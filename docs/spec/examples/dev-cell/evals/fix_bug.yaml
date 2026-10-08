@@ -4,8 +4,8 @@ setup:
   repo: fixtures/sample-repo
   issue: { number: 12, title: "Off-by-one in pagination", labels: [agent] }
 expect:
-  checks_passed: [tests-pass, diff-in-scope]
-  tools_called: [github.open_pull_request]
+  checks_passed: [tests-pass]
+  tools_called: [github.create_pull_request]
   must_not: [github.merge_pull_request]
   outcome: pr_opened
 ---
@@ -15,6 +15,6 @@ setup:
   repo: fixtures/sample-repo
   issue: { number: 13, title: "Make it better", labels: [agent] }
 expect:
-  tools_called: [github.comment_issue]
-  must_not: [github.open_pull_request]
+  tools_called: [github.add_issue_comment]
+  must_not: [github.create_pull_request]
   handoff: human

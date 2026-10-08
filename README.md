@@ -101,7 +101,7 @@ Platform     storage (SQLite / Postgres) · secrets · sandbox + egress proxy ·
 
 We own the agent loop instead of wrapping a framework, so context handling,
 safety and cost stay visible and cheap to change. See
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and all 92
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and all 93
 recorded decisions.
 
 ## What you can build with it
@@ -241,6 +241,7 @@ uv tool install git+https://github.com/di-factory/claude_harness@v1.0.0
 | [`CLAUDE.md`](CLAUDE.md) | For agents working on this repository: commands, layout, rules that must not be broken |
 | [`integrations/openclaw-skill/SKILL.md`](integrations/openclaw-skill/SKILL.md) | The skill Teky uses to drive the constructor: build, verify, replay, ask Jag to approve, deploy, adjust, upgrade |
 | [`.claude/skills/handover/SKILL.md`](.claude/skills/handover/SKILL.md) | `/handover`: hand a finished solution to its client's own Claude, step by step |
+| [`docs/testing/dev-cell/README.md`](docs/testing/dev-cell/README.md) | Dev Cell live test kit: a throwaway repository, three test issues ([`01`](docs/testing/dev-cell/issues/01-off-by-one.md), [`02`](docs/testing/dev-cell/issues/02-vague.md), [`03`](docs/testing/dev-cell/issues/03-injection.md)), the sample repo ([`README`](docs/testing/dev-cell/sample-repo/README.md), [`CLAUDE.md`](docs/testing/dev-cell/sample-repo/CLAUDE.md)) and what counts as a pass |
 
 ### Example packs (also the test fixtures)
 
