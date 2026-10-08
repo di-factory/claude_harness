@@ -28,7 +28,7 @@
       "ask": { "question": "Which command runs the test suite (e.g. `make test`)?", "answered_by": "client", "group": "workflow", "order": 2 }
     },
     "sandbox_image": {
-      "type": "string", "default": "ghcr.io/di-factory/devcell-sandbox:py3.12-node20",
+      "type": "string", "default": "python:3.12-slim",
       "ask": { "question": "Which container image has the project's toolchain?", "answered_by": "difactory", "group": "workflow", "order": 3 }
     },
     "team_channel": {
@@ -40,7 +40,7 @@
   },
   "secrets": {
     "llm": { "description": "Model API key" },
-    "github_app": { "description": "GitHub App private key and id, scoped to the listed repos (contents, issues, pull requests)" },
+    "github_app": { "description": "A GitHub token for the listed repos only (fine-grained: contents, issues and pull requests, read and write). It stays in the harness: the sandbox never sees it" },
     "github_webhook": { "description": "Webhook secret for issue events" },
     "slack": { "description": "Slack bot token" }
   },
@@ -58,7 +58,7 @@
       "description": "Implements one issue in the sandbox workspace and prepares a pull request.",
       "prompt": "prompts/developer.md",
       "model_role": "main",
-      "tools": ["coding.*", "github.get_issue", "github.comment_issue", "github.open_pull_request"],
+      "tools": ["coding.*", "github.issue_read", "github.add_issue_comment", "github.create_branch", "github.push_files", "github.create_pull_request"],
       "workspace": "repo",
       "memory": { "scope": "instance" },
       "handoffs": ["human"],
@@ -79,7 +79,8 @@
       "github": { "transport": "http", "url": "https://api.githubcopilot.com/mcp/", "auth": { "$secret": "github_app" } }
     },
     "overrides": {
-      "github.open_pull_request": { "effect": "external", "verify": "tests-pass" },
+      "github.create_pull_request": { "effect": "external", "verify": "tests-pass" },
+      "github.push_files": { "effect": "external", "verify": "tests-pass" },
       "github.merge_pull_request": { "permission": "deny" },
       "coding.bash": { "effect": "write" }
     }
@@ -99,15 +100,16 @@
       "path": "/hooks/github",
       "auth": { "$secret": "github_webhook" },
       "when": "event.action == 'labeled' and event.label.name == var.pickup_label and event.repository.name in var.repos",
+      "input": { "owner": "{{event.repository.owner.login}}", "repo": "{{event.repository.name}}", "issue": "{{event.issue.number}}", "title": "{{event.issue.title}}", "default_branch": "{{event.repository.default_branch}}" },
       "workflow": "work-issue"
     }
   },
   "workflows": {
     "work-issue": {
-      "input": { "repo": "string", "issue": "integer" },
+      "input": { "owner": "string", "repo": "string", "issue": "integer", "title": "string", "default_branch": "string" },
       "concurrency": 2,
       "steps": [
-        { "id": "ack", "type": "tool", "tool": "github.comment_issue", "args": { "repo": "{{input.repo}}", "issue": "{{input.issue}}", "body": "Picked up by the Dev Cell." } },
+        { "id": "ack", "type": "tool", "tool": "github.add_issue_comment", "args": { "owner": "{{input.owner}}", "repo": "{{input.repo}}", "issue_number": "{{input.issue}}", "body": "Picked up by the Dev Cell." } },
         { "id": "implement", "type": "agent", "agent": "developer", "input": "{{input}}" },
         { "id": "done", "type": "end", "when": "steps.implement.outcome == 'pr_opened'" },
         { "id": "stuck", "type": "handoff", "to": "human" }
@@ -118,17 +120,16 @@
   "policies": {
     "profile": "default",
     "permissions": {
-      "allow": ["coding.read", "coding.grep", "coding.glob", "coding.edit", "coding.write", "coding.bash", "github.get_issue", "github.comment_issue"],
+      "allow": ["coding.read", "coding.grep", "coding.glob", "coding.edit", "coding.write", "coding.bash", "github.issue_read", "github.add_issue_comment", "github.create_branch(branch=dev-cell/*)", "github.push_files(branch=dev-cell/*)", "github.create_pull_request"],
       "ask": [],
-      "deny": ["github.merge_pull_request", "coding.bash(git push --force*)"]
+      "deny": ["github.merge_pull_request", "github.push_files(branch=main)", "github.push_files(branch=master)", "github.create_branch(branch=main)", "coding.bash(git push*)"]
     },
     "budgets": { "per_run": { "usd": 4, "turns": 80, "wall_time": "45m" }, "per_tenant_day": { "usd": 60 } },
     "verification": {
       "checks": {
-        "tests-pass": { "type": "command", "workspace": "repo", "run": "{{var.test_command}}", "expect_exit": 0 },
-        "diff-in-scope": { "type": "command", "workspace": "repo", "run": "git diff --stat origin/HEAD", "expect": "no_files_outside_issue_scope" }
+        "tests-pass": { "type": "command", "workspace": "repo", "run": "{{var.test_command}}", "expect_exit": 0 }
       },
-      "verifier": { "model_role": "verifier", "applies_to": ["github.open_pull_request"], "mode": "always" }
+      "verifier": { "model_role": "verifier", "applies_to": ["github.create_pull_request"], "mode": "always" }
     },
     "escalation": {
       "rules": [

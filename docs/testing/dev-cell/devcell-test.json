@@ -1,0 +1,24 @@
+{
+  "$schema": "https://di-factory.biz/schemas/solution-spec.v1.json",
+  "spec_version": "1",
+  "kind": "instance",
+  "solution": { "id": "devcell-test", "version": "1.0.0", "name": "Dev Cell live test", "lob": "agentic-transformation", "locale": "en" },
+  "extends": ["dev-cell@^1.0"],
+  "tenant": { "id": "di-factory-test", "name": "Di-Factory (dev cell test)", "timezone": "America/Mexico_City" },
+  "values": {
+    "github_org": "YOUR-GITHUB-OWNER",
+    "repos": ["devcell-test"],
+    "pickup_label": "agent",
+    "test_command": "python3 -m unittest -v",
+    "sandbox_image": "python:3.12-slim",
+    "team_channel": "unused-in-this-test",
+    "main_model": "claude-sonnet-5-5",
+    "review_model": "claude-haiku-4-5-20251001"
+  },
+  "channels": { "slack_team": null },
+  "hitl": { "notify": null },
+  "policies": {
+    "escalation": { "handoff_to": { "type": "inbox" } },
+    "budgets": { "per_run": { "usd": 2, "turns": 60 }, "per_tenant_day": { "usd": 10 } }
+  }
+}

@@ -326,6 +326,16 @@ the client's Claude). Each fine-tuning round starts there: add the answers, then
 `admin faq done ID` (or `dismiss ID` for what the assistant should not answer). A question
 marked done that customers keep asking comes back: the FAQ still does not cover it.
 
+## Testing a solution without a client: the Dev Cell kit
+
+Not every pack is a chat. `docs/testing/dev-cell/` is a live test of the `dev-cell` pack on a
+throwaway GitHub repository: you seed it with a small repo and three issues (a real bug, a
+vague request, an injection), point a webhook at the server, label one issue at a time and
+check the result (a tested pull request on a `dev-cell/` branch; questions; a refusal).
+Follow its [README](testing/dev-cell/README.md); the token stays in `~/.dif/secrets` and
+`kit.sh` never prints it. Docker must be usable without sudo: the cell runs the repository's
+tests in a container without network.
+
 ## Common mistakes
 
 | You see | Why | Fix |
@@ -350,4 +360,5 @@ marked done that customers keep asking comes back: the FAQ still does not cover 
 | `cannot run together in one instance yet` | Each pack sets its own tools, budgets and consent; two in one instance would loosen one of them | One pack per instance; set up the other need as a second client |
 | `Bind for 127.0.0.1:8080 failed: port is already allocated` | Another client's container still holds the port (one client is served per server) | `git pull` and run `./setup.sh` again: it now stops the previous client first (its data is kept) |
 | `/chat` answers `no web chat here` | The instance was built from a pack without a `web` channel, or before the pack had one | `git pull`, then `./setup.sh` and reuse the client: it signs and deploys it again |
+| A webhook answers 404 `no webhook trigger at this path` | Older builds served a trigger whose path is `/hooks/x` only at `/hooks/hooks/x` | `git pull`; the webhook URL is the trigger's path as written (`https://HOST/hooks/github`) |
 | `git push` asks for a password and fails | GitHub refuses account passwords for git | `gh auth login` (browser) or a personal access token |

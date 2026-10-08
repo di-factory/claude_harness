@@ -716,8 +716,12 @@ class Headless:
         )
 
     def webhook(self, path: str) -> tuple[str, Trigger] | None:
+        """The trigger at ``/hooks/<path>``; a spec path written as ``/hooks/x`` is found at
+        ``/hooks/x`` too (not only at ``/hooks/hooks/x``)."""
+        wanted = path.strip("/")
         for name, trig in self.triggers.items():
-            if trig.type == "webhook" and (trig.path or "").strip("/") == path.strip("/"):
+            mine = (trig.path or "").strip("/")
+            if trig.type == "webhook" and wanted in (mine, mine.removeprefix("hooks/")):
                 return name, trig
         return None
 

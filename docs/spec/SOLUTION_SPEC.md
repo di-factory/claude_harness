@@ -418,6 +418,12 @@ per turn, so voice agents need a fast model and few tool calls.
 
 `requires_consent` makes the consent module skip contacts who opted out.
 
+A webhook trigger is served at `POST /hooks/<path>` with its `path` as written: `/hooks/helpdesk`
+is called at `https://<host>/hooks/helpdesk`. `auth` is the shared secret; the request carries
+either `x-hub-signature-256: sha256=<HMAC of the body>` (GitHub's form) or the secret as a
+bearer token. `input` maps the event into the workflow's input (`{{event.issue.number}}` keeps
+its type); an event that fails `when` is accepted and starts nothing.
+
 **File triggers** poll their `source` every `poll` (default `1m`):
 `{"type": "folder", "path": "/data/inbox"}` or
 `{"type": "s3", "bucket": "...", "prefix": "in/", "region": "...", "credentials": {"$secret": "storage"}}`
@@ -912,7 +918,7 @@ format; the rest are listed but not written yet.
 | Shape | File | What it exercises |
 |---|---|---|
 | Batch document job | [`pyme-receipt-processing/pack.json`](examples/pyme-receipt-processing/pack.json) | file trigger with dedupe, structured extraction to a JSON Schema, validation, duplicate check, amount-based approval, posting to an ERP, daily report, PII revealed only to the ERP |
-| Dev cell | [`dev-cell/pack.json`](examples/dev-cell/pack.json) | GitHub webhook with a CEL filter, sandboxed git workspace in a container, coding tools, tests as a `command` check before opening a PR, merges denied |
+| Dev cell | [`dev-cell/pack.json`](examples/dev-cell/pack.json) | GitHub webhook with a CEL filter, sandboxed git workspace in a container, coding tools, GitHub's own MCP tools, pushes only to `dev-cell/*` branches, tests as a `command` check before pushing or opening a PR, merges denied; live test kit in [`docs/testing/dev-cell/`](../testing/dev-cell/README.md) |
 | OPC-style agent team | [`opc-c-suite/pack.json`](examples/opc-c-suite/pack.json) | long-lived CGO/COO/CTO agents, shared ledger, schedules that wake agents directly, event-routed delegation, parallel stand-up, founder approvals over Telegram |
 
 **What paper test 2 changed:**
