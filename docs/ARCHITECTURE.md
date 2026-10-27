@@ -1,6 +1,6 @@
 # dif-general-harness — Architecture
 
-Status: **Accepted: v2, general solution template** · v1.0 plus decisions 58–92 · last updated 2026-10-06
+Status: **Accepted: v2, general solution template** · v1.0 plus decisions 58–94 · last updated 2026-10-27
 
 ## 0. Product framing
 
@@ -740,7 +740,7 @@ Milestones have **no dates** (decision 28): each one is done when its gate
 passes, and work moves straight on to the next.
 
 **Status:** M0 to M4 are done; each gate is `tests/test_acceptance_m<n>.py` (M4's is the
-v1.0 gate). After v1.0, decisions 58–92 were built, each with its tests (item 6). Next are
+v1.0 gate). After v1.0, decisions 58–94 were built, each with its tests (item 6). Next are
 the GCP and Azure profiles and the remaining gaps listed in `CLAUDE.md`.
 
 **Instances** follow the template. The first candidates are listed in §8; an
@@ -843,6 +843,7 @@ instance can start once the modules it needs have shipped.
 | 91 | Consistency and ablations in evals (after v1) | One passing run can be luck, and every harness component is a hypothesis about a model's limits: a newer model may not need it, and then it only adds cost and new failure modes. `evals.trials` (or `eval --repeat K`) runs each case K times in fresh instances and reports pass^k, the share of cases that passed every trial; `thresholds.pass_k` gates `eval` and eval-gated fleet offers on it. `eval --ablate` runs the same suites without each named component (skills, verifier, router, compaction, gates, memory) on a throwaway copy and reports pass rate, pass^k and cost against the baseline: keeps its place, no measured lift (a candidate to remove, for a person), or no difference. Re-run it after every model change. (After *Understanding Harness Engineering*, §37–39.) |
 | 92 | Smaller hardening from the same review (after v1) | A run can also be bounded by tool calls (`budgets.per_run.tool_calls`; monotonic like every budget). Every tool result is capped at 40,000 characters, and a cut one says how to ask for less. An instance warns when an agent sees more than 30 tools or two tools described (almost) the same (`many_tools`, `overlapping_tools`): more tools make the choice harder. Run records classify each failure and stop (contract, verification, authorization, selection, budget, recovery, provenance, context, environment), and the weekly review counts them, so a repeated kind of failure shows up as one. (§8–9, §24, §40.) |
 | 93 | The Dev Cell against GitHub's real MCP server, and its live test kit (after v1) | The pack was written before a live test and used tool names GitHub's MCP server does not have, an image that does not exist, and no mapping from the webhook to the workflow input. It now uses GitHub's own tools (`issue_read`, `add_issue_comment`, `create_branch`, `push_files`, `create_pull_request`), takes owner, repository, issue, title and default branch from the `labeled` event, and runs in `python:3.12-slim`. Code reaches GitHub only through `push_files`, allowed on `dev-cell/*` branches, denied on `main`/`master`, asked anywhere else; `push_files` and `create_pull_request` run only after the repository's own tests pass (`tests-pass`), and the verifier model reviews the pull request; `git push` from the shell and merges stay denied. A webhook trigger written as `/hooks/github` is now found at `/hooks/github` (it used to need `/hooks/hooks/github`). `docs/testing/dev-cell/` is the live test (a throwaway repository, a real bug, a vague issue and an injection, `kit.sh` that never prints the token, what counts as a pass), and `tests/test_devcell_kit.py` runs the same flow offline against a fake GitHub MCP server with the same tool names. (§3.6, §3.10, §3.15.) |
+| 94 | The server with one command (after v1) | `GETTING_STARTED` Phase 1 was a dozen console clicks and Phase 2 a session over SSH, each a place to get something wrong (an open 8080, a lost key, no Elastic IP). `machine launch --region R` does both from the operator's computer with boto3 (the `aws` extra): a key pair whose private key is written once to `~/.dif/machines/`, a security group (80 and 443 from anywhere, 22 from where the command runs unless told otherwise, never 8080), Canonical's current Ubuntu 24.04 image on `t4g.small` (or `t3.small` where the region has no Graviton, read from the region's offerings), 30 GB gp3, IMDSv2 only, an Elastic IP, and cloud-init user data that installs Docker, Caddy, git and uv, clones the repository and syncs it, with a login banner that says when it finished. Every resource is found again by its `dif:machine` tag, so running it twice makes nothing twice; `status` and `destroy` (reverse order, asks first) complete it. It is the single-server path for small clients; the Terraform module (ECS, RDS) stays the managed one. Tested offline on a fake EC2 (`tests/test_machine.py`). |
 
 ## 8. First instantiation candidates (parked)
 

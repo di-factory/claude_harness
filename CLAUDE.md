@@ -31,6 +31,7 @@ uv run dif-general-harness handover INSTANCE.json --owner NAME --lang es  # the 
                                           # the whole handover, guided: /handover (.claude/skills)
 uv run dif-general-harness fleet register|offer|rollout|rollback|status  # via the control plane
 uv run dif-general-harness control serve --key KEY                       # the control plane
+uv run dif-general-harness machine launch|status|destroy --region R       # the EC2 server
 terraform -chdir=deploy/terraform/aws init -backend=false && terraform -chdir=deploy/terraform/aws test
 ```
 
@@ -139,9 +140,10 @@ weekly review that proposes and never writes (82–85), and research graphs (86)
 the model can act on, side-effecting calls never repeated blindly, memory and sub-agent
 reports as data, and history search past compaction (87–90); then pass^k and ablations in
 evals, and tool-call budgets, result caps, tool-surface warnings and failure classes (91–92);
-then the Dev Cell aligned with GitHub's MCP server, with a live test kit (93).
+then the Dev Cell aligned with GitHub's MCP server, with a live test kit (93), and the
+server itself with one command (94).
 Next: GCP and Azure profiles.
 Known gaps: streaming (speech-to-speech) voice, knowledge connectors beyond files, S3,
 Drive and web pages (SharePoint, Notion... push through the admin API), pgvector for very
 large corpora, and a first apply of the AWS module in a real account. See
-`docs/ARCHITECTURE.md` §6 and decisions 43–93.
+`docs/ARCHITECTURE.md` §6 and decisions 43–94.

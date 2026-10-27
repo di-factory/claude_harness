@@ -162,7 +162,10 @@ No time goals: each milestone is done when its acceptance gate passes, and ships
 
 **New here?** On a fresh Ubuntu server: `git clone … && cd claude_harness && ./setup.sh`. It
 installs everything, runs the client questionnaire, tests the agent and can put it online over
-HTTPS. [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) explains each step.
+HTTPS. The server itself is one command from your laptop: `uv run dif-general-harness machine
+launch --region mx-central-1` makes the EC2 machine (key, firewall, Elastic IP, Ubuntu with
+Docker, Caddy, uv and this repository already installed) and prints the `ssh` line.
+[`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) explains each step.
 
 Build and try a solution locally:
 

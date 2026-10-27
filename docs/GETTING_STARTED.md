@@ -2,7 +2,8 @@
 
 ## The fast way: one command
 
-On a fresh Ubuntu server (an AWS EC2 machine with ports 80 and 443 open, see Phase 1):
+On a fresh Ubuntu server (an AWS EC2 machine with ports 80 and 443 open; one command makes
+it, see Phase 1):
 
 ```bash
 git clone https://github.com/di-factory/claude_harness.git && cd claude_harness
@@ -113,8 +114,27 @@ section at the end lists what goes wrong and the exact fix.
 
 ## Phase 1: The machine
 
+**One command**, from your own computer (it needs AWS credentials in the usual places:
+`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`, `~/.aws/credentials` or an SSO profile, with
+EC2 rights; `uv sync --extra aws` once for boto3):
+
+```bash
+uv run dif-general-harness machine launch --region mx-central-1 --name clinica
+```
+
+It makes everything the manual steps below describe and prints the `ssh` line: a key pair
+(the private key goes to `~/.dif/machines/<name>.pem`, the only copy), the security group
+(80 and 443 from anywhere, 22 only from the computer you ran it on: `--ssh-from IP`,
+`--ssh-from anywhere`), Ubuntu 24.04 LTS on `t4g.small` (or `t3.small` where the region has
+no Graviton) with 30 GB gp3, and an Elastic IP. At first boot the machine also does Phase 2
+on its own (Docker, Caddy, uv, this repository cloned and synced); its login banner says
+when that finished. Run it again anytime to read the address back; nothing is made twice.
+`machine status` shows the state; `machine destroy` takes it all down (it asks first).
+For data of Mexican clients use region `mx-central-1`.
+
+**By hand**, in the AWS console, the same thing:
+
 1. EC2 → Launch instance: Ubuntu 24.04 LTS, 64-bit Arm, `t4g.small`, 30 GB gp3, a key pair.
-   For data of Mexican clients use region `mx-central-1`.
 2. Security group: SSH (22) from your IP only; HTTP (80) and HTTPS (443) from anywhere.
    Never open 8080.
 3. Elastic IPs → Allocate → Associate, so the address (and your webhooks) never change.
@@ -125,6 +145,9 @@ ssh -i ~/Downloads/<key>.pem ubuntu@<ELASTIC_IP>
 ```
 
 ## Phase 2: Install
+
+A machine made by `machine launch` has done this already (`ls ~/claude_harness`, and the login
+banner says "the install finished"); log in and go to Phase 3. By hand:
 
 ```bash
 sudo apt update && sudo apt install -y docker.io docker-compose-v2 git caddy
@@ -340,6 +363,9 @@ tests in a container without network.
 
 | You see | Why | Fix |
 |---|---|---|
+| `machine launch`: `key pair ... exists in AWS but ... is not here` | The machine was launched from another computer, or the `.pem` was deleted; AWS never returns a private key again | Copy the `.pem` into `~/.dif/machines/`, or delete the key pair in EC2 → Key pairs and run again (a new instance gets the new key; an existing one keeps the old) |
+| `machine launch`: `neither t4g.small nor t3.small is offered` | A region without those sizes | `--type` with one the region offers (`aws ec2 describe-instance-type-offerings --region R`) |
+| `ssh: connection refused` right after `machine launch`, or the banner says "still installing" | Cloud-init is still running Phase 2 (a few minutes) | Wait; `tail -f /var/log/cloud-init-output.log` on the machine shows it |
 | `model_not_set` / `no model chosen` | The pack leaves the models to each client | Set `main_model` and `fast_model` in the instance's `values` |
 | `missing_file ... tpl_reminder...` | The instance was copied without the files next to it | Use `spec copy`, which copies them too |
 | `secrets.anthropic: not set` | Variables set by hand are gone after a new login | `secrets set anthropic` once; `secrets check` shows what is missing |

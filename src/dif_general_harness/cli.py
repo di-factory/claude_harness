@@ -38,6 +38,7 @@ from .constructor import (
     questionnaire,
     run_suites,
 )
+from .constructor import machine as machine_mod
 from .constructor.deploy import (
     DeployError,
     approve,
@@ -902,6 +903,36 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
     new.add_argument("name", help="who approves with it, e.g. jag")
     new.add_argument("--out", type=Path, default=Path.home() / ".dif" / "keys")
 
+    machine = sub.add_parser(
+        "machine", help="the server (GETTING_STARTED Phase 1 and 2) in AWS, with one command"
+    )
+    machine_sub = machine.add_subparsers(dest="command", required=True)
+    m_launch = machine_sub.add_parser(
+        "launch", help="key pair, security group, Ubuntu instance, elastic IP; installs Phase 2"
+    )
+    m_status = machine_sub.add_parser("status", help="the machine's state, address and ssh line")
+    m_destroy = machine_sub.add_parser("destroy", help="terminate it and remove what launch made")
+    for cmd in (m_launch, m_status, m_destroy):
+        cmd.add_argument("--name", default="dif-harness", help="names every resource (tagged)")
+        cmd.add_argument(
+            "--region",
+            default=os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"),
+            help="e.g. mx-central-1 for Mexican clients (default: AWS_REGION)",
+        )
+        cmd.add_argument(
+            "--key-dir", type=Path, default=Path.home() / ".dif" / "machines", help="the .pem"
+        )
+    m_launch.add_argument(
+        "--ssh-from",
+        default="me",
+        help="who may SSH: 'me' (this computer's public address), an IP or CIDR, or 'anywhere'",
+    )
+    m_launch.add_argument("--type", dest="instance_type", help="default: t4g.small, else t3.small")
+    m_launch.add_argument("--disk", type=int, default=30, help="GB of gp3 storage")
+    m_launch.add_argument("--repo", default=machine_mod.REPO_URL, help="the repository to clone")
+    m_launch.add_argument("--branch", default="main")
+    m_destroy.add_argument("--yes", action="store_true", help="do not ask")
+
     for name, text in (
         ("approve", "sign a staged solution for one deploy target (Jag)"),
         ("deploy", "stage, check the approval and prepare (or run) the deploy"),
@@ -955,6 +986,8 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
         print(f"private key: {path} (keep it secret; only {args.name} uses it)")
         print(f'add to approvers.json: "{args.name}": "{public}"')
         return 0
+    if args.group == "machine":
+        return _machine(args)
     if args.group == "control":
         return asyncio.run(_control_serve(args))
     if args.group in {"adjust", "upgrade"}:
@@ -1144,6 +1177,47 @@ async def admin_command(args: argparse.Namespace, client: Any = None) -> int:
         return 1
     print(text)
     return 0
+
+
+def _machine(args: argparse.Namespace, launcher: machine_mod.Launcher | None = None) -> int:
+    if not args.region and launcher is None:
+        print("which region? --region, e.g. mx-central-1 (or AWS_REGION)", file=sys.stderr)
+        return 2
+    try:
+        if launcher is None:
+            ec2, ssm = machine_mod.clients(args.region)
+            launcher = machine_mod.Launcher(ec2, ssm, key_dir=args.key_dir)
+        if args.command == "launch":
+            plan = machine_mod.MachinePlan(
+                name=args.name,
+                ssh_from=args.ssh_from,
+                repo=args.repo,
+                branch=args.branch,
+                disk_gb=args.disk,
+                instance_type=args.instance_type,
+            )
+            print(machine_mod.explain(launcher.launch(plan)))
+            return 0
+        if args.command == "status":
+            info = launcher.status(args.name)
+            if info is None:
+                print(f"no machine named {args.name!r} in {args.region}")
+                return 1
+            print(machine_mod.explain(info))
+            return 0
+        if not args.yes:
+            answer = input(
+                f"terminate {args.name!r} in {args.region} and release its address? [y/N] "
+            )
+            if answer.strip().lower() not in {"y", "yes"}:
+                print("left as it is")
+                return 1
+        gone = launcher.destroy(args.name)
+        print("\n".join(f"removed {g}" for g in gone) if gone else f"nothing named {args.name!r}")
+        return 0
+    except machine_mod.MachineError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
 
 
 def _secrets(args: argparse.Namespace) -> int:
