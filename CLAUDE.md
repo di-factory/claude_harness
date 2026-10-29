@@ -89,6 +89,8 @@ requirement, `integrations/openclaw-skill/SKILL.md` for what Teky runs, and
   `tests/*.tftest.hcl` against a mocked provider)
 - `integrations/openclaw-skill/`: the wrapper Teky uses to drive the constructor
 - `docs/spec/examples/`: seven example packs + one instance, which are also the **test fixtures**
+- `docs/capabilities/`: each solution type in plain terms (story, safeguards, how proven);
+  update a page when its pack or its live test changes
 - `docs/testing/`: live test kits (`dev-cell/`: instance, sample repo, issues, `kit.sh`;
   `receipts/`: instance, samples, SAT and ERP stand-ins), mirrored offline by
   `tests/test_devcell_kit.py` and `tests/test_receipts_kit.py`
