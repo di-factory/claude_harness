@@ -25,6 +25,7 @@ import os
 import shutil
 import sys
 import tempfile
+from collections.abc import Coroutine
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -709,6 +710,16 @@ async def _costs(args: argparse.Namespace, resolved: ResolvedSpec) -> int:
     return 0
 
 
+def until_stopped(server: Coroutine[Any, Any, int]) -> int:
+    """Run a server until it ends or Ctrl+C stops it: a stop is a clean exit, not a traceback
+    (connections still closing when it comes, such as an MCP server's, are cancelled)."""
+    try:
+        return asyncio.run(server)
+    except KeyboardInterrupt:
+        print("stopped", file=sys.stderr)
+        return 0
+
+
 def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None) -> int:
     """``provider`` replaces the spec's models (tests and offline demos)."""
     load_env_file(Path(".env"))  # e.g. DIF_SECRET_ANTHROPIC=...; never committed (.gitignore)
@@ -855,6 +866,11 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
     adm_sub.add_parser("inbox", help="conversations handed to a person, approvals waiting")
     a_show = adm_sub.add_parser("show", help="one conversation, message by message")
     a_show.add_argument("session")
+    a_decide = adm_sub.add_parser("decide", help="approve or reject an item in the inbox")
+    a_decide.add_argument("item", help="the item's id, from admin inbox")
+    a_decide.add_argument("decision", choices=["approve", "reject"])
+    a_decide.add_argument("--note", default="", help="why (kept in the audit log)")
+    a_decide.add_argument("--by", default="owner", help="who decides (kept in the audit log)")
     a_reply = adm_sub.add_parser("reply", help="answer a conversation as a person")
     a_reply.add_argument("session")
     a_reply.add_argument("text")
@@ -956,7 +972,7 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
         print(f'add to approvers.json: "{args.name}": "{public}"')
         return 0
     if args.group == "control":
-        return asyncio.run(_control_serve(args))
+        return until_stopped(_control_serve(args))
     if args.group in {"adjust", "upgrade"}:
         return _lifecycle(args)
     if args.group == "fleet":
@@ -982,7 +998,7 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
     if args.group == "replay":
         return asyncio.run(replay_command(args, resolved, provider))
     if args.group == "serve":
-        return asyncio.run(_serve(args, resolved, provider))
+        return until_stopped(_serve(args, resolved, provider))
     if args.group == "costs":
         return asyncio.run(_costs(args, resolved))
     if args.command == "resolve":

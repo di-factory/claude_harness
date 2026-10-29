@@ -326,7 +326,7 @@ the client's Claude). Each fine-tuning round starts there: add the answers, then
 `admin faq done ID` (or `dismiss ID` for what the assistant should not answer). A question
 marked done that customers keep asking comes back: the FAQ still does not cover it.
 
-## Testing a solution without a client: the Dev Cell kit
+## Testing a solution without a client: the test kits
 
 Not every pack is a chat. `docs/testing/dev-cell/` is a live test of the `dev-cell` pack on a
 throwaway GitHub repository: you seed it with a small repo and three issues (a real bug, a
@@ -335,6 +335,14 @@ check the result (a tested pull request on a `dev-cell/` branch; questions; a re
 Follow its [README](testing/dev-cell/README.md); the token stays in `~/.dif/secrets` and
 `kit.sh` never prints it. Docker must be usable without sudo: the cell runs the repository's
 tests in a container without network.
+
+`docs/testing/receipts/` tests the receipt pack the same way, entirely on the server: SAT and
+ERP stand-ins, an `inbox/` folder you drop seven documents into one at a time (a normal
+invoice, one above the approval limit, a resent one, another company's, a cancelled one, a
+taxi-ticket photo and a PDF with a hidden instruction), and a ledger file showing what reached
+the "ERP". Approvals are decided from the terminal: `admin inbox`, then
+`admin decide ITEM approve` (or `reject --note "why"`). Follow its
+[README](testing/receipts/README.md).
 
 ## Common mistakes
 

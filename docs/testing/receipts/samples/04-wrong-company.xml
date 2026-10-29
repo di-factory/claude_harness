@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital" Version="4.0" Serie="B" Folio="77" Fecha="2026-10-23T10:15:00" SubTotal="2500.00" Moneda="MXN" Total="2900.00" TipoDeComprobante="I" Exportacion="01" MetodoPago="PUE" FormaPago="03" LugarExpedicion="06600">
+  <cfdi:Emisor Rfc="XIA190128J61" Nombre="XENON INDUSTRIAL ARTICLES" RegimenFiscal="601"/>
+  <cfdi:Receptor Rfc="IIA040805DZ4" Nombre="INDISTRIA ILUMINADORA DE ALMACENES" DomicilioFiscalReceptor="26015" RegimenFiscalReceptor="601" UsoCFDI="G03"/>
+  <cfdi:Conceptos>
+    <cfdi:Concepto ClaveProdServ="44121600" Cantidad="1" ClaveUnidad="H87" Descripcion="Lamparas LED" ValorUnitario="2500.00" Importe="2500.00" ObjetoImp="02"/>
+  </cfdi:Conceptos>
+  <cfdi:Impuestos TotalImpuestosTrasladados="400.00">
+    <cfdi:Traslados>
+      <cfdi:Traslado Base="2500.00" Impuesto="002" TipoFactor="Tasa" TasaOCuota="0.160000" Importe="400.00"/>
+    </cfdi:Traslados>
+  </cfdi:Impuestos>
+  <cfdi:Complemento>
+    <tfd:TimbreFiscalDigital Version="1.1" UUID="8B3C4D5E-6F70-4B82-AC93-B4D5E6F70819" FechaTimbrado="2026-10-23T10:16:02" RfcProvCertif="SAT970701NN3" NoCertificadoSAT="30001000000500003456"/>
+  </cfdi:Complemento>
+</cfdi:Comprobante>

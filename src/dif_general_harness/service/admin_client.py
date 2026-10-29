@@ -7,6 +7,7 @@ the instance's admin API, so nobody needs curl, tokens or JSON:
     inbox               conversations handed to a person and approvals waiting
     show SESSION        a conversation, message by message
     reply SESSION TEXT  answer as a person; the customer gets it on their channel
+    decide ITEM approve|reject [--note]   an approval waiting in the inbox (a posting, a tool)
     faq show            the FAQ exactly as the agent knows it
     faq set FILE|-      replace it (the owner's edit stands until Di-Factory ships a new one);
                         first the latest real conversations are answered again with it, and
@@ -104,6 +105,11 @@ class Admin:
     async def reply(self, session: str, text: str, by: str) -> str:
         await self._send("POST", f"/admin/sessions/{session}/reply", {"text": text, "by": by})
         return "Sent. The customer gets it on the channel they wrote from."
+
+    async def decide(self, item: str, approve: bool, note: str, by: str) -> str:
+        body = {"approved": approve, "note": note, "by": by}
+        await self._send("POST", f"/admin/inbox/{item}/decision", body)
+        return ("Approved" if approve else "Rejected") + " and recorded; the run goes on."
 
     async def _faq_docs(self, corpus: str | None) -> tuple[str, list[dict[str, Any]]]:
         if corpus is None:
@@ -298,6 +304,8 @@ async def run(admin: Admin, args: Any) -> str:
         return await admin.show(args.session)
     if cmd == "reply":
         return await admin.reply(args.session, args.text, args.by)
+    if cmd == "decide":
+        return await admin.decide(args.item, args.decision == "approve", args.note, args.by)
     if cmd == "costs":
         return await admin.costs(args.since)
     if cmd == "runs":

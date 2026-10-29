@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import io
 from pathlib import Path
 from typing import Any
@@ -115,3 +116,31 @@ async def test_inbox_says_what_failed(tmp_path: Path) -> None:
     assert "error: github.add_issue_comment: 403 Resource not accessible" in inbox
     assert "denied: github.create_pull_request: permission check failed" in inbox
     assert "issue_read" not in inbox  # only what failed
+
+
+def test_ctrl_c_stops_a_server_without_a_traceback(capsys: pytest.CaptureFixture[str]) -> None:
+    from dif_general_harness.cli import until_stopped
+
+    async def serving() -> int:
+        try:
+            raise KeyboardInterrupt  # what Ctrl+C raises inside the event loop
+        finally:
+            await asyncio.sleep(0)  # a connection still closing
+
+    assert until_stopped(serving()) == 0
+    assert capsys.readouterr().err.strip() == "stopped"
+
+
+async def test_an_approval_is_decided_from_the_terminal(tmp_path: Path) -> None:
+    env = Env(tmp_path, [])
+    inst, _, client = await env.open()
+    async with inst, client:
+        item = await inst.inbox.create("approval", "Post invoice for 38,280 MXN?", {})
+        client.headers.update(ADMIN_H)
+        admin = Admin(client)
+        assert "Rejected" in await admin.decide(item, False, "not ours", "accounting")
+        [decided] = [i for i in await inst.inbox.list(None) if i.id == item]
+        assert (decided.status, decided.decided_by, decided.note) == (
+            "denied", "accounting", "not ours")  # fmt: skip
+        with pytest.raises(AdminError, match="409"):
+            await admin.decide(item, True, "", "accounting")  # already decided

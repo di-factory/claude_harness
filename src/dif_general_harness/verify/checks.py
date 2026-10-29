@@ -116,7 +116,12 @@ class Verifier:
 
     # --- running them ----------------------------------------------------------------
 
-    async def verify(self, session: Session, call: ToolUseBlock, tool: Tool | None) -> Verdict:
+    async def verify(
+        self, session: Session, call: ToolUseBlock, tool: Tool | None,
+        context: dict[str, Any] | None = None,
+    ) -> Verdict:  # fmt: skip
+        """``context`` adds to what conditions see: a workflow passes its ``steps`` and
+        ``input``, so a check can read what earlier steps found."""
         names = self.checks_for(tool, call, session.id)
         if not names:
             return Verdict(True)
@@ -124,7 +129,7 @@ class Verifier:
         if self.failures.get(key, 0) >= MAX_FAILURES:
             return Verdict(False, "verification already failed twice; a person was asked", "")
         for name in names:
-            verdict = await self._run(name, session, call, tool)
+            verdict = await self._run(name, session, call, tool, context)
             await self.instance.audit.record(
                 self.instance.scope, "verifier", "verification", call.name,
                 {"check": name, "passed": verdict.passed, "reason": verdict.reason,
@@ -138,8 +143,9 @@ class Verifier:
         return Verdict(True)
 
     async def _run(
-        self, name: str, session: Session, call: ToolUseBlock, tool: Tool | None
-    ) -> Verdict:
+        self, name: str, session: Session, call: ToolUseBlock, tool: Tool | None,
+        context: dict[str, Any] | None = None,
+    ) -> Verdict:  # fmt: skip
         if name == "__verifier__":
             cfg = self.instance.spec.policies.verification.verifier or {}
             criteria = cfg.get("criteria") or DEFAULT_CRITERIA
@@ -152,7 +158,8 @@ class Verifier:
             if check.type == "tool":
                 return await self._tool_check(name, extra, call)
             if check.type == "condition":
-                ok = cel.holds(str(extra.get("expr", "")), await self._context(session, call))
+                seen = {**(context or {}), **await self._context(session, call)}
+                ok = cel.holds(str(extra.get("expr", "")), seen)
                 return Verdict(ok, "" if ok else f"condition not met: {extra.get('expr')}", name)
             if check.type == "command":
                 return await self._command_check(name, extra)

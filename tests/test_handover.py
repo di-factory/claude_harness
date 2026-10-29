@@ -73,6 +73,7 @@ def test_the_documents_a_clients_claude_starts_from(
     settings = json.loads((out / ".claude" / "settings.json").read_text())["permissions"]
     assert "Read(~/.dif/**)" in settings["deny"] and "Bash(docker:*)" in settings["deny"]
     assert "Bash(./negocio reply:*)" in settings["ask"]  # sending to a customer: always asked
+    assert "Bash(./negocio decide:*)" in settings["ask"]  # approving a posting: always asked
     assert "Bash(./negocio status)" in settings["allow"]
     skill = (out / ".claude" / "skills" / "responder" / "SKILL.md").read_text()
     assert skill.startswith("---\nname: responder\n") and "Only after a clear yes" in skill

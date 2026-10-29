@@ -177,8 +177,13 @@ Attempt = Callable[[str], Awaitable[str]]  # a message to the agent -> its final
 
 async def run_gated(inst: Instance, gate: Gate | None, task: str, attempt: Attempt) -> Gated:
     """Ask, gate, and on a failure other than a malformed return retry once with the
-    reason; a second failure needs a person."""
+    reason; a second failure needs a person. The model gets the schema with the task: it
+    cannot fill fields it was never shown."""
     message = task
+    if gate is not None and gate.schema:
+        message = f"{task}\n\nAnswer with JSON only, matching this JSON Schema:\n" + json.dumps(
+            gate.schema, ensure_ascii=False
+        )
     failures: list[Failure] = []
     for round_ in range(1 + max(0, gate.retries if gate else 0)):
         text = await attempt(message)
