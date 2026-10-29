@@ -96,3 +96,22 @@ async def test_inbox_conversation_reply_costs_and_status(
         client.headers["authorization"] = "Bearer wrong"
         assert await admin_command(_args("inbox"), client=client) == 1
         assert "admin token was refused" in capsys.readouterr().err
+
+
+async def test_inbox_says_what_failed(tmp_path: Path) -> None:
+    env = Env(tmp_path, [])
+    inst, _, client = await env.open()
+    async with inst, client:
+        await inst.inbox.create("escalation", "Workflow work-issue failed at ack", {
+            "error": "github.add_issue_comment: 403 Resource not accessible by personal token",
+            "tool_trace": [
+                {"tool": "github.issue_read", "status": "ok", "error": None},
+                {"tool": "github.create_pull_request", "status": "denied",
+                 "error": "permission check failed: model refused the effort parameter"},
+            ],
+        })  # fmt: skip
+        client.headers.update(ADMIN_H)
+        inbox = await Admin(client).inbox()
+    assert "error: github.add_issue_comment: 403 Resource not accessible" in inbox
+    assert "denied: github.create_pull_request: permission check failed" in inbox
+    assert "issue_read" not in inbox  # only what failed
