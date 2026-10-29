@@ -140,3 +140,64 @@ async def test_a_prompt_too_long_is_a_context_overflow() -> None:
     with pytest.raises(ContextOverflow, match="prompt is too long"):
         async for _ in provider.stream(request):
             pass
+
+
+async def test_a_model_without_effort_levels_is_asked_again_without_one() -> None:
+    import anthropic
+    import httpx2 as httpx
+
+    from dif_general_harness.providers.base import ModelRequest, ProviderMessage
+
+    refused = anthropic.BadRequestError(
+        "This model does not support the effort parameter.",
+        response=httpx.Response(400, request=httpx.Request("POST", "https://x")), body=None,
+    )  # fmt: skip
+    sent: list[dict[str, object]] = []
+
+    class Final:
+        def __init__(self) -> None:
+            self.content = [type("Text", (), {"type": "text", "text": "ok", "citations": None})()]
+            self.usage = type("Usage", (), {"input_tokens": 1, "output_tokens": 1})()
+            self.stop_reason = "end_turn"
+            self.model = "claude-haiku-4-5"
+
+    class Stream:
+        async def __aenter__(self) -> Stream:
+            return self
+
+        async def __aexit__(self, *exc: object) -> None:
+            return None
+
+        def __aiter__(self) -> Stream:
+            return self
+
+        async def __anext__(self) -> object:
+            raise StopAsyncIteration
+
+        async def get_final_message(self) -> Final:
+            return Final()
+
+    class Messages:
+        def stream(self, **kw: object) -> object:
+            sent.append(kw)
+            if "output_config" in kw:
+                raise refused
+            return Stream()
+
+    class Client:
+        messages = Messages()
+
+        class beta:
+            messages = Messages()
+
+    provider = AnthropicProvider(
+        "claude-haiku-4-5",
+        client=Client(),
+        effort="high",  # type: ignore[arg-type]
+    )
+    request = ModelRequest(system="", messages=[Message.user("hola")])
+    events = [e async for e in provider.stream(request)]
+    assert isinstance(events[-1], ProviderMessage) and events[-1].message.text() == "ok"
+    assert [("output_config" in kw) for kw in sent] == [True, False]
+    [_ async for _ in provider.stream(request)]
+    assert len(sent) == 3 and "output_config" not in sent[-1]  # remembered: no second refusal

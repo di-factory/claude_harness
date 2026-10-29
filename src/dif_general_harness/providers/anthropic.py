@@ -225,6 +225,11 @@ class AnthropicProvider:
                 if attempt > self.max_json_retries:
                     raise
             except anthropic.BadRequestError as exc:
+                if self.effort and "effort" in str(exc).lower() and "output_config" in params:
+                    # some models (Haiku 4.5) take no effort level: drop it from now on
+                    self.effort = None
+                    params.pop("output_config")
+                    continue
                 if "workspace" in str(exc).lower():
                     raise ProviderSetupError(WORKSPACE_HINT) from exc
                 if is_overflow(str(exc)):

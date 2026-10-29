@@ -88,7 +88,8 @@ class Admin:
             out.append(f"- [{i['kind']}] {i['title']}"
                        + (f" (contact {contact})" if contact else "")
                        + (f"\n  conversation: {i['session']}" if i.get("session") else "")
-                       + f"\n  item: {i['id']}")  # fmt: skip
+                       + f"\n  item: {i['id']}"
+                       + _why(i.get("payload") or {}))  # fmt: skip
         return "\n".join(out)
 
     async def show(self, session: str) -> str:
@@ -273,6 +274,18 @@ def admin_client(url: str | None, token: str | None) -> httpx2.AsyncClient:
     return httpx2.AsyncClient(
         base_url=base, headers={"Authorization": f"Bearer {token}"}, timeout=30.0
     )
+
+
+def _why(payload: dict[str, Any]) -> str:
+    """What went wrong, for a person deciding what to do: the error and the calls that failed."""
+    lines = []
+    error = payload.get("error")
+    if error:
+        lines.append(f"  error: {str(error)[:400]}")
+    failed = [t for t in payload.get("tool_trace") or [] if t.get("status") not in ("ok", None)]
+    for t in failed[-3:]:
+        lines.append(f"  {t['status']}: {t.get('tool')}: {str(t.get('error') or '')[:300]}")
+    return "".join("\n" + line for line in lines)
 
 
 async def run(admin: Admin, args: Any) -> str:

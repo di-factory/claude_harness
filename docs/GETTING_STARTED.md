@@ -360,5 +360,7 @@ tests in a container without network.
 | `cannot run together in one instance yet` | Each pack sets its own tools, budgets and consent; two in one instance would loosen one of them | One pack per instance; set up the other need as a second client |
 | `Bind for 127.0.0.1:8080 failed: port is already allocated` | Another client's container still holds the port (one client is served per server) | `git pull` and run `./setup.sh` again: it now stops the previous client first (its data is kept) |
 | `/chat` answers `no web chat here` | The instance was built from a pack without a `web` channel, or before the pack had one | `git pull`, then `./setup.sh` and reuse the client: it signs and deploys it again |
+| `This model does not support the effort parameter` in an inbox item | Older builds sent a pack's `effort` level to models that take none (Haiku 4.5) | `git pull`: the harness now drops it for such a model |
+| `admin inbox` shows only titles | Older builds | `git pull`: each item now shows its error and the calls that failed |
 | A webhook answers 404 `no webhook trigger at this path` | Older builds served a trigger whose path is `/hooks/x` only at `/hooks/hooks/x` | `git pull`; the webhook URL is the trigger's path as written (`https://HOST/hooks/github`) |
 | `git push` asks for a password and fails | GitHub refuses account passwords for git | `gh auth login` (browser) or a personal access token |

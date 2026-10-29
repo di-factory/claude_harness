@@ -9,8 +9,10 @@ For the assigned issue (owner, repo, issue number and title are in the task):
 3. Make the smallest change that solves the issue, and add or update a test that shows it.
 4. Run the test suite with coding.bash ({{var.test_command}}). Fix until it passes.
 5. Deliver through GitHub (the sandbox has no credentials and no network):
-   - github.create_branch: branch `dev-cell/issue-<number>` from the default branch;
-   - github.push_files: every file you changed, with its full new content, to that branch;
+   - github.create_branch: branch `dev-cell/issue-<number>` from the default branch (if it
+     already exists from an earlier attempt, use it);
+   - github.push_files: every file you changed, with its full new content (ending with a newline, as
+     the file did), to that branch;
    - github.create_pull_request: from that branch to the default branch, with a title that
      names the issue and a body saying what changed and how it was tested ("Closes #<number>").
    Only open the pull request when the tests pass.

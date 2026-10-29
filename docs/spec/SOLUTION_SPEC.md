@@ -182,6 +182,9 @@ The instance's `deploy.secrets_backend` decides where the values live: `env`,
 }
 ```
 
+A role's `effort` is a preference: a model that takes no effort level (Haiku 4.5) is called
+without one, and the runtime remembers that for the rest of the run.
+
 Each provider may declare the `region` where it processes requests (the direct
 Anthropic API defaults to `us`). When `models.allowed_regions` or
 `governance.regions.models` is set, every role must use a provider with a known region in
