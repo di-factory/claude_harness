@@ -129,3 +129,18 @@ def test_ctrl_c_stops_a_server_without_a_traceback(capsys: pytest.CaptureFixture
 
     assert until_stopped(serving()) == 0
     assert capsys.readouterr().err.strip() == "stopped"
+
+
+async def test_an_approval_is_decided_from_the_terminal(tmp_path: Path) -> None:
+    env = Env(tmp_path, [])
+    inst, _, client = await env.open()
+    async with inst, client:
+        item = await inst.inbox.create("approval", "Post invoice for 38,280 MXN?", {})
+        client.headers.update(ADMIN_H)
+        admin = Admin(client)
+        assert "Rejected" in await admin.decide(item, False, "not ours", "accounting")
+        [decided] = [i for i in await inst.inbox.list(None) if i.id == item]
+        assert (decided.status, decided.decided_by, decided.note) == (
+            "denied", "accounting", "not ours")  # fmt: skip
+        with pytest.raises(AdminError, match="409"):
+            await admin.decide(item, True, "", "accounting")  # already decided

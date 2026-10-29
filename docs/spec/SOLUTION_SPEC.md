@@ -495,7 +495,15 @@ cheapest first: `schema` (a JSON Schema, inline or a file; default: the agent's
 the task and the return), then `threshold` (`0.6`, or `{"field": "score", "min": 0.6}`;
 default field `confidence`). A malformed return is never retried; any other failure is
 retried once (`retries`) in the same conversation with the reason appended; a second failure
-ends the run as `needs_human` with a `review` item in the inbox.
+ends the run as `needs_human` with a `review` item in the inbox. With a schema, the agent is
+given it with its task (it cannot fill fields it was never shown). Set `"retries": 0` where a
+second look should not change the answer (an extracted amount's confidence).
+
+**Personal data in workflows.** Agents see PII as tokens, as everywhere. An agent step's
+answer reaches the workflow in clear, so its own conditions compare values
+(`steps.extract.output.rfc_receptor != var.company_rfc`); each `tool` step's arguments are
+governed like an agent's tool call: only the classes `governance.pii.reveal_to_tools` grants
+that tool arrive in clear, the rest as tokens.
 
 ```json
 { "id": "enrich", "type": "agent", "agent": "researcher", "input": "{{input.company}}",
@@ -549,7 +557,9 @@ crashed half way runs again on resume, so side-effecting tools should be idempot
 
 - Check types:
   - `tool`: call a read tool and compare the result;
-  - `condition`: an expression over context;
+  - `condition`: an expression over context (`args`, `tool`, `contact`, `var`; in a
+    workflow `tool` step also `steps` and `input`, so a check can require what earlier steps
+    found: `steps.validate.valid and not steps.dup.found`);
   - `citations`: the answer cites retrieved sources;
   - `verifier`: the verifier agent judges against listed criteria.
 - `policies.verification.verifier` adds the verifier agent (its `model_role`, optional

@@ -22,3 +22,8 @@ deploy/build/
 .env.*
 *.env
 secrets/
+
+# receipt test kit: what an operator drops in and what the mock ERP records
+docs/testing/receipts/inbox/*
+!docs/testing/receipts/inbox/.gitkeep
+docs/testing/receipts/erp-ledger.json

@@ -565,14 +565,16 @@ class WorkflowEngine:
             if not gated.passed:
                 raise _NeedsHuman(what, gated.failures)
             self.count(run, "passed")
-            final = json.dumps(gated.output, ensure_ascii=False)
-            output: dict[str, Any] = {**(gated.output or {}), "text": final, "reason": "end_turn",
-                                      "session": session.id, "output": gated.output}  # fmt: skip
+            found = await self._in_clear(gated.output)
+            final = json.dumps(found, ensure_ascii=False)
+            output: dict[str, Any] = {**(found or {}), "text": final, "reason": "end_turn",
+                                      "session": session.id, "output": found}  # fmt: skip
             return output
         final = await attempt(text)
         output = {"text": final, "reason": "end_turn", "session": session.id}
         parsed = _json_in(final)
         if isinstance(parsed, dict):
+            parsed = await self._in_clear(parsed)
             output = {**parsed, **output, "output": parsed}
         if target.get("key") and target.get("channel") and texts and parsed is None:
             replied = any(isinstance(v, dict) and v.get("replied") for v in run.steps.values())
@@ -582,12 +584,31 @@ class WorkflowEngine:
             )  # fmt: skip
         return output
 
+    async def _revealed(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        """A workflow's tool gets personal data like an agent's tool does: only the classes
+        ``governance.pii.reveal_to_tools`` grants it, the rest as tokens."""
+        pii = self.host.instance.pii
+        if not pii.active:
+            return args
+        tokens = await pii.tokenize_obj(args)
+        reveal = pii.policy.for_tool(name)
+        shown: dict[str, Any] = await pii.detokenize_obj(tokens, reveal) if reveal else tokens
+        return shown
+
+    async def _in_clear(self, output: Any) -> Any:
+        """An agent's answer, as the workflow's own code reads it: the model wrote tokens,
+        the workflow compares and routes on the values (``rfc_receptor != var.company_rfc``)
+        and hands them on, governed again at the next tool or agent."""
+        pii = self.host.instance.pii
+        return await pii.detokenize_obj(output, set(pii.policy.classes)) if pii.active else output
+
     async def _tool(self, run: Run, step: Step, name: str, args: dict[str, Any]) -> Any:
         inst = self.host.instance
         tool = inst.tools.get(name)
         if tool is None:
             raise WorkflowError(f"tool {name} is not available")
         approved = run.steps.get(f"{step.id}__approval")
+        args = await self._revealed(name, args)
         decision = inst.policy.decide(name, tool.effect, args, None)
         if decision.verdict is Verdict.DENY:
             raise WorkflowError(f"tool {name} denied by rule {decision.rule!r}")
@@ -595,7 +616,8 @@ class WorkflowEngine:
         from ..core.session import Session
 
         system = Session(scope=inst.scope, agent_id=f"workflow:{run.workflow}")
-        verdict = await inst.verifier.verify(system, call, tool)
+        context = {"steps": run.steps, "input": run.input}
+        verdict = await inst.verifier.verify(system, call, tool, context)
         if not verdict.passed:
             raise WorkflowError(f"verification failed: {verdict.reason}")
         if decision.verdict is Verdict.ASK and approved is None:

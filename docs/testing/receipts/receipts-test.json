@@ -1,0 +1,30 @@
+{
+  "$schema": "https://di-factory.biz/schemas/solution-spec.v1.json",
+  "spec_version": "1",
+  "kind": "instance",
+  "solution": { "id": "receipts-test", "version": "1.0.0", "name": "Receipt processing live test", "lob": "pyme", "locale": "en" },
+  "extends": ["pyme-receipt-processing@^1.0"],
+  "tenant": { "id": "di-factory-test", "name": "Di-Factory (receipts test)", "timezone": "America/Mexico_City" },
+  "values": {
+    "company_rfc": "EKU9003173C9",
+    "inbox_bucket": "unused: the inbox is a local folder in this test",
+    "erp_base_url": "http://127.0.0.1:8090/erp",
+    "auto_post_limit_mxn": 20000,
+    "report_email": "unused@example.com",
+    "main_model": "claude-sonnet-5-5",
+    "fast_model": "claude-haiku-4-5"
+  },
+  "triggers": {
+    "new-document": {
+      "source": { "type": "folder", "path": "inbox", "poll": "1m", "bucket": null, "credentials": null }
+    }
+  },
+  "tools": {
+    "config": { "documents": { "storage": null } },
+    "http": { "cfdi": { "base_url": "http://127.0.0.1:8090/cfdi" } }
+  },
+  "channels": { "email_reports": { "enabled": false } },
+  "policies": {
+    "budgets": { "per_tenant_day": { "usd": 5 } }
+  }
+}

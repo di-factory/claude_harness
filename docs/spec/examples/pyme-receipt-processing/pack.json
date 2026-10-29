@@ -99,7 +99,8 @@
       "input": { "file": "file" },
       "concurrency": 5,
       "steps": [
-        { "id": "extract", "type": "agent", "agent": "extractor", "input": "{{input.file}}" },
+        { "id": "extract", "type": "agent", "agent": "extractor", "input": "{{input.file}}",
+          "gate": { "threshold": { "field": "confidence", "min": 0.8 }, "retries": 0 } },
         { "id": "validate", "type": "tool", "tool": "cfdi.validate", "args": { "uuid": "{{steps.extract.output.uuid}}", "rfc_emisor": "{{steps.extract.output.rfc_emisor}}", "rfc_receptor": "{{steps.extract.output.rfc_receptor}}", "total": "{{steps.extract.output.total}}" } },
         { "id": "dup", "type": "tool", "tool": "erp.find_entry", "args": { "uuid": "{{steps.extract.output.uuid}}" } },
         { "id": "route", "type": "branch", "cases": [
@@ -126,7 +127,7 @@
   "policies": {
     "profile": "strict",
     "permissions": {
-      "allow": ["documents.*", "cfdi.*", "erp.find_entry", "runs.summarize"],
+      "allow": ["documents.*", "cfdi.*", "erp.find_entry", "erp.create_entry", "runs.summarize"],
       "ask": [],
       "deny": ["erp.delete_entry"]
     },
@@ -138,7 +139,6 @@
       "verifier": { "model_role": "verifier", "applies_to": ["erp.create_entry"], "mode": "sampled", "sample_rate": 0.1 }
     },
     "escalation": {
-      "rules": [{ "when": "steps.extract.confidence < 0.8", "to": "human" }],
       "handoff_to": { "type": "inbox" }
     }
   },
