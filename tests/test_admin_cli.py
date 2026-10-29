@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import io
 from pathlib import Path
 from typing import Any
@@ -115,3 +116,16 @@ async def test_inbox_says_what_failed(tmp_path: Path) -> None:
     assert "error: github.add_issue_comment: 403 Resource not accessible" in inbox
     assert "denied: github.create_pull_request: permission check failed" in inbox
     assert "issue_read" not in inbox  # only what failed
+
+
+def test_ctrl_c_stops_a_server_without_a_traceback(capsys: pytest.CaptureFixture[str]) -> None:
+    from dif_general_harness.cli import until_stopped
+
+    async def serving() -> int:
+        try:
+            raise KeyboardInterrupt  # what Ctrl+C raises inside the event loop
+        finally:
+            await asyncio.sleep(0)  # a connection still closing
+
+    assert until_stopped(serving()) == 0
+    assert capsys.readouterr().err.strip() == "stopped"
