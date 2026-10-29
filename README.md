@@ -234,6 +234,7 @@ uv tool install git+https://github.com/di-factory/claude_harness@v1.0.0
 
 | Document | Contents |
 |---|---|
+| [`docs/capabilities/README.md`](docs/capabilities/README.md) | What each solution type does, the story for a client, its safeguards and how proven it is: [appointment agent](docs/capabilities/appointment-agent.md), [conversational assistant](docs/capabilities/conversational-assistant.md), [Dev Cell](docs/capabilities/dev-cell.md), [receipt processing](docs/capabilities/receipt-processing.md), [Service Desk cell](docs/capabilities/service-desk-cell.md), [OPC C-suite](docs/capabilities/opc-c-suite.md), [research graph](docs/capabilities/research-graph.md) |
 | [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) | Step by step from a clean server to a live agent, and the common setup mistakes |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Technical design: framing, modules, all subsystems, stack, layout, roadmap, decisions |
 | [`docs/PRD.md`](docs/PRD.md) | Product requirements: goals, personas, user stories, requirements, metrics, milestones, risks |
