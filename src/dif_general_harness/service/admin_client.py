@@ -283,11 +283,15 @@ def admin_client(url: str | None, token: str | None) -> httpx2.AsyncClient:
 
 
 def _why(payload: dict[str, Any]) -> str:
-    """What went wrong, for a person deciding what to do: the error and the calls that failed."""
+    """What went wrong, for a person deciding what to do: the error, what a gate rejected,
+    and the calls that failed."""
     lines = []
     error = payload.get("error")
     if error:
         lines.append(f"  error: {str(error)[:400]}")
+    for f in (payload.get("failures") or [])[-3:]:
+        if isinstance(f, dict):
+            lines.append(f"  {f.get('gate', 'check')} gate: {str(f.get('reason', ''))[:300]}")
     failed = [t for t in payload.get("tool_trace") or [] if t.get("status") not in ("ok", None)]
     for t in failed[-3:]:
         lines.append(f"  {t['status']}: {t.get('tool')}: {str(t.get('error') or '')[:300]}")

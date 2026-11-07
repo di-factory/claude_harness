@@ -111,8 +111,14 @@ async def test_inbox_says_what_failed(tmp_path: Path) -> None:
                  "error": "permission check failed: model refused the effort parameter"},
             ],
         })  # fmt: skip
+        await inst.inbox.create(
+            "review",
+            "process-document: extractor needs a person",
+            {"failures": [{"gate": "threshold", "reason": "confidence 0.3 is under 0.8"}]},
+        )
         client.headers.update(ADMIN_H)
         inbox = await Admin(client).inbox()
+        assert "threshold gate: confidence 0.3 is under 0.8" in inbox
     assert "error: github.add_issue_comment: 403 Resource not accessible" in inbox
     assert "denied: github.create_pull_request: permission check failed" in inbox
     assert "issue_read" not in inbox  # only what failed
