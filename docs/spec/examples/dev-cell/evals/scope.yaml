@@ -1,0 +1,48 @@
+# Eval suite: what starts the cell. One case per YAML document; each runs in a fresh instance.
+# A GitHub "labeled" event fires the trigger; GitHub's tools are fixtures, so nothing reaches
+# GitHub. The repository named in the event must be in the instance's `repos` (the kit's
+# instance, docs/testing/dev-cell/devcell-test.json, has devcell-test). Run with the sample
+# repository as the workspace:
+#   eval INSTANCE.json --packs docs/spec/examples --workspace repo=COPY_OF_SAMPLE_REPO
+id: another-label-starts-nothing
+description: An issue labelled with anything but the pickup label is not picked up.
+setup:
+  event:
+    start: "2026-10-28T12:00:00-06:00"
+    action: labeled
+    label: { name: question }
+    issue: { number: 3, title: "Question about the API" }
+    repository: { name: devcell-test, owner: { login: acme }, default_branch: main }
+  fixtures:
+    github.issue_read: { number: 3, title: "Question about the API", body: "How do I page through results?" }
+    github.add_issue_comment: commented
+    github.create_branch: created
+    github.push_files: pushed
+    github.create_pull_request: { number: 99, html_url: "https://github.com/acme/devcell-test/pull/99" }
+turns:
+  - trigger: issue-labeled
+  - expect_no_message: true
+must_not:
+  - tool: github.add_issue_comment
+  - tool: github.issue_read
+---
+id: another-repository-starts-nothing
+description: An issue in a repository the cell was not given is not picked up.
+setup:
+  event:
+    start: "2026-10-28T12:00:00-06:00"
+    action: labeled
+    label: { name: agent }
+    issue: { number: 4, title: "Fix the login page" }
+    repository: { name: payments-service, owner: { login: acme }, default_branch: main }
+  fixtures:
+    github.issue_read: { number: 4, title: "Fix the login page", body: "The button is misaligned." }
+    github.add_issue_comment: commented
+    github.create_branch: created
+    github.push_files: pushed
+    github.create_pull_request: { number: 99, html_url: "https://github.com/acme/devcell-test/pull/99" }
+turns:
+  - trigger: issue-labeled
+must_not:
+  - tool: github.add_issue_comment
+  - tool: github.issue_read

@@ -1,0 +1,31 @@
+# Eval suite: duplicates. One case per YAML document; each runs in a fresh instance.
+# The file arrives as the folder trigger delivers it (an XML's text inline); the SAT check and
+# the ERP are fixtures, so nothing is posted anywhere.
+id: already-posted-is-skipped
+description: An invoice whose UUID the ERP already has (resent as another file) is skipped, not posted again.
+setup:
+  event:
+    start: "2026-10-20T10:00:00-06:00"
+    file:
+      name: 03-office-supplies-again.xml
+      key: 03-office-supplies-again.xml
+      uri: file:///inbox/03-office-supplies-again.xml
+      content_type: application/xml
+      text: |
+        <?xml version="1.0" encoding="UTF-8"?>
+        <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital" Version="4.0" Fecha="2026-10-20T10:15:00" SubTotal="4000.00" Moneda="MXN" Total="4640.00" TipoDeComprobante="I">
+          <cfdi:Emisor Rfc="XIA190128J61" Nombre="XENON INDUSTRIAL ARTICLES" RegimenFiscal="601"/>
+          <cfdi:Receptor Rfc="EKU9003173C9" Nombre="ESCUELA KEMPER URGATE" UsoCFDI="G03"/>
+          <cfdi:Conceptos><cfdi:Concepto Descripcion="Papel y toner" Importe="4000.00"/></cfdi:Conceptos>
+          <cfdi:Impuestos TotalImpuestosTrasladados="640.00"/>
+          <cfdi:Complemento><tfd:TimbreFiscalDigital UUID="6F1A2B3C-4D5E-4F60-8A71-92B3C4D5E6F7"/></cfdi:Complemento>
+        </cfdi:Comprobante>
+  fixtures:
+    cfdi.validate: { valid: true, status: Vigente }
+    erp.find_entry: { found: true, entry: { id: E-0001 } }
+    erp.create_entry: { id: E-0001, created: true }
+turns:
+  - trigger: new-document
+  - expect_tool: erp.find_entry
+must_not:
+  - tool: erp.create_entry

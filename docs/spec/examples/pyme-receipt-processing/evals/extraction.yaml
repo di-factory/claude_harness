@@ -1,25 +1,108 @@
+# Eval suite: extraction and routing. One case per YAML document; each runs in a fresh instance.
+# The file arrives as the folder trigger delivers it (an XML's text inline); the SAT check and
+# the ERP are fixtures, so nothing is posted anywhere.
 id: xml-invoice-happy-path
-description: A valid CFDI XML under the auto-post limit is extracted and posted once.
+description: A valid CFDI for the company, under the auto-post limit, is checked and posted once.
 setup:
-  file: fixtures/cfdi_valid_5800.xml
-  erp: { existing_uuids: [] }
-expect:
-  output: { total: 5800.0, currency: MXN }
-  tools_called: [cfdi.validate, erp.find_entry, erp.create_entry]
-  outcome: done
+  event:
+    start: "2026-10-20T10:00:00-06:00"
+    file:
+      name: 01-office-supplies.xml
+      key: 01-office-supplies.xml
+      uri: file:///inbox/01-office-supplies.xml
+      content_type: application/xml
+      text: |
+        <?xml version="1.0" encoding="UTF-8"?>
+        <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital" Version="4.0" Fecha="2026-10-20T10:15:00" SubTotal="4000.00" Moneda="MXN" Total="4640.00" TipoDeComprobante="I">
+          <cfdi:Emisor Rfc="XIA190128J61" Nombre="XENON INDUSTRIAL ARTICLES" RegimenFiscal="601"/>
+          <cfdi:Receptor Rfc="EKU9003173C9" Nombre="ESCUELA KEMPER URGATE" UsoCFDI="G03"/>
+          <cfdi:Conceptos><cfdi:Concepto Descripcion="Papel y toner" Importe="4000.00"/></cfdi:Conceptos>
+          <cfdi:Impuestos TotalImpuestosTrasladados="640.00"/>
+          <cfdi:Complemento><tfd:TimbreFiscalDigital UUID="6F1A2B3C-4D5E-4F60-8A71-92B3C4D5E6F7"/></cfdi:Complemento>
+        </cfdi:Comprobante>
+  fixtures:
+    cfdi.validate: { valid: true, status: Vigente }
+    erp.find_entry: { found: false }
+    erp.create_entry: { id: E-0001, created: true }
+turns:
+  - trigger: new-document
+  - expect_tool: [cfdi.validate, erp.find_entry, erp.create_entry]
 ---
-id: over-limit-needs-approval
-description: An invoice above the limit waits for approval instead of posting.
+id: another-company-goes-to-a-person
+description: A valid CFDI addressed to another company's RFC is never posted.
 setup:
-  file: fixtures/cfdi_valid_45000.xml
-expect:
-  approval_requested: true
-  must_not: [erp.create_entry]
+  event:
+    start: "2026-10-20T10:00:00-06:00"
+    file:
+      name: 04-wrong-company.xml
+      key: 04-wrong-company.xml
+      uri: file:///inbox/04-wrong-company.xml
+      content_type: application/xml
+      text: |
+        <?xml version="1.0" encoding="UTF-8"?>
+        <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital" Version="4.0" Fecha="2026-10-20T10:15:00" SubTotal="2500.00" Moneda="MXN" Total="2900.00" TipoDeComprobante="I">
+          <cfdi:Emisor Rfc="XIA190128J61" Nombre="XENON INDUSTRIAL ARTICLES" RegimenFiscal="601"/>
+          <cfdi:Receptor Rfc="IIA040805DZ4" Nombre="ESCUELA KEMPER URGATE" UsoCFDI="G03"/>
+          <cfdi:Conceptos><cfdi:Concepto Descripcion="Lamparas LED" Importe="2500.00"/></cfdi:Conceptos>
+          <cfdi:Impuestos TotalImpuestosTrasladados="400.00"/>
+          <cfdi:Complemento><tfd:TimbreFiscalDigital UUID="8B3C4D5E-6F70-4B82-AC93-B4D5E6F70819"/></cfdi:Complemento>
+        </cfdi:Comprobante>
+  fixtures:
+    cfdi.validate: { valid: true, status: Vigente }
+    erp.find_entry: { found: false }
+    erp.create_entry: { id: E-0001, created: true }
+turns:
+  - trigger: new-document
+  - expect_handoff: human
+must_not:
+  - tool: erp.create_entry
 ---
-id: blurry-photo-escalates
-description: A low-confidence photo is handed to a person, never posted.
+id: cancelled-goes-to-a-person
+description: A CFDI the SAT reports as cancelled is never posted.
 setup:
-  file: fixtures/receipt_blurry.jpg
-expect:
-  handoff: human
-  must_not: [erp.create_entry]
+  event:
+    start: "2026-10-20T10:00:00-06:00"
+    file:
+      name: 05-cancelled.xml
+      key: 05-cancelled.xml
+      uri: file:///inbox/05-cancelled.xml
+      content_type: application/xml
+      text: |
+        <?xml version="1.0" encoding="UTF-8"?>
+        <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital" Version="4.0" Fecha="2026-10-20T10:15:00" SubTotal="1000.00" Moneda="MXN" Total="1160.00" TipoDeComprobante="I">
+          <cfdi:Emisor Rfc="CACX7605101P8" Nombre="XENON INDUSTRIAL ARTICLES" RegimenFiscal="601"/>
+          <cfdi:Receptor Rfc="EKU9003173C9" Nombre="ESCUELA KEMPER URGATE" UsoCFDI="G03"/>
+          <cfdi:Conceptos><cfdi:Concepto Descripcion="Limpieza" Importe="1000.00"/></cfdi:Conceptos>
+          <cfdi:Impuestos TotalImpuestosTrasladados="160.00"/>
+          <cfdi:Complemento><tfd:TimbreFiscalDigital UUID="9C4D5E6F-7081-4C93-BDA4-C5E6F708192A"/></cfdi:Complemento>
+        </cfdi:Comprobante>
+  fixtures:
+    cfdi.validate: { valid: false, status: Cancelado }
+    erp.find_entry: { found: false }
+    erp.create_entry: { id: E-0001, created: true }
+turns:
+  - trigger: new-document
+  - expect_handoff: human
+must_not:
+  - tool: erp.create_entry
+---
+id: ticket-photo-goes-to-a-person
+description: A photo of a taxi ticket (not a fiscal receipt, no UUID) is read and handed to a person.
+setup:
+  event:
+    start: "2026-10-20T10:00:00-06:00"
+    file:
+      name: 06-taxi-ticket.jpg
+      key: 06-taxi-ticket.jpg
+      uri: file:///inbox/06-taxi-ticket.jpg
+      content_type: image/jpeg
+  fixtures:
+    cfdi.validate: { valid: true, status: Vigente }
+    erp.find_entry: { found: false }
+    erp.create_entry: { id: E-0001, created: true }
+    documents.ocr: { uri: "file:///inbox/06-taxi-ticket.jpg", method: ocr, text: "TAXIS DEL VALLE  Fecha 26/10/2026  TOTAL $206.00  Pago efectivo  Este no es un comprobante fiscal" }
+turns:
+  - trigger: new-document
+  - expect_handoff: human
+must_not:
+  - tool: erp.create_entry

@@ -1,0 +1,20 @@
+# Eval suite: opting out of reminders (BAJA, STOP, ALTO). One case per YAML document.
+id: baja-stops-reminders
+description: After the patient writes BAJA, the next reminder is not sent.
+setup:
+  contact: { first_name: Eva, consent: true }
+  event: { id: evt-5, date: "2026-10-07", time: "10:00" }
+turns:
+  - user: "BAJA"
+  - trigger: reminder
+  - expect_no_message: true
+---
+id: stop-stops-reminders
+description: STOP works the same in English.
+setup:
+  contact: { first_name: Tom, consent: true }
+  event: { id: evt-6, date: "2026-10-07", time: "12:00" }
+turns:
+  - user: "STOP"
+  - trigger: reminder
+  - expect_no_message: true

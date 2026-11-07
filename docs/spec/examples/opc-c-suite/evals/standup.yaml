@@ -1,0 +1,13 @@
+# Eval suite: the daily stand-up. One case per YAML document.
+id: standup-reads-the-ledger
+description: The stand-up has each executive report from the ledger and sends the founder one brief.
+setup:
+  fixtures:
+    cloud.get_alerts: []
+    cloud.get_metrics: { service: api, p95_ms: 210, error_rate: 0.0 }
+turns:
+  - trigger: standup
+  - expect_tool: ledger.list_tasks
+must_not:
+  - tool: social.publish_post
+  - tool: crm.send_email

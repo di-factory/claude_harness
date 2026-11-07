@@ -92,6 +92,15 @@ uv run dif-general-harness admin inbox                        # note the item id
 uv run dif-general-harness admin decide ITEM approve --by "accounting"
 ```
 
+## 4. Optional: the pack's evals with the real model
+
+The same seven situations as eval cases (the SAT and the ERP as fixtures, nothing posted),
+with the real model; a few cents:
+```bash
+uv run dif-general-harness eval docs/testing/receipts/receipts-test.json --packs docs/spec/examples
+```
+Every case should pass with `unsafe actions 0`.
+
 ## What counts as a pass
 
 - The ledger ends with exactly three entries: 01 (4,640), 02 (38,280, only after your

@@ -17,6 +17,10 @@ and what its tests showed. The technical contract is
 | **OPC C-suite**: AI executives (growth, operations, technology) for a one-person company | 📄 designed, offline tests only | [opc-c-suite.md](opc-c-suite.md) |
 | **Research graph**: a verified, weekly-updated map of a client's market | 📄 built with offline tests | [research-graph.md](research-graph.md) |
 
+Every pack's eval suites exist and can all run (decision 96): they gate each build before it
+goes online. The receipts' run end to end offline; the others need the model, on the server
+(`eval INSTANCE.json`).
+
 **What "tested live" means here:** set up on a real server with a real model, used the way a
 client would, and the result checked. Every first live run so far found problems the offline
 tests could not (wrong tool names, rules that never fired, a model parameter one model

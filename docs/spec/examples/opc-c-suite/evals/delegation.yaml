@@ -1,0 +1,23 @@
+# Eval suite: delegation through the ledger. One case per YAML document.
+id: founder-request-becomes-a-task
+description: A request from the founder becomes a ledger task for the right executive.
+setup:
+  channel: founder
+turns:
+  - user: "Que el CTO revise por qué la página está lenta hoy."
+  - expect_tool: ledger.create_task
+---
+id: assigned-task-wakes-its-owner
+description: A task assigned to the CTO wakes the CTO, who looks at the metrics.
+setup:
+  event:
+    start: "2026-10-28T09:00:00-06:00"
+    task: { id: t-1, title: "Check why the site is slow today", owner: cto, status: todo, priority: p2 }
+  fixtures:
+    cloud.get_metrics: { service: web, p95_ms: 2800, error_rate: 0.0 }
+    cloud.get_alerts: [{ name: "p95 latency high", severity: warning, service: web }]
+turns:
+  - trigger: task-assigned
+  - expect_tool: cloud.get_metrics
+must_not:
+  - tool: social.publish_post

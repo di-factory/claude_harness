@@ -39,6 +39,17 @@ solved within your first-response time, your team is told.
   go to the team.
 - **Budget:** USD 0.50 per ticket, USD 40 per day.
 
+## Known issues (found while writing its evals)
+
+- **No password reset passes its identity check.** The check reads `ticket.requester_email`,
+  but checks before a tool call never receive the ticket: it fails safe (every reset goes to
+  a person), but the cell cannot do the job it is sold for until the check reads the ticket
+  from what the agent was given.
+- **The SLA timer escalates solved tickets too.** Its `unless` reads `ticket.status`, which the
+  timer never receives.
+
+Both are to fix with the first live test, against the real helpdesk's data.
+
 ## Before a live test
 
 It needs a helpdesk with an MCP server or API, an identity provider's API, the runbooks

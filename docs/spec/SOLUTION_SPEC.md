@@ -700,7 +700,15 @@ must_not:
 
 An outcome case uses `setup.message` and `expect` (`tools_called`, `must_not`,
 `approval_requested`, `handoff`, `template`). A case that asks for something the runner
-cannot check is skipped with the reason, never passed. Results are stored per config
+cannot check is skipped with the reason, never passed.
+
+Workflow and batch packs are evaluated the same way: `setup.event` is the event any trigger
+fires with (a GitHub `labeled` payload, a file with its text, a ticket id), `trigger:` fires
+it, and fixtures stand in for the systems the workflow's tool steps call. Tool expectations
+and `must_not` see the calls workflow steps make as well as the agents' calls, and a return a
+gate sends to a person counts as a handoff to a person. A pack's declared suites must all
+exist and every case must be one the runner can check: an example pack that breaks this fails
+the tests (`tests/test_pack_evals.py`). Results are stored per config
 version, and cases that passed in the previous run and fail now are reported as
 regressions.
 

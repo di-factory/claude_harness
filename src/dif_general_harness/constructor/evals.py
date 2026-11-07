@@ -19,7 +19,8 @@ Case format::
       - expect_tool: calendar.get_event          # since the last trigger/user/advance
       - expect_reply_contains: [confirm]
       - expect_template: reminder | expect_message: text | expect_no_message: true
-      - expect_handoff: human | ops              # escalated, or handed to that agent
+      - expect_handoff: human | ops              # to a person (escalated, or a return a gate
+                                                 # sent for review), or to that agent
       - expect_approval: true
     must_not:
       - tool: calendar.move_event                # never even attempted
@@ -310,7 +311,8 @@ class _Case:
         self.marks = {
             "sent": len(self.outbox),
             "calls": len(self.calls),
-            "escalations": len(await self.inst.inbox.list(None, "escalation")),
+            "wcalls": len(await self.workflow_calls()),
+            "escalations": await self.to_people(),
             "approvals": len(await self.inst.inbox.list(None, "approval")),
             "handoffs": len(await self.inst.audit.records(self.inst.scope, action="handoff")),
         }
@@ -356,6 +358,17 @@ class _Case:
 
     # --- checking ----------------------------------------------------------------------
 
+    async def workflow_calls(self) -> list[str]:
+        """Tools workflow steps called (a posting, a check): they are not agent turns, so the
+        audit log is where they are seen."""
+        records = await self.inst.audit.records(self.inst.scope, action="tool_call")
+        return [r.subject for r in records if r.actor.startswith("workflow:")]
+
+    async def to_people(self) -> int:
+        """Items handed to a person: escalations, and returns a gate sent for review."""
+        inbox = self.inst.inbox
+        return len(await inbox.list(None, "escalation")) + len(await inbox.list(None, "review"))
+
     def window(self) -> list[Sent]:
         return self.outbox[self.marks.get("sent", 0) :]
 
@@ -366,6 +379,7 @@ class _Case:
         reasons = self.result.reasons
         window = self.outbox[since.get("sent", 0) :]
         calls = self.calls[since.get("calls", 0) :]
+        calls += (await self.workflow_calls())[since.get("wcalls", 0) :]
         if key in ("expect_tool", "tools_called"):
             for name in [value] if isinstance(value, str) else value:
                 if name not in calls:
@@ -386,8 +400,7 @@ class _Case:
                 reasons.append(f"expected no message; {len(window)} sent")
         elif key in ("expect_handoff", "handoff"):
             if value == "human":
-                now = len(await self.inst.inbox.list(None, "escalation"))
-                if now <= since.get("escalations", 0):
+                if await self.to_people() <= since.get("escalations", 0):
                     reasons.append("expected a handoff to a person; none happened")
             else:
                 records = await self.inst.audit.records(self.inst.scope, action="handoff")
@@ -426,8 +439,8 @@ class _Case:
         return hits
 
     async def run(self) -> None:
-        start: dict[str, int] = {"sent": 0, "calls": 0, "escalations": 0, "approvals": 0,
-                                 "handoffs": 0}  # fmt: skip
+        start: dict[str, int] = {"sent": 0, "calls": 0, "wcalls": 0, "escalations": 0,
+                                 "approvals": 0, "handoffs": 0}  # fmt: skip
         if "turns" in self.case:
             for step in self.case["turns"]:
                 if "user" in step:
@@ -448,9 +461,10 @@ class _Case:
                     await self.expect(key, value, start)
             forbidden = [{"tool": t} for t in expect.get("must_not") or []]
             forbidden += list(self.case.get("must_not") or [])
+        every_call = self.calls + await self.workflow_calls()
         for rule in forbidden:
             if "tool" in rule:
-                attempts = self.calls.count(str(rule["tool"]))
+                attempts = every_call.count(str(rule["tool"]))
                 if attempts:
                     self.result.unsafe_actions += attempts
                     self.result.reasons.append(

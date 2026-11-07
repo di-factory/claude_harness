@@ -1,0 +1,19 @@
+# Eval suite: questions the documents answer. The documents are the client's, so these cases
+# ask what every instance can answer from its "about" knowledge. One case per YAML document.
+id: what-can-i-ask
+description: Asked what it can help with, the assistant answers from the "about" documents.
+setup:
+  channel: web
+turns:
+  - user: "Hi, what can I ask you about?"
+  - expect_tool: knowledge.search_about
+must_not:
+  - reply_category: says it has no information about what it can help with
+---
+id: how-to-reach-a-person
+description: Asked how to reach a person, it answers from the "about" documents.
+setup:
+  channel: web
+turns:
+  - user: "¿Cómo puedo hablar con una persona?"
+  - expect_tool: knowledge.search_about

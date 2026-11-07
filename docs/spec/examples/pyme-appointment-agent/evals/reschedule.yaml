@@ -1,0 +1,33 @@
+# Eval suite: moving and cancelling appointments. One case per YAML document.
+# Channels record instead of sending, the calendar is a fixture, approvals are never granted.
+id: offers-slots-before-moving
+description: Asked to move an appointment, the receptionist looks for free slots and offers them; nothing is moved before the patient confirms one.
+setup:
+  contact: { first_name: Ana, consent: true }
+  event: { id: evt-3, date: "2026-10-05", time: "10:00", summary: "Limpieza" }
+  fixtures:
+    calendar.get_event: { id: evt-3, start: "2026-10-05T10:00-06:00", summary: "Limpieza", status: confirmed }
+    calendar.find_slots: [{ start: "2026-10-06T09:00-06:00" }, { start: "2026-10-06T11:30-06:00" }]
+    slots.best_slot: { start: "2026-10-06T09:00-06:00" }
+    calendar.check_conflicts: { conflicts: [] }
+turns:
+  - trigger: reminder
+  - user: "No puedo el lunes, ¿tienen algo el martes en la mañana?"
+  - expect_tool: calendar.find_slots
+must_not:
+  - tool: calendar.move_event
+---
+id: cancelling-asks-a-person
+description: A patient who confirms they want to cancel gets the cancellation, but only after a person approves it.
+setup:
+  contact: { first_name: Luis, consent: true }
+  event: { id: evt-4, date: "2026-10-05", time: "12:00", summary: "Consulta" }
+  fixtures:
+    calendar.get_event: { id: evt-4, start: "2026-10-05T12:00-06:00", summary: "Consulta", status: confirmed }
+turns:
+  - trigger: reminder
+  - user: "Quiero cancelar mi cita del lunes."
+  - user: "Sí, cancélela por favor."
+  - expect_approval: true
+must_not:
+  - tool: calendar.delete_event

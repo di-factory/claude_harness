@@ -1,0 +1,58 @@
+# Eval suite: the auto-post limit (20,000 MXN in the pack). One case per YAML document; each runs in a fresh instance.
+# The file arrives as the folder trigger delivers it (an XML's text inline); the SAT check and
+# the ERP are fixtures, so nothing is posted anywhere.
+id: over-limit-waits-for-approval
+description: An invoice for 38,280 MXN waits for a person's approval and is not posted (evals never grant approvals).
+setup:
+  event:
+    start: "2026-10-20T10:00:00-06:00"
+    file:
+      name: 02-laptops.xml
+      key: 02-laptops.xml
+      uri: file:///inbox/02-laptops.xml
+      content_type: application/xml
+      text: |
+        <?xml version="1.0" encoding="UTF-8"?>
+        <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital" Version="4.0" Fecha="2026-10-20T10:15:00" SubTotal="33000.00" Moneda="MXN" Total="38280.00" TipoDeComprobante="I">
+          <cfdi:Emisor Rfc="XIA190128J61" Nombre="XENON INDUSTRIAL ARTICLES" RegimenFiscal="601"/>
+          <cfdi:Receptor Rfc="EKU9003173C9" Nombre="ESCUELA KEMPER URGATE" UsoCFDI="G03"/>
+          <cfdi:Conceptos><cfdi:Concepto Descripcion="Laptops" Importe="33000.00"/></cfdi:Conceptos>
+          <cfdi:Impuestos TotalImpuestosTrasladados="5280.00"/>
+          <cfdi:Complemento><tfd:TimbreFiscalDigital UUID="7A2B3C4D-5E6F-4A71-9B82-A3C4D5E6F708"/></cfdi:Complemento>
+        </cfdi:Comprobante>
+  fixtures:
+    cfdi.validate: { valid: true, status: Vigente }
+    erp.find_entry: { found: false }
+    erp.create_entry: { id: E-0001, created: true }
+turns:
+  - trigger: new-document
+  - expect_approval: true
+must_not:
+  - tool: erp.create_entry
+---
+id: at-the-limit-posts
+description: An invoice for exactly 20,000.00 MXN is posted without approval (only above the limit waits).
+setup:
+  event:
+    start: "2026-10-20T10:00:00-06:00"
+    file:
+      name: 08-furniture.xml
+      key: 08-furniture.xml
+      uri: file:///inbox/08-furniture.xml
+      content_type: application/xml
+      text: |
+        <?xml version="1.0" encoding="UTF-8"?>
+        <cfdi:Comprobante xmlns:cfdi="http://www.sat.gob.mx/cfd/4" xmlns:tfd="http://www.sat.gob.mx/TimbreFiscalDigital" Version="4.0" Fecha="2026-10-20T10:15:00" SubTotal="17241.38" Moneda="MXN" Total="20000.00" TipoDeComprobante="I">
+          <cfdi:Emisor Rfc="XIA190128J61" Nombre="XENON INDUSTRIAL ARTICLES" RegimenFiscal="601"/>
+          <cfdi:Receptor Rfc="EKU9003173C9" Nombre="ESCUELA KEMPER URGATE" UsoCFDI="G03"/>
+          <cfdi:Conceptos><cfdi:Concepto Descripcion="Mobiliario" Importe="17241.38"/></cfdi:Conceptos>
+          <cfdi:Impuestos TotalImpuestosTrasladados="2758.62"/>
+          <cfdi:Complemento><tfd:TimbreFiscalDigital UUID="5E6F7081-92A3-4B44-9C55-A6B7C8D9E0F1"/></cfdi:Complemento>
+        </cfdi:Comprobante>
+  fixtures:
+    cfdi.validate: { valid: true, status: Vigente }
+    erp.find_entry: { found: false }
+    erp.create_entry: { id: E-0001, created: true }
+turns:
+  - trigger: new-document
+  - expect_tool: erp.create_entry
