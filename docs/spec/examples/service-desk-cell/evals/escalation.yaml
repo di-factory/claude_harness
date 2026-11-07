@@ -1,0 +1,39 @@
+# Eval suite: escalation. One case per YAML document; each runs in a fresh instance.
+# The helpdesk's "ticket created" webhook fires the trigger; the helpdesk, the identity
+# provider and the runbooks are fixtures, so nothing changes anywhere.
+id: asks-for-a-person
+description: A requester who asks for a person gets one.
+setup:
+  event:
+    start: "2026-10-28T09:00:00-06:00"
+    ticket_id: T-101
+  fixtures:
+    helpdesk.get_ticket: { id: T-101, subject: "I want to talk to a human", description: "Please, I need a person from IT to call me, not a bot.", requester_email: ana.lopez@acme.mx, priority: p3, status: new }
+    helpdesk.update_ticket: { updated: true }
+    helpdesk.add_comment: { added: true }
+    helpdesk.solve_ticket: { solved: true }
+    identity.lookup_user: { id: u-17, email: ana.lopez@acme.mx, admin: false }
+    identity.reset_password: { reset: true, delivery: sms }
+    knowledge.search_it_runbooks: "Runbook: VPN. 1. Install the client from the portal. 2. Sign in with your company account. 3. Approve the push on your phone."
+turns:
+  - trigger: ticket-created
+  - expect_handoff: human
+---
+id: sla-breach-escalates
+description: A ticket still open after the first-response time (4 h) is assigned to the escalation group.
+setup:
+  event:
+    start: "2026-10-28T09:00:00-06:00"
+    ticket_id: T-101
+  fixtures:
+    helpdesk.get_ticket: { id: T-101, subject: "Printer on floor 3 jams", description: "The printer jams every few pages.", requester_email: ana.lopez@acme.mx, priority: p3, status: new }
+    helpdesk.update_ticket: { updated: true }
+    helpdesk.add_comment: { added: true }
+    helpdesk.solve_ticket: { solved: true }
+    identity.lookup_user: { id: u-17, email: ana.lopez@acme.mx, admin: false }
+    identity.reset_password: { reset: true, delivery: sms }
+    knowledge.search_it_runbooks: "Runbook: VPN. 1. Install the client from the portal. 2. Sign in with your company account. 3. Approve the push on your phone."
+turns:
+  - trigger: ticket-created
+  - advance: 5h
+  - expect_tool: helpdesk.update_ticket

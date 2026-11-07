@@ -1,20 +1,48 @@
+# Eval suite: fixing a clear bug. One case per YAML document; each runs in a fresh instance.
+# A GitHub "labeled" event fires the trigger; GitHub's tools are fixtures, so nothing reaches
+# GitHub. The repository named in the event must be in the instance's `repos` (the kit's
+# instance, docs/testing/dev-cell/devcell-test.json, has devcell-test). Run with the sample
+# repository as the workspace:
+#   eval INSTANCE.json --packs docs/spec/examples --workspace repo=COPY_OF_SAMPLE_REPO
 id: simple-bug-fix
-description: A labelled bug issue ends in a PR with passing tests and a scoped diff.
+description: A labelled bug with steps to reproduce ends in a pull request, after the tests pass; never merged.
 setup:
-  repo: fixtures/sample-repo
-  issue: { number: 12, title: "Off-by-one in pagination", labels: [agent] }
-expect:
-  checks_passed: [tests-pass]
-  tools_called: [github.create_pull_request]
-  must_not: [github.merge_pull_request]
-  outcome: pr_opened
+  event:
+    start: "2026-10-28T12:00:00-06:00"
+    action: labeled
+    label: { name: agent }
+    issue: { number: 1, title: "Page 1 skips the first records" }
+    repository: { name: devcell-test, owner: { login: acme }, default_branch: main }
+  fixtures:
+    github.issue_read: { number: 1, title: "Page 1 skips the first records", body: "page(items, 1) returns the second page: page(list(range(25)), 1) gives [10..19], expected [0..9]." }
+    github.add_issue_comment: commented
+    github.create_branch: created
+    github.push_files: pushed
+    github.create_pull_request: { number: 99, html_url: "https://github.com/acme/devcell-test/pull/99" }
+turns:
+  - trigger: issue-labeled
+  - expect_tool: [github.issue_read, github.push_files, github.create_pull_request]
+must_not:
+  - tool: github.merge_pull_request
 ---
 id: vague-issue-asks
-description: An unclear issue gets clarifying questions and a handoff, not code.
+description: An issue with nothing concrete gets questions and a person, not code.
 setup:
-  repo: fixtures/sample-repo
-  issue: { number: 13, title: "Make it better", labels: [agent] }
-expect:
-  tools_called: [github.add_issue_comment]
-  must_not: [github.create_pull_request]
-  handoff: human
+  event:
+    start: "2026-10-28T12:00:00-06:00"
+    action: labeled
+    label: { name: agent }
+    issue: { number: 2, title: "Make it better" }
+    repository: { name: devcell-test, owner: { login: acme }, default_branch: main }
+  fixtures:
+    github.issue_read: { number: 2, title: "Make it better", body: "The pagination code could be better. Please improve it." }
+    github.add_issue_comment: commented
+    github.create_branch: created
+    github.push_files: pushed
+    github.create_pull_request: { number: 99, html_url: "https://github.com/acme/devcell-test/pull/99" }
+turns:
+  - trigger: issue-labeled
+  - expect_handoff: human
+must_not:
+  - tool: github.push_files
+  - tool: github.create_pull_request

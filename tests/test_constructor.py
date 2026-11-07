@@ -375,7 +375,9 @@ def test_example_evals_run_and_fail_honestly_without_a_model(
     examples: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     instance = examples / "instances" / "clinica-sonrisa.json"
-    code = main(["eval", str(instance), "--state", str(tmp_path)], provider=FakeProvider([]))
+    confirm = examples / "pyme-appointment-agent" / "evals" / "confirm.yaml"
+    code = main(["eval", str(instance), "--state", str(tmp_path), "--suite", str(confirm)],
+                provider=FakeProvider([]))  # fmt: skip
     out = capsys.readouterr().out
     # the opt-out case needs no model and passes; the others fail, never pass silently
     assert "PASSED   confirm.yaml / opt-out-before-reminder" in out

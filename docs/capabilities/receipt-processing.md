@@ -69,6 +69,13 @@ three are fixed, and the extractor is now shown the fields it must fill.
 The SAT and the ERP are stand-ins in the kit (`mock_services.py`), writing what was posted to
 a ledger file. A real client needs its ERP's API and a CFDI validation service.
 
+## Evals
+
+Its three suites (extraction and routing, the limit, duplicates: 7 cases) run end to end
+offline in `tests/test_pack_evals.py`, and with the real model on the server with
+`uv run dif-general-harness eval docs/testing/receipts/receipts-test.json --packs docs/spec/examples`
+(a few cents; the SAT and the ERP are fixtures there too).
+
 ## How to try it
 
 Follow [`docs/testing/receipts/README.md`](../testing/receipts/README.md): everything runs on

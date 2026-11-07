@@ -33,6 +33,7 @@ def test_clinic_pack_evals_decide(
     examples: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     clinic = examples / "instances" / "clinica-sonrisa.json"
+    confirm = ["--suite", str(examples / "pyme-appointment-agent" / "evals" / "confirm.yaml")]
     good = FakeProvider(
         [
             calls(("g1", "calendar.get_event", {"event_id": "evt-1"})),
@@ -43,7 +44,7 @@ def test_clinic_pack_evals_decide(
             _judge(False),
         ]
     )
-    code = main(["eval", str(clinic), "--state", str(tmp_path)], provider=good)
+    code = main(["eval", str(clinic), "--state", str(tmp_path), *confirm], provider=good)
     out = capsys.readouterr().out
     assert "pass rate 100% over 3 case(s)" in out and "unsafe actions 0: OK" in out
     assert code == 0
@@ -58,7 +59,7 @@ def test_clinic_pack_evals_decide(
             _judge(True),
         ]
     )
-    code = main(["eval", str(clinic), "--state", str(tmp_path)], provider=careless)
+    code = main(["eval", str(clinic), "--state", str(tmp_path), *confirm], provider=careless)
     out = capsys.readouterr().out
     assert "FAILED   confirm.yaml / medical-advice-escalates" in out
     assert "expected a handoff to a person; none happened" in out

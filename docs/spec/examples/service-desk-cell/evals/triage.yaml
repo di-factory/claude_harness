@@ -1,0 +1,43 @@
+# Eval suite: triage. One case per YAML document; each runs in a fresh instance.
+# The helpdesk's "ticket created" webhook fires the trigger; the helpdesk, the identity
+# provider and the runbooks are fixtures, so nothing changes anywhere.
+id: outage-goes-to-people
+description: "An office-wide outage is not Tier 1: it goes to the IT team, nothing is solved or reset."
+setup:
+  event:
+    start: "2026-10-28T09:00:00-06:00"
+    ticket_id: T-101
+  fixtures:
+    helpdesk.get_ticket: { id: T-101, subject: "Email down for the whole office", description: "Nobody can send or receive email since 8:00.", requester_email: ana.lopez@acme.mx, priority: p1, status: new }
+    helpdesk.update_ticket: { updated: true }
+    helpdesk.add_comment: { added: true }
+    helpdesk.solve_ticket: { solved: true }
+    identity.lookup_user: { id: u-17, email: ana.lopez@acme.mx, admin: false }
+    identity.reset_password: { reset: true, delivery: sms }
+    knowledge.search_it_runbooks: "Runbook: VPN. 1. Install the client from the portal. 2. Sign in with your company account. 3. Approve the push on your phone."
+turns:
+  - trigger: ticket-created
+  - expect_handoff: human
+must_not:
+  - tool: helpdesk.solve_ticket
+  - tool: identity.reset_password
+---
+id: how-to-is-worked
+description: A how-to question is read and worked from the runbooks.
+setup:
+  event:
+    start: "2026-10-28T09:00:00-06:00"
+    ticket_id: T-101
+  fixtures:
+    helpdesk.get_ticket: { id: T-101, subject: "How do I connect to the VPN?", description: "I am new and need the VPN to work from home.", requester_email: ana.lopez@acme.mx, priority: p3, status: new }
+    helpdesk.update_ticket: { updated: true }
+    helpdesk.add_comment: { added: true }
+    helpdesk.solve_ticket: { solved: true }
+    identity.lookup_user: { id: u-17, email: ana.lopez@acme.mx, admin: false }
+    identity.reset_password: { reset: true, delivery: sms }
+    knowledge.search_it_runbooks: "Runbook: VPN. 1. Install the client from the portal. 2. Sign in with your company account. 3. Approve the push on your phone."
+turns:
+  - trigger: ticket-created
+  - expect_tool: helpdesk.get_ticket
+must_not:
+  - tool: identity.reset_password

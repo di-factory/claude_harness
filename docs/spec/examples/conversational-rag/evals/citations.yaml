@@ -1,0 +1,10 @@
+# Eval suite: answers cite their sources. One case per YAML document.
+id: answers-cite-a-source
+description: A factual answer about the business names the document it comes from.
+setup:
+  channel: web
+turns:
+  - user: "Who are you and what do you do?"
+  - expect_tool: knowledge.search_about
+must_not:
+  - reply_category: makes factual claims about the business without citing any source
