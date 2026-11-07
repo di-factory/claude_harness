@@ -61,7 +61,10 @@ the ERP; the model still sees only tokens. Then the posting was stopped by the r
 it was shown the workflow's empty conversation, asked whether "the contact" had requested the
 posting, and (rightly) said no; it also saw the RFC in clear. It now judges a workflow's
 posting against what the earlier steps found (the extraction, the SAT check, the duplicate
-check), with personal data as tokens (decision 97).
+check), with personal data as tokens (decision 97). Then the same clean invoice passed once and went to
+a person the next time (confidence 0.5): the model saw the RFCs as tokens, its instructions
+named the company by its raw RFC, and nothing told it what a token was. Models are now told
+(decision 98), and the extractor's prompt no longer names the raw RFC.
 
 ## The kit's seven documents
 

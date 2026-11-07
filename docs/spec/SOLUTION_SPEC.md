@@ -499,6 +499,11 @@ ends the run as `needs_human` with a `review` item in the inbox. With a schema, 
 given it with its task (it cannot fill fields it was never shown). Set `"retries": 0` where a
 second look should not change the answer (an extracted amount's confidence).
 
+**Tokens, explained to the model.** When a pack tokenizes PII, every agent's instructions say
+what a token such as `<RFC_1a2b3c4d>` is: the real value, kept from it, to copy exactly where
+the value belongs and never to treat as missing or uncertain. A prompt should not name a value
+the model will only ever see as a token (a company's own RFC, for example).
+
 **Personal data in workflows.** Agents see PII as tokens, as everywhere. An agent step's
 answer reaches the workflow in clear, so its own conditions compare values
 (`steps.extract.output.rfc_receptor != var.company_rfc`); each `tool` step's arguments are

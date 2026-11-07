@@ -162,7 +162,10 @@ async def test_the_seven_samples_end_where_the_kit_says(tmp_path: Path) -> None:
         }
         assert [e["total"] for e in ledger] == [4640.0, 38280.0, 13920.0]
 
-    sent_to_model = "".join(_text(r) for r in asked if r.model_role != "verifier")
+    extracting = [r for r in asked if r.model_role != "verifier"]
+    assert all("Personal data you see as tokens" in r.system for r in extracting)
+    assert all(COMPANY not in r.system for r in extracting)  # its RFC is a token everywhere
+    sent_to_model = "".join(_text(r) for r in extracting)
     assert COMPANY not in sent_to_model and "XIA190128J61" not in sent_to_model  # tokens only
     parsed = [r for r in received if r["path"] == "/cfdi/parse"]
     assert parsed and all(r["status"] == 200 for r in parsed), parsed  # the XML arrives whole
