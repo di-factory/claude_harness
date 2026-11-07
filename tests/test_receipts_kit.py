@@ -161,6 +161,9 @@ async def test_the_seven_samples_end_where_the_kit_says(tmp_path: Path) -> None:
             "07-consulting.pdf": "done/completed",
         }
         assert [e["total"] for e in ledger] == [4640.0, 38280.0, 13920.0]
+        why = json.dumps([[i.title, i.payload] for i in await inst.inbox.list(None, "escalation")])
+        assert "04-wrong-company.xml: addressed to another company's RFC" in why
+        assert "05-cancelled.xml: the SAT does not confirm this CFDI (Cancelado)" in why
 
     extracting = [r for r in asked if r.model_role != "verifier"]
     assert all("Personal data you see as tokens" in r.system for r in extracting)
@@ -194,3 +197,19 @@ async def test_a_posting_is_reviewed_against_what_the_workflow_found(tmp_path: P
     assert "6F1A2B3C-4D5E-4F60-8A71-92B3C4D5E6F7" in shown and '\\"valid\\": true' in shown
     assert COMPANY not in shown and TOKEN.search(shown)  # the RFC as a token, on both sides
     assert len(ledger) == 1
+
+
+async def test_a_rejected_posting_says_who_said_no_and_why(tmp_path: Path) -> None:
+    inst, headless, client, inbox, ledger, *_ = await _open(tmp_path)
+    async with inst, client:
+        client.headers["authorization"] = f"Bearer {ADMIN}"
+        await _drop(headless, inbox, "02-laptops.xml")
+        [item] = (await client.get("/admin/inbox?kind=approval")).json()
+        r = await client.post(f"/admin/inbox/{item['id']}/decision",
+                              json={"approved": False, "by": "accounting",
+                                    "note": "we never ordered laptops"})  # fmt: skip
+        assert r.status_code == 200, r.text
+        await headless.worker().drain()
+        titles = [i.title for i in await inst.inbox.list(None, "escalation")]
+    assert ledger == []
+    assert any("approve was not approved: we never ordered laptops" in t for t in titles), titles

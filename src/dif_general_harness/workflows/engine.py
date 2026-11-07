@@ -216,6 +216,8 @@ class WorkflowEngine:
                     return
                 else:
                     run.state["pc"] = ids.index(str(reject))
+                    note = f": {output['note']}" if output.get("note") else ""
+                    run.state["reason"] = f"{step_id} was not approved{note}"
         await self._save(run)
         await self.host.queue.enqueue(
             self.scope, "workflow", {"run": run.id},
@@ -475,6 +477,8 @@ class WorkflowEngine:
             for case in x.get("cases", []):
                 if cel.holds(str(case.get("when", "false")), ctx):
                     run.steps[step.id] = {"goto": case.get("goto")}
+                    if case.get("reason"):  # why it went this way: a handoff there says so
+                        run.state["reason"] = str(render(case["reason"], ctx))
                     return str(case["goto"])
             run.steps[step.id] = {"goto": None}
         elif kind == "parallel":
@@ -879,9 +883,8 @@ class WorkflowEngine:
         if to != "human":
             return await self._agent(run, to, render(x.get("input") or run.input, ctx))
         inst = self.host.instance
-        reason = str(
-            render(x.get("reason") or f"workflow {run.workflow} handed off at {step.id}", ctx)
-        )
+        default = run.state.get("reason") or f"workflow {run.workflow} handed off at {step.id}"
+        reason = str(render(x.get("reason"), ctx)) if x.get("reason") else str(default)
         sessions = list((run.state.get("sessions") or {}).values())
         if sessions:
             agent_name = next(iter(run.state["sessions"]))

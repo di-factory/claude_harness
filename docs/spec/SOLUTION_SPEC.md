@@ -478,10 +478,10 @@ does not hold, the step is skipped):
 | `message` | `channel`, `text` (or `body`), `to` | `sent`, `to`, `channel` |
 | `approval` | `summary`, `on_reject` (a step id, `end` or `escalate`) | `approved`, `by`, `note` |
 | `wait` | `for`: `reply`, `event` (`event`, `match`) or `time` (`duration`); `timeout` | `replied`, `reply`, the event, or `timed_out` |
-| `branch` | `cases`: `[{when, goto}]` (the first that holds) | `goto` |
+| `branch` | `cases`: `[{when, goto, reason}]` (the first that holds; `reason`, a template, is what a later `handoff` without its own tells the person) | `goto` |
 | `parallel` | `branches`: agent and tool steps, run together | one output per branch |
 | `foreach` | `graph`, `agent`, `launch`, `seed`, `only`, `limit`, `passes`, `concurrency`, `input`, `gate`, `report` (§5.20) | `passes`, `researched`, `graph` |
-| `handoff` | `to` (`human` or an agent), `reason`, `input`, `outcome` | `escalation`, or the agent's output |
+| `handoff` | `to` (`human` or an agent), `reason` (default: the branch case's `reason`, or that an approval was not approved, with its note), `input`, `outcome` | `escalation`, or the agent's output |
 | `timer` | `trigger` (a `delay` trigger to arm) | the armed job |
 | `end` | `outcome` | `outcome` |
 
