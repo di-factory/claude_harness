@@ -105,7 +105,10 @@
         { "id": "dup", "type": "tool", "tool": "erp.find_entry", "args": { "uuid": "{{steps.extract.output.uuid}}" } },
         { "id": "route", "type": "branch", "cases": [
           { "when": "steps.dup.found", "goto": "skip" },
-          { "when": "not steps.validate.valid or steps.extract.output.rfc_receptor != var.company_rfc", "goto": "exception" },
+          { "when": "not steps.validate.valid", "goto": "exception",
+            "reason": "{{input.file.name}}: the SAT does not confirm this CFDI ({{steps.validate.status}})" },
+          { "when": "steps.extract.output.rfc_receptor != var.company_rfc", "goto": "exception",
+            "reason": "{{input.file.name}}: addressed to another company's RFC, not ours" },
           { "when": "steps.extract.output.total > var.auto_post_limit_mxn", "goto": "approve" },
           { "when": "true", "goto": "post" }
         ] },

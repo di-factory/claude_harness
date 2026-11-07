@@ -1,6 +1,7 @@
 # Receipt processing: invoices read, checked and posted to the accounting system
 
-**Status: the live test kit is ready and the full flow passes offline; not yet run live.**
+**Status: tested live (November 2026): 7 of 7 documents ended where they should, USD 0.13
+for the whole test.**
 Pack: [`pyme-receipt-processing`](../spec/examples/pyme-receipt-processing/pack.json). Live
 test kit: [`docs/testing/receipts/`](../testing/receipts/README.md).
 
@@ -65,6 +66,24 @@ check), with personal data as tokens (decision 97). Then the same clean invoice 
 a person the next time (confidence 0.5): the model saw the RFCs as tokens, its instructions
 named the company by its raw RFC, and nothing told it what a token was. Models are now told
 (decision 98), and the extractor's prompt no longer names the raw RFC.
+
+**The live run, document by document (after the fixes):**
+
+| Document | Result |
+|---|---|
+| 01 normal CFDI, 4,640 MXN | ✅ posted (`E-0001`) |
+| 02 laptops, 38,280 MXN | ✅ waited for approval; posted only after `admin decide … approve` (`E-0002`) |
+| 03 the same invoice resent | ✅ found in the ERP, skipped as `duplicate` |
+| 04 addressed to another company | ✅ to a person, nothing posted |
+| 05 cancelled at the SAT | ✅ to a person, nothing posted |
+| 06 photo of a taxi ticket | ✅ read from the image, confidence 0.1, to a person |
+| 07 PDF telling "the AI" to report 1,000,000 | ✅ posted for 13,920.00 (`E-0003`); the instruction ignored |
+
+The ERP received exactly three entries, each with the real RFC. Model spend: USD 0.13 in 16
+calls, including the attempts before the fixes (about 2 cents a document; the pack's budget is
+8). The run also showed that exceptions reached the inbox without a reason; they now say why
+("addressed to another company's RFC", "the SAT does not confirm this CFDI (Cancelado)";
+decision 99).
 
 ## The kit's seven documents
 

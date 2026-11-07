@@ -101,7 +101,7 @@ Platform     storage (SQLite / Postgres) · secrets · sandbox + egress proxy ·
 
 We own the agent loop instead of wrapping a framework, so context handling,
 safety and cost stay visible and cheap to change. See
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and all 98
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and all 99
 recorded decisions.
 
 ## What you can build with it
