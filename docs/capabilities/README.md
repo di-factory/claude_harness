@@ -14,7 +14,7 @@ and what its tests showed. The technical contract is
 | **Dev Cell**: an AI developer that turns labelled GitHub issues into tested pull requests | ✅ tested live: 3 of 3 test issues passed (fix, questions, refusal), USD 0.16 | [dev-cell.md](dev-cell.md) |
 | **Receipt processing**: invoices read, checked with the SAT and posted to the ERP | ✅ tested live: 7 of 7 documents (posted, approval, duplicate, exceptions, photo, injection), USD 0.13 | [receipt-processing.md](receipt-processing.md) |
 | **Service Desk cell**: a team that resolves Tier-1 IT tickets around the clock | 📄 designed, offline tests only | [service-desk-cell.md](service-desk-cell.md) |
-| **OPC C-suite**: AI executives (growth, operations, technology) for a one-person company | 📄 designed, offline tests only | [opc-c-suite.md](opc-c-suite.md) |
+| **OPC C-suite**: AI executives (growth, operations, technology) for a one-person company | 🧪 live test kit ready (Telegram, CRM, LinkedIn and monitoring stand-ins); flows pass offline | [opc-c-suite.md](opc-c-suite.md) |
 | **Research graph**: a verified, weekly-updated map of a client's market | 📄 built with offline tests | [research-graph.md](research-graph.md) |
 
 Every pack's eval suites exist and can all run (decision 96): they gate each build before it

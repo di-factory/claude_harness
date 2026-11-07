@@ -2,7 +2,7 @@
 
 Di-Factory's general solution template: an agent runtime where every client
 solution is a declarative **solution spec** (a pack plus a client instance).
-Read `docs/ARCHITECTURE.md` (99 decisions, §7) before changing behaviour;
+Read `docs/ARCHITECTURE.md` (100 decisions, §7) before changing behaviour;
 `docs/spec/SOLUTION_SPEC.md` is the spec contract.
 
 ## Commands
@@ -26,7 +26,7 @@ uv run dif-general-harness replay INSTANCE.json --packs DIR # real conversations
 uv run dif-general-harness keys new jag | approve ... | deploy ... --target docker|aws
 uv run dif-general-harness adjust|upgrade INSTANCE.json ... --dry-run     # constructor v3
 uv run dif-general-harness costs INSTANCE.json --by vendor,model         # spend + quality
-uv run dif-general-harness admin status|inbox|show|reply|decide|faq|costs|runs|review|graph  # running
+uv run dif-general-harness admin status|inbox|show|reply|decide|trigger|faq|costs|runs|review|graph
 uv run dif-general-harness handover INSTANCE.json --owner NAME --lang es  # the client's Claude
                                           # the whole handover, guided: /handover (.claude/skills)
 uv run dif-general-harness fleet register|offer|rollout|rollback|status  # via the control plane
@@ -92,8 +92,9 @@ requirement, `integrations/openclaw-skill/SKILL.md` for what Teky runs, and
 - `docs/capabilities/`: each solution type in plain terms (story, safeguards, how proven);
   update a page when its pack or its live test changes
 - `docs/testing/`: live test kits (`dev-cell/`: instance, sample repo, issues, `kit.sh`;
-  `receipts/`: instance, samples, SAT and ERP stand-ins), mirrored offline by
-  `tests/test_devcell_kit.py` and `tests/test_receipts_kit.py`
+  `receipts/`: instance, samples, SAT and ERP stand-ins; `opc/`: instance, CRM, monitoring
+  and LinkedIn stand-ins, `kit.sh`), mirrored offline by `tests/test_devcell_kit.py`,
+  `tests/test_receipts_kit.py` and `tests/test_opc_kit.py`
 - `tests/test_acceptance_m1.py` … `tests/test_acceptance_m4.py`: the milestone gates;
   `tests/support.py` holds the service test fixtures
 
@@ -145,9 +146,9 @@ evals, and tool-call budgets, result caps, tool-surface warnings and failure cla
 then the Dev Cell aligned with GitHub's MCP server, with a live test kit (93), and what its
 first live run found (94); then the receipt pack made runnable, with its kit (95), and every pack's evals written and
 runnable (96), and the verifier judging a workflow's call by what the workflow found (97), and models told
-what a PII token is (98), and a person told why (99).
+what a PII token is (98), and a person told why (99); then the OPC made runnable, with its kit (100).
 Next: GCP and Azure profiles.
 Known gaps: streaming (speech-to-speech) voice, knowledge connectors beyond files, S3,
 Drive and web pages (SharePoint, Notion... push through the admin API), pgvector for very
 large corpora, and a first apply of the AWS module in a real account. See
-`docs/ARCHITECTURE.md` §6 and decisions 43–99.
+`docs/ARCHITECTURE.md` §6 and decisions 43–100.

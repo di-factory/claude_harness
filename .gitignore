@@ -27,3 +27,6 @@ secrets/
 docs/testing/receipts/inbox/*
 !docs/testing/receipts/inbox/.gitkeep
 docs/testing/receipts/erp-ledger.json
+
+# OPC test kit: what the stand-ins recorded
+docs/testing/opc/outbox.json

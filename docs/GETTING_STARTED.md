@@ -344,6 +344,12 @@ the "ERP". Approvals are decided from the terminal: `admin inbox`, then
 `admin decide ITEM approve` (or `reject --note "why"`). Follow its
 [README](testing/receipts/README.md).
 
+`docs/testing/opc/` tests the OPC C-suite: you create a Telegram bot with @BotFather and talk to
+the team as the founder. Only your chat is answered; posts and emails wait for your approval,
+which you give by replying `approve ID` (or `reject ID why`) in the same chat. Scheduled work
+(the stand-up, the CTO's health check) runs on demand with `admin trigger NAME`. Follow its
+[README](testing/opc/README.md).
+
 ## Common mistakes
 
 | You see | Why | Fix |

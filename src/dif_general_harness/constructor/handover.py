@@ -184,6 +184,7 @@ Everything goes through one command, run from this folder (never curl, never tok
 | Read one conversation | `./negocio show SESSION` |
 | Answer a customer as the owner | `./negocio reply SESSION "text"` |
 | Approve or reject what waits for approval (a payment, a posting) | `./negocio decide ITEM approve` (`reject --note "why"`) |
+| Run a scheduled job now (a report, a stand-up) | `./negocio trigger NAME` |
 | The FAQ, exactly as the assistant knows it | `./negocio faq show` |
 | Replace the FAQ | `./negocio faq set borradores/faq.md` |
 | Questions customers asked that the FAQ did not answer | `./negocio faq gaps` |
@@ -473,6 +474,7 @@ exec uv run --quiet --project "{self.harness}" dif-general-harness admin "$@"
                     "Edit(./solicitudes/**)", "Write(./solicitudes/**)",
                 ],
                 "ask": ["Bash(./negocio reply:*)", "Bash(./negocio decide:*)",
+                        "Bash(./negocio trigger:*)",
                         "Bash(./negocio faq set:*)",
                         "Bash(./negocio faq done:*)", "Bash(./negocio faq dismiss:*)",
                         "Bash(./negocio review --now)"],

@@ -1,6 +1,6 @@
 # OPC C-suite: a team of AI executives for a one-person company
 
-**Status: designed and checked on paper and in offline tests; not yet run live.** Pack:
+**Status: the live test kit is ready and its flows pass offline; not yet run live.** Pack:
 [`opc-c-suite`](../spec/examples/opc-c-suite/pack.json).
 
 ## What it is
@@ -38,8 +38,31 @@ or changed in your CRM without your OK on Telegram; you decide, they execute.
 - **Tasks marked "needs the founder"** go to the founder's Telegram.
 - **Each executive has its own budget;** the whole team USD 12 per day.
 
-## Before a live test
+## Preparing the kit (November 2026)
 
-It needs a CRM with an MCP server, a LinkedIn connection, read-only cloud metrics and the
-founder's Telegram. It has the most moving parts of all the packs; a test kit with stand-ins
-(a fake CRM and product metrics) is the way to start.
+Reading the code before the first live run found what would have broken it (decision 100):
+
+- **Anyone could talk to the team.** The founder's Telegram bot answered every chat, with
+  ledger write access, and nothing registered its webhook. Now an operator channel (founder,
+  staff) answers only its own chat, and `serve --public-url` registers the webhook itself.
+- **The founder could not approve from the chat**, and each notice said only "Approval
+  needed: social.publish_post", twice. Now it says what would be done, once, and the founder
+  replies `approve ID` or `reject ID why`; after an approval he is told the result.
+- **Every post from a schedule or a task would have been blocked** by the reviewing model,
+  which asked whether "the contact" had requested it. A run with no contact is now judged
+  against its task.
+- **The CTO had no metrics**: its connection used an authentication the harness does not have
+  (`spec validate` now refuses that). It now reads a monitoring API with a token.
+- **The stand-up brief never saw the CGO's and CTO's updates**, and the founder would have read
+  `<NAME_…>` tokens instead of names. Both fixed.
+- **The ledger:** an executive giving itself a task woke itself (a loop every half hour for the
+  CTO); a task that needs the founder paged him again on every update; tasks could be given to
+  the content writer, who cannot read the ledger. All fixed.
+
+## How to try it
+
+Follow [`docs/testing/opc/README.md`](../testing/opc/README.md): a Telegram bot from
+@BotFather, stand-ins for the CRM, the monitoring and LinkedIn on the server, and eight
+scenarios (the chat, a stranger ignored, the stand-up, a post approved from the chat, a post
+rejected, a CTO alert, a CRM email). For a real client it needs the client's CRM with an MCP
+server, a LinkedIn connection that posts to the company page, and a monitoring API.
