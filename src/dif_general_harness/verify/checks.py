@@ -52,6 +52,13 @@ DEFAULT_CRITERIA = [
     "the action breaks no rule stated in the agent's instructions",
 ]
 
+# a workflow's call has no conversation behind it: it is judged against the earlier steps
+WORKFLOW_CRITERIA = [
+    "every argument matches what the earlier steps found (no invented or changed values)",
+    "nothing the earlier steps found says this action should not happen",
+]
+EVIDENCE_CHARS = 12000
+
 
 OUTPUT = "output"  # applies_to entry: the agent's answers, not its tool calls
 
@@ -148,9 +155,10 @@ class Verifier:
     ) -> Verdict:  # fmt: skip
         if name == "__verifier__":
             cfg = self.instance.spec.policies.verification.verifier or {}
-            criteria = cfg.get("criteria") or DEFAULT_CRITERIA
+            default = WORKFLOW_CRITERIA if context is not None else DEFAULT_CRITERIA
+            criteria = cfg.get("criteria") or default
             return await self._verifier(
-                session, call, list(criteria), cfg.get("model_role", "verifier"), name
+                session, call, list(criteria), cfg.get("model_role", "verifier"), name, context
             )
         check = self.instance.spec.policies.verification.checks[name]
         extra = check.model_extra or {}
@@ -164,11 +172,12 @@ class Verifier:
             if check.type == "command":
                 return await self._command_check(name, extra)
             if check.type == "verifier":
-                criteria = list(extra.get("criteria") or DEFAULT_CRITERIA)
+                default = WORKFLOW_CRITERIA if context is not None else DEFAULT_CRITERIA
+                criteria = list(extra.get("criteria") or default)
                 role = (self.instance.spec.policies.verification.verifier or {}).get(
                     "model_role", "verifier"
                 )
-                return await self._verifier(session, call, criteria, role, name)
+                return await self._verifier(session, call, criteria, role, name, context)
         except Exception as exc:  # a check that cannot run never lets the call through
             return Verdict(False, f"check {name} could not run: {type(exc).__name__}: {exc}", name)
         return Verdict(False, f"check {name} ({check.type}) cannot verify a tool call", name)
@@ -230,15 +239,28 @@ class Verifier:
         return Verdict(ok, "" if ok else f"command exited {result.exit_code}: {tail}", name)
 
     async def _verifier(
-        self, session: Session, call: ToolUseBlock, criteria: list[str], role: str, name: str
-    ) -> Verdict:
+        self, session: Session, call: ToolUseBlock, criteria: list[str], role: str, name: str,
+        context: dict[str, Any] | None = None,
+    ) -> Verdict:  # fmt: skip
+        """A model judges the call: against the conversation, or for a workflow's call (no
+        conversation behind it) against what the earlier steps found. Personal data is shown
+        as tokens, the same token on both sides, so it can still compare."""
         inst = self.instance
         assert inst.provider is not None
-        transcript = "\n".join(f"{m.role}: {m.text()}" for m in session.messages[-12:] if m.text())
+        args = await inst.pii.tokenize_obj(call.input) if inst.pii.active else call.input
+        if context is not None:
+            found = await inst.pii.tokenize_obj(context) if inst.pii.active else context
+            evidence = json.dumps(found, ensure_ascii=False, default=str)[:EVIDENCE_CHARS]
+            behind = f"What the workflow's earlier steps found:\n{evidence}"
+        else:
+            transcript = "\n".join(
+                f"{m.role}: {m.text()}" for m in session.messages[-12:] if m.text()
+            )
+            behind = f"Conversation (most recent last):\n{transcript}"
         question = (
             "Criteria:\n" + "\n".join(f"- {c}" for c in criteria)
-            + f"\n\nConversation (most recent last):\n{transcript}\n\n"
-            + f"Action: {call.name} with arguments {json.dumps(call.input, ensure_ascii=False)}"
+            + f"\n\n{behind}\n\n"
+            + f"Action: {call.name} with arguments {json.dumps(args, ensure_ascii=False)}"
         )  # fmt: skip
         request = ModelRequest(
             system=VERIFIER_PROMPT, messages=[Message.user(question)], tools=[], model_role=role

@@ -57,7 +57,11 @@ three are fixed, and the extractor is now shown the fields it must fill.
 **First live run (November 2026):** the real model sends the CFDI's XML to the parser, and the
 RFCs inside it were still tokens (`Rfc="<RFC_…>"`), which is not valid XML: the parser
 refused it. The pack now reveals RFCs, names and addresses to `cfdi.parse_xml` as it does to
-the ERP; the model still sees only tokens.
+the ERP; the model still sees only tokens. Then the posting was stopped by the reviewing model:
+it was shown the workflow's empty conversation, asked whether "the contact" had requested the
+posting, and (rightly) said no; it also saw the RFC in clear. It now judges a workflow's
+posting against what the earlier steps found (the extraction, the SAT check, the duplicate
+check), with personal data as tokens (decision 97).
 
 ## The kit's seven documents
 
