@@ -262,7 +262,9 @@ class Instance:
         self.knowledge = KnowledgeBase(self.db, self.scope, dict(self.spec.knowledge.corpora))
         self.constraints = ConstraintStore(self.db, self.scope)
         if self.spec.ledger is not None:
-            self.ledger = LedgerStore(self.db, self.scope, self.spec.ledger, list(self.spec.agents))
+            team = [a for a in self.spec.ledger.visible_to if a in self.spec.agents]
+            owners = team or list(self.spec.agents)  # who can own a task: who works the ledger
+            self.ledger = LedgerStore(self.db, self.scope, self.spec.ledger, owners)
             self.ledger.emit = self._emit
             self.ledger.on_task = self._ledger_rules
         if policy.tokenize and policy.undetectable:
@@ -547,13 +549,19 @@ class Instance:
         if self.emit is not None:
             await self.emit(name, data)
 
-    async def _ledger_rules(self, task: dict[str, Any]) -> None:
+    async def _ledger_rules(self, task: dict[str, Any], before: dict[str, Any] | None) -> None:
+        """A task that now needs a person is escalated once: not again on every later update
+        of a task that already did (a status change must not page the founder again)."""
         escalation = self.spec.policies.escalation or {}
-        rule = first_match(
-            list(escalation.get("rules") or []),
-            {"ledger": {"task": task}, "var": self.spec.values},
-        )
-        if rule is not None and rule.get("to") == "human":
+        rules = list(escalation.get("rules") or [])
+
+        def human(t: dict[str, Any] | None) -> bool:
+            if t is None:
+                return False
+            rule = first_match(rules, {"ledger": {"task": t}, "var": self.spec.values})
+            return rule is not None and rule.get("to") == "human"
+
+        if human(task) and not human(before):
             item = await self.inbox.create(
                 "escalation",
                 f"Task needs a person: {task.get('title', task['id'])}",

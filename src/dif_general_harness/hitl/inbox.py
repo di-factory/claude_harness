@@ -126,7 +126,11 @@ class InboxApprover:
             "approval", f"Approve {request.tool}?", payload, request.session.id
         )
         if self.notify is not None:
-            await self.notify(item_id, f"Approval needed: {request.tool} ({request.effect})")
+            args = json.dumps(request.arguments, ensure_ascii=False, default=str)
+            shown = args if len(args) <= 600 else args[:600] + "…"
+            await self.notify(
+                item_id, f"Approval needed: {request.tool} ({request.effect}) with {shown}"
+            )
         return ApprovalDecision(
             False,
             reason=f"waiting for approval {item_id}: a person must approve this action; tell"

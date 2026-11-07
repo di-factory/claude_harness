@@ -866,6 +866,8 @@ def main(argv: list[str] | None = None, *, provider: ModelProvider | None = None
     adm_sub.add_parser("inbox", help="conversations handed to a person, approvals waiting")
     a_show = adm_sub.add_parser("show", help="one conversation, message by message")
     a_show.add_argument("session")
+    a_trig = adm_sub.add_parser("trigger", help="run a schedule now (stand-up, health check)")
+    a_trig.add_argument("name", help="the trigger's name in the spec")
     a_decide = adm_sub.add_parser("decide", help="approve or reject an item in the inbox")
     a_decide.add_argument("item", help="the item's id, from admin inbox")
     a_decide.add_argument("decision", choices=["approve", "reject"])

@@ -50,6 +50,7 @@ from ..runtime import AgentRuntime, Instance, answer
 from ..spec.errors import Issue
 from ..spec.loader import duration_days
 from ..spec.schema import Trigger
+from ..spec.validate import OPERATOR_PURPOSES
 from ..tools.registry import Effect
 from ..triggers import CronError, next_fire
 from ..triggers import files as file_sources
@@ -82,6 +83,13 @@ def render_event(template: Any, event: dict[str, Any]) -> str:
         return cur if isinstance(cur, str) else json.dumps(cur, ensure_ascii=False)
 
     return _EVENT_REF.sub(value, template)
+
+
+DECISION = re.compile(  # "approve 1a2b3c4d5e6f", "reject 1a2b3c4d5e6f not now", "/aprobar …"
+    r"^/?(approve|aprobar|aprueba|yes|si|sí|reject|rechazar|rechaza|no)\s+"
+    r"([0-9a-f]{8,32})\b\s*(.*)$",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 @dataclass
@@ -241,7 +249,18 @@ class Headless:
         return Worker(self.queue, self.handlers(), **kw)
 
     async def start(self) -> None:
-        """Seed recurring work: the next firing of every schedule, and today's purge."""
+        """Seed recurring work: the next firing of every schedule, and today's purge; and
+        tell channels that register a webhook (Telegram) where this server is."""
+        for name, adapter in self.adapters.items():
+            register = getattr(adapter, "register", None)
+            if register is not None:
+                try:
+                    why = await register()
+                except Exception as exc:
+                    why = f"{type(exc).__name__}: {exc}"
+                if why:
+                    self._warn("webhook_not_registered", f"channels.{name}", why)
+                    log.warning("channel %s: webhook not registered: %s", name, why)
         now = self.queue.clock()
         for name, trig in self.triggers.items():
             if trig.type == "schedule" or (trig.type == "batch" and trig.cron):
@@ -308,6 +327,15 @@ class Headless:
     async def handle(self, env: Envelope) -> TurnResult:
         inst = self.instance
         cfg = inst.spec.channels[env.channel]
+        if cfg.purpose in OPERATOR_PURPOSES and cfg.address:
+            if env.contact_key != str(cfg.address):  # a founder's or staff chat is theirs alone
+                await inst.audit.record(
+                    self.scope, f"contact:{env.channel}", "unknown_sender", env.channel,
+                    {"contact": env.contact_key},
+                )  # fmt: skip
+                return TurnResult(None, "ignored", "")
+            if (decided := await self._operator_decision(env)) is not None:
+                return decided
         consent = inst.spec.governance.consent
         if consent.opt_out_keywords and is_opt_out(env.text, consent.opt_out_keywords):
             await inst.consent.set(self.scope, env.contact_key, env.channel, "revoked", "keyword")
@@ -453,6 +481,43 @@ class Headless:
             {"session": session_id, "provider_id": message_id, "chars": len(text)},
         )  # fmt: skip
 
+    async def _operator_decision(self, env: Envelope) -> TurnResult | None:
+        """``approve ID [note]`` or ``reject ID why`` from an operator chat decides that inbox
+        item, as ``admin decide`` would; anything else goes to the entry agent."""
+        found = DECISION.match(env.text.strip())
+        if found is None:
+            return None
+        verb, item_id, note = found.group(1).lower(), found.group(2), found.group(3) or ""
+        approved = verb in ("approve", "aprobar", "aprueba", "si", "sí", "yes")
+        try:
+            await self.decide(item_id, approved, f"{env.channel}:{env.contact_key}", note.strip())
+            reply = f"{'Approved' if approved else 'Rejected'}: {item_id}."
+        except KeyError:
+            reply = f"There is no inbox item {item_id}."
+        except ValueError:
+            reply = f"{item_id} was already decided."
+        adapter = self.adapters.get(env.channel)
+        if adapter is not None:
+            await adapter.send(env.contact_key, reply)
+        return TurnResult(reply, "decided", "")
+
+    async def _shown(self, channel: str, text: str) -> str:
+        """Text as this channel's reader may see it: an operator (founder, staff) sees the
+        values, as in the admin inbox; a contact only the ``reveal_in_output`` classes."""
+        pii = self.instance.pii
+        if not pii.active:
+            return text
+        cfg = self.instance.spec.channels.get(channel)
+        operator = cfg is not None and cfg.purpose in OPERATOR_PURPOSES
+        reveal = set(pii.policy.classes) if operator else pii.policy.reveal_in_output
+        return await pii.detokenize(text, reveal)
+
+    def _answers_here(self, channel: str) -> bool:
+        """An operator chat where a person can decide an approval by replying."""
+        cfg = self.instance.spec.channels.get(channel)
+        return cfg is not None and cfg.purpose in OPERATOR_PURPOSES and cfg.type in (
+            "telegram", "slack")  # fmt: skip
+
     async def notify(self, item_id: str, summary: str) -> None:
         """Tell the people in ``hitl.notify`` (channels with an address); failures are
         logged, never raised: the item is in the inbox either way."""
@@ -465,14 +530,20 @@ class Headless:
             mail = next((n for n, a in self.adapters.items() if a.config.type == "email"), None)
             if mail is not None:
                 targets.append({"channel": mail, "to": handoff_to["to"]})
+        item = await self.instance.inbox.get(item_id)
+        told: set[tuple[str, str]] = set()
         for target in targets:
             name = target.get("channel")
             adapter = self.adapters.get(str(name))
             to = target.get("to") or (adapter.config.address if adapter else None)
-            if adapter is None or not to or adapter.inline_reply:
-                continue
+            if adapter is None or not to or adapter.inline_reply or (str(name), str(to)) in told:
+                continue  # the same person on the same channel is told once
+            told.add((str(name), str(to)))
+            text = f"[inbox {item_id}] {await self._shown(str(name), summary)}"
+            if item is not None and item.kind == "approval" and self._answers_here(str(name)):
+                text += f"\nReply here: approve {item_id}  ·  reject {item_id} <why>"
             try:
-                await adapter.send(str(to), f"[inbox {item_id}] {summary}")
+                await adapter.send(str(to), text)
             except Exception as exc:
                 log.warning("notify via %s failed: %s", name, exc)
 
@@ -828,7 +899,7 @@ class Headless:
             )
             return False
         if template is None:
-            await self.send(channel, to, text or "", session_id)
+            await self.send(channel, to, await self._shown(channel, text or ""), session_id)
             return True
         adapter = self.adapters.get(channel)
         if adapter is None:
@@ -1147,11 +1218,15 @@ class Headless:
             note = f"approval {item.id} for {tool_name} was denied" + (
                 f": {item.note}" if item.note else ""
             )
+        binding = await inst.store.binding(self.scope, session.id)
+        if binding is None:  # a run a schedule or a task started: the agent records it, and
+            await answer(agent.send(session, f"[System note] {note}."))  # whoever decided
+            await self.notify(item.id, note)  # is told the result
+            return
         texts, _ = await answer(
             agent.send(session, f"[System note, not from the contact] {note}. Tell the contact.")
         )
-        binding = await inst.store.binding(self.scope, session.id)
-        if texts and binding is not None:
+        if texts:
             await self.send(
                 binding[0], binding[1], await agent.reply("\n\n".join(texts)), session.id
             )

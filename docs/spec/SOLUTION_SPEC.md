@@ -371,6 +371,13 @@ Channel types: `gateway` (WhatsApp/SMS via Twilio-style providers),
 `telegram`, `web`, `email`, `slack`, `api` and `voice`. Outbound
 messages outside a provider's session window must use a template.
 
+A channel whose `purpose` is `founder` or `hitl` is an **operator chat**: with an `address`, it
+answers only that chat (anyone else is ignored and audited), and there `approve ID [note]` or
+`reject ID why` decides an inbox item, as `admin decide` does. Approval notices name the tool
+and its arguments, and operators see personal data in clear, as in the admin inbox. A
+`telegram` channel registers its webhook itself when the service starts with an https public
+URL (`serve --public-url`).
+
 A `web` channel is a chat page the instance serves itself at `/chat` (or `/chat/<name>`),
 ready to link from the client's website. By default it is private: every message carries
 the channel's `credentials` as a bearer token, which the page asks for once. With
@@ -574,7 +581,8 @@ crashed half way runs again on resume, so side-effecting tools should be idempot
   above 0 up to 1). Tool calls are checked before they commit. A call from a workflow step has
   no conversation behind it: the verifier judges it against what the earlier steps found
   (default criteria: the arguments match those findings; nothing found says not to act), and
-  personal data reaches the verifier as tokens on both sides. Answers are **reviewed after
+  personal data reaches the verifier as tokens on both sides. A run with no contact (a schedule,
+  a ledger task) is judged against the task it was given. Answers are **reviewed after
   they are sent** (quality control, never a delay for the contact): each review is audited
   and counted in `/admin/metrics`, a failed one files a `review` inbox item, and the rule
   the verifier suggests is proposed as a candidate constraint.
@@ -877,7 +885,8 @@ aliases file is `missing_file`; a `foreach` on an unknown graph is `unknown_grap
     - **shapes:** `invalid_condition`, `invalid_duration`, `invalid_permission_rule`,
       `invalid_python_ref`, `invalid_source`, `invalid_sync_schedule`, `invalid_voice`,
       `invalid_public`, `invalid_branding`, `invalid_skill` (§5.18), `invalid_hook` (§5.19),
-      `invalid_graph` (§5.20);
+      `invalid_graph` (§5.20), `unsupported_auth` (an HTTP connector's auth type the
+      harness cannot send: `none`, `bearer`, `header` or `basic`);
     - **safety:** `safety_weakened`, `region_violation`, `unguarded_external`, `no_evals`.
 
     Warnings (`uncovered_tool`, `eval_missing`, `missing_deploy`...) do not block. At

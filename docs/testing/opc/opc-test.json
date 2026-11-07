@@ -1,0 +1,28 @@
+{
+  "$schema": "https://di-factory.biz/schemas/solution-spec.v1.json",
+  "spec_version": "1",
+  "kind": "instance",
+  "solution": { "id": "opc-test", "version": "1.0.0", "name": "OPC C-suite live test", "lob": "opc", "locale": "es-MX" },
+  "extends": ["opc-c-suite@^1.0"],
+  "tenant": { "id": "di-factory-test", "name": "Di-Factory (OPC test)", "timezone": "America/Mexico_City" },
+  "values": {
+    "company_name": "Agenda Fácil",
+    "founder_telegram": "YOUR-TELEGRAM-CHAT-ID",
+    "product_url": "https://di-factory.biz",
+    "crm_mcp_url": "http://127.0.0.1:8091/mcp",
+    "monitoring_url": "http://127.0.0.1:8091/monitoring",
+    "standup_time": "0 8 * * 1-5",
+    "main_model": "claude-sonnet-5-5",
+    "fast_model": "claude-haiku-4-5"
+  },
+  "tools": {
+    "http": { "social": { "base_url": "http://127.0.0.1:8091/linkedin" } }
+  },
+  "triggers": {
+    "cto-health": { "cron": "0 9 * * 1-5" },
+    "cgo-content": { "cron": "0 11 * * 1" }
+  },
+  "policies": {
+    "budgets": { "per_tenant_day": { "usd": 5 } }
+  }
+}

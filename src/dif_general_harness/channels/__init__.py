@@ -26,7 +26,7 @@ def build_adapter(
     if config.type == "gateway":
         return GatewayChannel(name, config, credentials, client=client, public_url=public_url)
     if config.type == "telegram":
-        return TelegramChannel(name, config, credentials, client=client)
+        return TelegramChannel(name, config, credentials, client=client, public_url=public_url)
     if config.type == "web":
         return WebChannel(name, config, credentials)
     if config.type == "api":

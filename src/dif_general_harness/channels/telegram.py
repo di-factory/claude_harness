@@ -1,7 +1,9 @@
 """Telegram bots: webhook updates in, ``sendMessage`` out.
 
-Inbound requests must carry ``X-Telegram-Bot-Api-Secret-Token``; the service registers the
-webhook with ``webhook_secret`` (derived from the bot token, so nothing extra to store).
+Inbound requests must carry ``X-Telegram-Bot-Api-Secret-Token``. With a public URL
+(``serve --public-url``), the service registers the webhook itself when it starts
+(``setWebhook`` with ``webhook_secret``, derived from the bot token, so nothing extra to
+store); without one, Telegram is never told where to send messages.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ class TelegramChannel:
         credentials: Any,
         *,
         client: httpx2.AsyncClient | None = None,
+        public_url: str | None = None,
     ) -> None:
         if not isinstance(credentials, str) or ":" not in credentials:
             raise ChannelError("telegram credentials must be the bot token")
@@ -40,6 +43,23 @@ class TelegramChannel:
         self.token = credentials
         self.secret = webhook_secret(credentials)
         self.http = client or httpx2.AsyncClient(timeout=20.0)
+        self.public_url = public_url
+
+    async def register(self) -> str | None:
+        """Point the bot's webhook at this channel; the reason when it cannot."""
+        if not self.public_url:
+            return "no public URL (serve --public-url): Telegram cannot reach this server"
+        if not self.public_url.startswith("https://"):
+            return f"Telegram only calls https webhooks; {self.public_url} is not https"
+        response = await self.http.post(
+            f"{API}/bot{self.token}/setWebhook",
+            json={"url": self.public_url, "secret_token": self.secret,
+                  "allowed_updates": ["message"]},
+        )  # fmt: skip
+        body = response.json() if response.content else {}
+        if response.status_code >= 400 or not body.get("ok", False):
+            return f"setWebhook failed: {body.get('description') or response.status_code}"
+        return None
 
     def parse(self, request: Inbound) -> list[Envelope]:
         given = request.headers.get("x-telegram-bot-api-secret-token", "")

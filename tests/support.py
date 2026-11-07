@@ -219,7 +219,7 @@ class Env:
     def texts(self, host: str) -> list[dict[str, Any]]:
         out = []
         for r in self.sent:
-            if host in r.url.host:
+            if host in r.url.host and not r.url.path.endswith("/setWebhook"):  # messages only
                 out.append(
                     json.loads(r.content)
                     if r.headers.get("content-type", "").startswith("application/json")
