@@ -8,6 +8,7 @@ the instance's admin API, so nobody needs curl, tokens or JSON:
     show SESSION        a conversation, message by message
     reply SESSION TEXT  answer as a person; the customer gets it on their channel
     decide ITEM approve|reject [--note]   an approval waiting in the inbox (a posting, a tool)
+    trigger NAME        run a schedule now (a stand-up, a health check), or a file scan
     faq show            the FAQ exactly as the agent knows it
     faq set FILE|-      replace it (the owner's edit stands until Di-Factory ships a new one);
                         first the latest real conversations are answered again with it, and
@@ -105,6 +106,10 @@ class Admin:
     async def reply(self, session: str, text: str, by: str) -> str:
         await self._send("POST", f"/admin/sessions/{session}/reply", {"text": text, "by": by})
         return "Sent. The customer gets it on the channel they wrote from."
+
+    async def trigger(self, name: str) -> str:
+        done = await self._send("POST", f"/admin/triggers/{name}/run", {})
+        return f"{name}: started ({done})."
 
     async def decide(self, item: str, approve: bool, note: str, by: str) -> str:
         body = {"approved": approve, "note": note, "by": by}
@@ -308,6 +313,8 @@ async def run(admin: Admin, args: Any) -> str:
         return await admin.show(args.session)
     if cmd == "reply":
         return await admin.reply(args.session, args.text, args.by)
+    if cmd == "trigger":
+        return await admin.trigger(args.name)
     if cmd == "decide":
         return await admin.decide(args.item, args.decision == "approve", args.note, args.by)
     if cmd == "costs":

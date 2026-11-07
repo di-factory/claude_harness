@@ -25,7 +25,7 @@ from ..store.db import Database, Row
 from ..tools.registry import Effect, InputError, Tool, schema_check
 
 Emit = Callable[[str, dict[str, Any]], Awaitable[Any]]
-OnTask = Callable[[dict[str, Any]], Awaitable[None]]
+OnTask = Callable[[dict[str, Any], dict[str, Any] | None], Awaitable[None]]  # task, before
 
 
 def field_schema(kind: str, agents: list[str]) -> dict[str, Any]:
@@ -85,7 +85,7 @@ class LedgerStore:
         )
         task = await self.get(task_id)
         assert task is not None
-        await self._after(task, previous_owner=None)
+        await self._after(task, None, by)
         return task
 
     async def update(self, task_id: str, changes: dict[str, Any], by: str) -> dict[str, Any]:
@@ -94,7 +94,6 @@ class LedgerStore:
         if task is None:
             raise KeyError(f"no task {task_id!r}")
         fields = {k: v for k, v in task.items() if k not in {"id", "created_by"}}
-        previous_owner = fields.get("owner")
         fields.update({k: v for k, v in changes.items() if v is not None})
         await self.db.execute(
             "UPDATE ledger_tasks SET fields = ?, updated_at = ? WHERE id = ? AND tenant_id = ?"
@@ -109,15 +108,18 @@ class LedgerStore:
         )
         updated = await self.get(task_id)
         assert updated is not None
-        await self._after(updated, previous_owner=previous_owner)
+        await self._after(updated, task, by)
         return updated
 
-    async def _after(self, task: dict[str, Any], previous_owner: Any) -> None:
+    async def _after(self, task: dict[str, Any], before: dict[str, Any] | None, by: str) -> None:
+        """A new owner is woken, unless the owner made or moved the task itself (a CTO noting
+        a task for later must not start a run of itself every half hour)."""
         owner = task.get("owner")
-        if owner and owner != previous_owner and owner in self.agents and self.emit is not None:
+        new_owner = owner and owner != (before or {}).get("owner") and owner in self.agents
+        if new_owner and by != f"agent:{owner}" and self.emit is not None:
             await self.emit("ledger.task_assigned", {"task": task})
         if self.on_task is not None:
-            await self.on_task(task)
+            await self.on_task(task, before)
 
     async def get(self, task_id: str) -> dict[str, Any] | None:
         row = await self.db.fetchone(

@@ -57,6 +57,12 @@ WORKFLOW_CRITERIA = [
     "every argument matches what the earlier steps found (no invented or changed values)",
     "nothing the earlier steps found says this action should not happen",
 ]
+# an agent run a schedule or a task started has no contact to ask: judged against its task
+TASK_CRITERIA = [
+    "the action follows from the task the agent was given (no goal the task does not state)",
+    "every argument is consistent with the task and what the agent found (no invented values)",
+    "the action breaks no rule stated in the agent's instructions",
+]
 EVIDENCE_CHARS = 12000
 
 
@@ -155,8 +161,7 @@ class Verifier:
     ) -> Verdict:  # fmt: skip
         if name == "__verifier__":
             cfg = self.instance.spec.policies.verification.verifier or {}
-            default = WORKFLOW_CRITERIA if context is not None else DEFAULT_CRITERIA
-            criteria = cfg.get("criteria") or default
+            criteria = cfg.get("criteria") or _default_criteria(session, context)
             return await self._verifier(
                 session, call, list(criteria), cfg.get("model_role", "verifier"), name, context
             )
@@ -172,8 +177,7 @@ class Verifier:
             if check.type == "command":
                 return await self._command_check(name, extra)
             if check.type == "verifier":
-                default = WORKFLOW_CRITERIA if context is not None else DEFAULT_CRITERIA
-                criteria = list(extra.get("criteria") or default)
+                criteria = list(extra.get("criteria") or _default_criteria(session, context))
                 role = (self.instance.spec.policies.verification.verifier or {}).get(
                     "model_role", "verifier"
                 )
@@ -281,6 +285,14 @@ class Verifier:
         if not isinstance(answer, dict) or not isinstance(answer.get("pass"), bool):
             return Verdict(False, "the verifier's answer had no pass/fail", name)
         return Verdict(answer["pass"], str(answer.get("reason", "")), name)
+
+
+def _default_criteria(session: Session, context: dict[str, Any] | None) -> list[str]:
+    """A workflow's call is judged by its steps; a run with no contact (a schedule, a task)
+    by its task; a conversation by what the contact asked and confirmed."""
+    if context is not None:
+        return WORKFLOW_CRITERIA
+    return DEFAULT_CRITERIA if session.contact_key else TASK_CRITERIA
 
 
 async def _charge(inst: Instance, final: ProviderMessage) -> None:

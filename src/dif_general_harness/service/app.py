@@ -499,11 +499,15 @@ def create_app(
 
     @app.post("/admin/triggers/{name}/run", dependencies=[Depends(admin)])
     async def run_trigger(name: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Run a file trigger's scan now, or a batch trigger now (``{"items": [...]}`` pushes
-        the items instead of calling its source tool)."""
+        """Run a trigger now: a schedule as if its time had come (a stand-up, a health check),
+        a file trigger's scan, or a batch (``{"items": [...]}`` pushes the items instead of
+        calling its source tool)."""
         trig = headless.triggers.get(name)
-        if trig is None or trig.type not in ("file", "batch"):
-            raise HTTPException(404, "no file or batch trigger by that name")
+        if trig is None or trig.type not in ("file", "batch", "schedule"):
+            raise HTTPException(404, "no schedule, file or batch trigger by that name")
+        if trig.type == "schedule":
+            job = await headless.fire(name, {"fired_at": time.time(), "manual": True})
+            return {"queued": 1 if job else 0}
         if trig.type == "file":
             return {"queued": await headless.scan_files(name)}
         given = (body or {}).get("items")

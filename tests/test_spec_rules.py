@@ -169,6 +169,11 @@ PACK_MUTATIONS: list[tuple[str, str, Mutator]] = [
         lambda d: d["tools"]["overrides"]["calendar.move_event"].update(verify="nope"),
     ),
     (
+        "opc-c-suite",
+        "unsupported_auth",
+        lambda d: d["tools"]["http"]["cloud"].update(auth={"type": "aws_role", "role": "x"}),
+    ),
+    (
         "service-desk-cell",
         "unguarded_external",
         lambda d: d["tools"]["http"]["identity"]["operations"]["reset_password"].pop("verify"),

@@ -51,11 +51,11 @@
         "order": 1
       }
     },
-    "cloud_account": {
+    "monitoring_url": {
       "type": "string",
       "required": true,
       "ask": {
-        "question": "Which cloud account hosts the product (for the CTO's monitoring)?",
+        "question": "Which monitoring API reports the product's metrics and alerts (its base URL, e.g. https://monitoring.example.com/api)?",
         "answered_by": "client",
         "group": "integrations",
         "order": 2
@@ -106,7 +106,7 @@
       "description": "LinkedIn posting token (founder's company page)"
     },
     "cloud_readonly": {
-      "description": "Read-only monitoring role in the founder's cloud account"
+      "description": "Read-only token for the monitoring API (metrics and alerts only)"
     }
   },
   "models": {
@@ -182,8 +182,7 @@
       ],
       "handoffs": [
         "cgo",
-        "cto",
-        "human"
+        "cto"
       ],
       "memory": {
         "scope": "agent"
@@ -276,10 +275,10 @@
         }
       },
       "cloud": {
-        "base_url": "https://monitoring.{{var.cloud_account}}",
+        "base_url": "{{var.monitoring_url}}",
         "auth": {
-          "type": "aws_role",
-          "role": {
+          "type": "bearer",
+          "token": {
             "$secret": "cloud_readonly"
           }
         },
@@ -384,7 +383,7 @@
           "id": "brief",
           "type": "agent",
           "agent": "coo",
-          "input": "Merge the three updates into a founder brief; list decisions needed."
+          "input": "Merge the three updates into a short founder brief, then list the decisions only the founder can make.\n\nCGO: {{steps.cgo.text}}\n\nCOO: {{steps.coo.text}}\n\nCTO: {{steps.cto.text}}"
         },
         {
           "id": "send",
@@ -459,8 +458,12 @@
         "name"
       ],
       "reveal_to_tools": {
-        "crm.send_email": [
+        "crm.*": [
+          "name",
           "email",
+          "phone"
+        ],
+        "social.publish_post": [
           "name"
         ]
       }

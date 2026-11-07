@@ -32,6 +32,7 @@ PACK_NAMESPACES: dict[str, set[str]] = {
 }
 EMBEDDING_PROVIDERS = {"openai", "openai-compatible"}
 OPERATOR_PURPOSES = {"hitl", "founder", "outbound"}
+HTTP_AUTH_TYPES = {"none", "bearer", "header", "basic"}  # what tools/http.py can send
 AWS_REGION_PREFIX = {"mx": "mx-", "us": "us-", "eu": "eu-"}
 
 _VAR_TEMPLATE = re.compile(r"\{\{\s*var\.([A-Za-z0-9_]+)\s*\}\}")
@@ -391,6 +392,12 @@ def validate(spec: SolutionSpec, data: dict[str, Any], *, is_instance: bool) -> 
     externals = {k for k, o in overrides.items() if o.effect == "external"}
     verify_refs = {k: o.verify for k, o in overrides.items() if o.verify}
     for hname, conn in spec.tools.http.items():
+        auth = conn.auth if isinstance(conn.auth, dict) else {}
+        if auth and auth.get("type", "none") not in HTTP_AUTH_TYPES:
+            kinds = ", ".join(sorted(HTTP_AUTH_TYPES))
+            err("unsupported_auth", f"tools.http.{hname}.auth",
+                f"auth type {auth.get('type')!r} is not supported (one of {kinds}):"
+                " the connector would never load")  # fmt: skip
         for op, o in conn.operations.items():
             full = f"{hname}.{op}"
             if o.effect == "external":

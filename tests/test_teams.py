@@ -68,12 +68,19 @@ async def test_ledger_tools_visibility_events_and_escalation(tmp_path: Path) -> 
             ("Renew TLS cert", "todo", "ops"),
             ("Sign the lease", "todo", None),
         ]
-        # assigning to an agent emitted ledger.task_assigned, and the event trigger routed it
+        # a task an agent gives itself does not start a run of it (no self-waking loops)
+        assert len(env.provider.requests) == 2
+        # assigned by someone else, it emits ledger.task_assigned and the event trigger routes it
+        await inst.ledger.create({"title": "Renew TLS cert", "owner": "ops"}, "staff")
+        await headless.worker().drain()
         assert env.provider.requests[-1].messages[0].text() == "New task for you: Renew TLS cert"
         # needs_founder matched the escalation rule: an inbox item and the handoff_to channel
         [item] = await inst.inbox.list(kind="escalation")
         assert item.title == "Task needs a person: Sign the lease"
         assert any("Sign the lease" in t["text"] for t in env.texts("telegram"))
+        lease = next(t for t in tasks if t["title"] == "Sign the lease")
+        await inst.ledger.update(lease["id"], {"status": "doing"}, "staff")
+        assert len(await inst.inbox.list(kind="escalation")) == 1  # paged once, not per update
 
         with pytest.raises(InputError, match="date"):
             await inst.ledger.update(tasks[0]["id"], {"due": "next week"}, "x")
