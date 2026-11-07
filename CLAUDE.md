@@ -2,7 +2,7 @@
 
 Di-Factory's general solution template: an agent runtime where every client
 solution is a declarative **solution spec** (a pack plus a client instance).
-Read `docs/ARCHITECTURE.md` (96 decisions, §7) before changing behaviour;
+Read `docs/ARCHITECTURE.md` (97 decisions, §7) before changing behaviour;
 `docs/spec/SOLUTION_SPEC.md` is the spec contract.
 
 ## Commands
@@ -144,9 +144,9 @@ reports as data, and history search past compaction (87–90); then pass^k and a
 evals, and tool-call budgets, result caps, tool-surface warnings and failure classes (91–92);
 then the Dev Cell aligned with GitHub's MCP server, with a live test kit (93), and what its
 first live run found (94); then the receipt pack made runnable, with its kit (95), and every pack's evals written and
-runnable (96).
+runnable (96), and the verifier judging a workflow's call by what the workflow found (97).
 Next: GCP and Azure profiles.
 Known gaps: streaming (speech-to-speech) voice, knowledge connectors beyond files, S3,
 Drive and web pages (SharePoint, Notion... push through the admin API), pgvector for very
 large corpora, and a first apply of the AWS module in a real account. See
-`docs/ARCHITECTURE.md` §6 and decisions 43–96.
+`docs/ARCHITECTURE.md` §6 and decisions 43–97.

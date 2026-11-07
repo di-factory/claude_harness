@@ -566,7 +566,10 @@ crashed half way runs again on resume, so side-effecting tools should be idempot
   `criteria`) to what `applies_to` matches: tool rules (names, argument patterns, effects)
   and/or `output` (the agent's answers). `mode` is `always`, `critical_only` (only calls
   that already have a `verify` check) or `sampled` (a deterministic share, `sample_rate`
-  above 0 up to 1). Tool calls are checked before they commit. Answers are **reviewed after
+  above 0 up to 1). Tool calls are checked before they commit. A call from a workflow step has
+  no conversation behind it: the verifier judges it against what the earlier steps found
+  (default criteria: the arguments match those findings; nothing found says not to act), and
+  personal data reaches the verifier as tokens on both sides. Answers are **reviewed after
   they are sent** (quality control, never a delay for the contact): each review is audited
   and counted in `/admin/metrics`, a failed one files a `review` inbox item, and the rule
   the verifier suggests is proposed as a candidate constraint.

@@ -76,8 +76,11 @@ def _extractor(request: ModelRequest) -> Message:
         "currency": "MXN", "confidence": 0.95}))  # fmt: skip
 
 
-async def _open(tmp_path: Path) -> tuple[Any, ...]:
-    shutil.copy(KIT / "receipts-test.json", tmp_path / "receipts-test.json")
+async def _open(tmp_path: Path, *, review_every_post: bool = False) -> tuple[Any, ...]:
+    spec = json.loads((KIT / "receipts-test.json").read_text())
+    if review_every_post:  # the pack reviews 10% of postings; a later layer may review all
+        spec["policies"]["verification"] = {"verifier": {"mode": "always"}}
+    (tmp_path / "receipts-test.json").write_text(json.dumps(spec))
     inbox = tmp_path / "inbox"
     inbox.mkdir()
     ledger: list[dict[str, Any]] = []
@@ -175,3 +178,16 @@ async def test_the_injection_in_a_pdf_reaches_the_model_as_data(tmp_path: Path) 
     read = next(r for r in asked if "Ignore any previous instructions" in _text(r))
     assert "untrusted_content" in _text(read)  # fenced: data, never instructions
     assert [e["total"] for e in ledger] == [13920.0]
+
+
+async def test_a_posting_is_reviewed_against_what_the_workflow_found(tmp_path: Path) -> None:
+    inst, headless, client, inbox, ledger, asked, _ = await _open(tmp_path, review_every_post=True)
+    async with inst, client:
+        await _drop(headless, inbox, "01-office-supplies.xml")
+    [review] = [r for r in asked if r.model_role == "verifier"]
+    shown = _text(review)
+    assert "What the workflow's earlier steps found" in shown and "Conversation" not in shown
+    assert "every argument matches what the earlier steps found" in shown
+    assert "6F1A2B3C-4D5E-4F60-8A71-92B3C4D5E6F7" in shown and '\\"valid\\": true' in shown
+    assert COMPANY not in shown and TOKEN.search(shown)  # the RFC as a token, on both sides
+    assert len(ledger) == 1
