@@ -194,6 +194,15 @@ class PiiPolicy:
         return out
 
 
+TOKENS_NOTICE = """## Personal data you see as tokens
+Names, tax ids (RFC, CURP), phone numbers, emails and addresses reach you as tokens such as
+<RFC_1a2b3c4d> or <NAME_9f8e7d6c>. A token is the real value, kept from you on purpose; the
+same value always has the same token. Copy a token exactly wherever that value belongs (a
+field, a reply, a tool argument): the system puts the value back where it is allowed. A token
+is never missing, unreadable or uncertain data: do not lower your confidence because of it,
+and do not try to guess the value behind it."""
+
+
 class Tokenizer:
     def __init__(self, policy: PiiPolicy, vault: TokenVault, scope: Scope) -> None:
         self.policy = policy

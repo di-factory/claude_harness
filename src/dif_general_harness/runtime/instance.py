@@ -46,6 +46,7 @@ from ..core.untrusted import NOTICE as UNTRUSTED_NOTICE
 from ..feedback.store import ALL_AGENTS, ConstraintStore, pinned_block
 from ..governance import AuditLog, ConsentStore, GovernedTools, PiiPolicy, Tokenizer, TokenVault
 from ..governance.contacts import ContactStore
+from ..governance.pii import TOKENS_NOTICE
 from ..hitl.inbox import Inbox
 from ..knowledge import sources as knowledge_sources
 from ..knowledge.store import KnowledgeBase, SyncReport
@@ -868,6 +869,8 @@ class AgentRuntime:
         self.name = name
         self.spec = spec
         self.system = render(load_text(spec.prompt), instance.spec) + "\n\n" + UNTRUSTED_NOTICE
+        if instance.pii.active:  # what <RFC_…> and <NAME_…> are, so a token is used, not doubted
+            self.system += "\n\n" + TOKENS_NOTICE
         self.system += skills_block(instance.skills)
         registry = instance.tools
         patterns = [
