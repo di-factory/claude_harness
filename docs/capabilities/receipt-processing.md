@@ -54,6 +54,11 @@ every posting asked for an extra tool approval, even under the limit; and the RF
 the "is it addressed to us?" check always fail while the ERP would have received tokens. All
 three are fixed, and the extractor is now shown the fields it must fill.
 
+**First live run (November 2026):** the real model sends the CFDI's XML to the parser, and the
+RFCs inside it were still tokens (`Rfc="<RFC_…>"`), which is not valid XML: the parser
+refused it. The pack now reveals RFCs, names and addresses to `cfdi.parse_xml` as it does to
+the ERP; the model still sees only tokens.
+
 ## The kit's seven documents
 
 | Document | Expected |

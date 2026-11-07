@@ -63,6 +63,9 @@ def _extractor(request: ModelRequest) -> Message:
         uri = re.search(r'file://[^"\\]+', seen)
         assert uri, "the file's uri is in the task"
         return calls(("r1", "documents.read", {"uri": uri.group(0)}))
+    if name.endswith(".xml") and "cfdi.parse_xml" not in seen:  # as the real model does
+        task = request.messages[0].text().split("\n\nAnswer with JSON only")[0]
+        return calls(("p1", "cfdi.parse_xml", {"xml": json.loads(task)["text"]}))
     if name.endswith(".jpg"):  # a taxi ticket: no CFDI, no UUID, no RFCs
         return Message.assistant(json.dumps({
             "uuid": "", "rfc_emisor": "", "rfc_receptor": "", "date": "2026-10-26",
@@ -84,8 +87,8 @@ async def _open(tmp_path: Path) -> tuple[Any, ...]:
     def services(request: httpx2.Request) -> httpx2.Response:
         assert request.headers["authorization"].startswith("Bearer ")
         body = json.loads(request.content or b"{}")
-        received.append({"path": request.url.path, **body})
         status, out = mocks.handle(request.method, str(request.url), body, ledger)
+        received.append({"path": request.url.path, "status": status, **body})
         return httpx2.Response(status, json=out)
 
     def model(request: ModelRequest) -> Message:
@@ -158,6 +161,8 @@ async def test_the_seven_samples_end_where_the_kit_says(tmp_path: Path) -> None:
 
     sent_to_model = "".join(_text(r) for r in asked if r.model_role != "verifier")
     assert COMPANY not in sent_to_model and "XIA190128J61" not in sent_to_model  # tokens only
+    parsed = [r for r in received if r["path"] == "/cfdi/parse"]
+    assert parsed and all(r["status"] == 200 for r in parsed), parsed  # the XML arrives whole
     checked = [r for r in received if r["path"] == "/cfdi/validate"]
     assert all(not TOKEN.search(json.dumps(r)) for r in checked)  # the SAT check gets values
     assert "matching this JSON Schema" in sent_to_model  # the extractor is shown the schema

@@ -143,7 +143,7 @@
     }
   },
   "governance": {
-    "pii": { "classes": ["name", "rfc", "address"], "tokenize": true, "reveal_in_output": [], "reveal_to_tools": { "erp.create_entry": ["rfc", "name", "address"], "cfdi.validate": ["rfc"] } },
+    "pii": { "classes": ["name", "rfc", "address"], "tokenize": true, "reveal_in_output": [], "reveal_to_tools": { "erp.create_entry": ["rfc", "name", "address"], "cfdi.validate": ["rfc"], "cfdi.parse_xml": ["rfc", "name", "address"] } },
     "consent": { "required": false },
     "retention": { "documents": "5y", "conversations": "30d", "audit": "5y" },
     "audit": { "level": "full" },
