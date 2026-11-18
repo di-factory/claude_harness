@@ -65,12 +65,16 @@ from .runtime import (
 )
 from .runtime.routing import check_anthropic_key
 from .spec import PackCatalog, ResolvedSpec, SpecError, load_instance, load_pack
+from .spec.errors import Issue
 from .store.db import connect
 from .tenancy import FileSecrets, default_secrets_dir, load_env_file, local_backend
 
 
 def _load(path: Path, packs: list[Path] | None) -> ResolvedSpec:
     target = path / "pack.json" if path.is_dir() else path
+    if not target.is_file():  # a typo, or a file that came with a commit not pulled yet
+        raise SpecError([Issue("error", "missing_file", str(path), f"no such file: {target}"
+                               " (check the path, and git pull if it is new)")])  # fmt: skip
     kind = json.loads(target.read_text(encoding="utf-8")).get("kind")
     if kind == "pack":
         return load_pack(target)

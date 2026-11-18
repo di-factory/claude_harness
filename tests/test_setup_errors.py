@@ -201,3 +201,15 @@ async def test_a_model_without_effort_levels_is_asked_again_without_one() -> Non
     assert [("output_config" in kw) for kw in sent] == [True, False]
     [_ async for _ in provider.stream(request)]
     assert len(sent) == 3 and "output_config" not in sent[-1]  # remembered: no second refusal
+
+
+def test_a_missing_spec_file_is_one_line_not_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from dif_general_harness.cli import main
+
+    missing = tmp_path / "docs" / "testing" / "opc" / "opc-test.json"
+    assert main(["secrets", "check", str(missing), "--dir", str(tmp_path)]) == 2
+    assert main(["spec", "validate", str(missing)]) == 2
+    err = capsys.readouterr().err
+    assert "no such file" in err and "git pull" in err and "Traceback" not in err
